@@ -45,6 +45,6 @@ func initialize() {
 }
 
 func GetVersionInfo() string {
-	return fmt.Sprintf("Версия: %s (коммит: %s, сборка: %s)",
+	return fmt.Sprintf("%s (commit: %s, build: %s)",
 		Version, GitCommit, BuildTime)
 }

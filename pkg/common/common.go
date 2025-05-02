@@ -3,7 +3,6 @@ package common
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 )
 
@@ -15,8 +14,6 @@ type CarpCh struct {
 	AssistName string
 	Target     string
 }
-
-var CarpinteroCh = make(chan CarpCh, 1) // Канал для передачи уведомлений
 
 // ErrorCode - константы кодов ошибок подписки
 type ErrorCode int
@@ -114,20 +111,4 @@ func CheckUserSubscription(provider SubscriptionProvider, userId uint32) error {
 	}
 
 	return nil
-}
-
-func SendEvent(userId uint32, event, userName, assistName, target string) {
-	msg := CarpCh{
-		UserID:     userId,
-		Event:      event,
-		UserName:   userName,
-		AssistName: assistName,
-		Target:     target,
-	}
-
-	select {
-	case CarpinteroCh <- msg:
-	default:
-		log.Printf("CarpinteroCh: канал закрыт или переполнен, не удалось отправить сообщение: %+v", msg)
-	}
 }
