@@ -11,6 +11,13 @@ import (
 	"time"
 )
 
+// Model интерфейс для работы с моделями Assistant
+type Model interface {
+	GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (RespModel, error)
+	GetCh(respId uint64) (Ch, error)
+	SaveAllContextDuringExit()
+}
+
 type DB interface {
 	ReadContext(dialogId uint64) (json.RawMessage, error)
 	SaveContext(treadId uint64, context json.RawMessage) error
