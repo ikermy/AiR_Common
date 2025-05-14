@@ -8,13 +8,13 @@ import (
 	"time"
 )
 
-// CreatorType - из db
-type CreatorType uint8
-
-const (
-	User CreatorType = iota
-	AI
-)
+//// CreatorType - из db
+//type CreatorType uint8
+//
+//const (
+//	User CreatorType = iota
+//	AI
+//)
 
 // Question структура для хранения вопросов пользователя
 type Question struct {

@@ -9,6 +9,13 @@ import (
 	"log"
 )
 
+type CreatorType uint8
+
+const (
+	User CreatorType = 1
+	AI   CreatorType = 2
+)
+
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction
 func DecompressAndExtractMetadata(compressedData []byte) (string, []string, error) {
 	// Создаем reader для распаковки данных
