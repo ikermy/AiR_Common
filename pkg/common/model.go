@@ -16,6 +16,7 @@ type Model interface {
 	GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (RespModel, error)
 	GetCh(respId uint64) (Ch, error)
 	SaveAllContextDuringExit()
+	Request(modelId string, dialogId uint64, text *string) (string, error)
 }
 
 type DB interface {
