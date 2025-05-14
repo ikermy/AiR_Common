@@ -148,7 +148,7 @@ func NewConf() (*Conf, error) {
 
 	// Предполагаем, что первая карта в массиве содержит наши настройки
 	if len(globConfigs) > 0 {
-		globConf.UserModelTTl = authConfigs[0]["usermodttl"].(int)
+		globConf.UserModelTTl = globConfigs[0]["usermodttl"].(int)
 	} else {
 		return nil, fmt.Errorf("не найдены параметры конфигурации Glob")
 	}
