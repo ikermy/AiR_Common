@@ -285,7 +285,7 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 
 	m.responders.Store(dialogId, user)
 
-	//fmt.Printf("dialogId %d cached successfully with TTL %v minutes.\n", dialogId, global.UserModelTTl)
+	//fmt.Printf("dialogId %d cached successfully with TTL %v minutes.\n", dialogId, mode.UserModelTTl)
 
 	// Сигнализируем ожидающим горутинам
 	m.mu.Lock()
