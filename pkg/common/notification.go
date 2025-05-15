@@ -9,10 +9,7 @@ import (
 	"net/http"
 )
 
-var (
-	CarpinteroCh = make(chan CarpCh, 1) // Канал для передачи уведомлений
-	Event        = make(chan uint64, 1) // Канал для передачи Id диалога при отключении клиента
-)
+var CarpinteroCh = make(chan CarpCh, 1) // Канал для передачи уведомлений
 
 func SendEvent(userId uint32, event, userName, assistName, target string) {
 	msg := CarpCh{

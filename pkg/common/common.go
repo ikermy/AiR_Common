@@ -15,6 +15,11 @@ type CarpCh struct {
 	Target     string
 }
 
+var (
+	CarpinteroCh = make(chan CarpCh, 1) // Канал для передачи уведомлений
+	Event        = make(chan uint64, 1) // Канал для передачи Id диалога при отключении клиента
+)
+
 // ErrorCode - константы кодов ошибок подписки
 type ErrorCode int
 
