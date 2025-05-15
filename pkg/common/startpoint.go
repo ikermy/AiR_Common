@@ -43,7 +43,7 @@ type Start struct {
 	Bot BotInterface
 }
 
-// NewStart создаёт новый экземпляр Start (бывший startpoint.New)
+// NewStart создаёт новый экземпляр Start
 func NewStart(mod ModelInterface, end EndpointInterface, bot BotInterface) *Start {
 	return &Start{
 		Mod: mod,
