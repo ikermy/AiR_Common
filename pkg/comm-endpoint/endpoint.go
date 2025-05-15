@@ -22,16 +22,16 @@ type Endpoint struct {
 	Db           DB
 	answers      []string
 	arrMsg       map[uint64]map[uint64][]string
-	messageBatch map[uint64][]comm_db.Message // Буфер сообщений для каждого треда
-	batchSize    int                          // Размер батча
+	MessageBatch map[uint64][]comm_db.Message // Буфер сообщений для каждого треда
+	BatchSize    int                          // Размер батча
 	batchMutex   sync.Mutex                   // Мьютекс для защиты буфера
 }
 
 func New(d DB) *Endpoint {
 	e := &Endpoint{
 		Db:           d,
-		messageBatch: make(map[uint64][]comm_db.Message),
-		batchSize:    mode.BatchSize, // Размер батча по умолчанию
+		MessageBatch: make(map[uint64][]comm_db.Message),
+		BatchSize:    mode.BatchSize, // Размер батча по умолчанию
 	}
 
 	// Запускаем горутину для периодической очистки буфера
@@ -55,7 +55,7 @@ func (e *Endpoint) FlushThreadBatch(threadId uint64) {
 	e.batchMutex.Lock()
 	defer e.batchMutex.Unlock()
 
-	if len(e.messageBatch[threadId]) > 0 {
+	if len(e.MessageBatch[threadId]) > 0 {
 		e.flushThreadBatch(threadId)
 	}
 }
@@ -71,13 +71,13 @@ func (e *Endpoint) PeriodicFlush() {
 
 func (e *Endpoint) flushThreadBatch(threadId uint64) {
 	// Должен вызываться с заблокированным e.batchMutex
-	batch := e.messageBatch[threadId]
+	batch := e.MessageBatch[threadId]
 	if len(batch) == 0 {
 		return
 	}
 
 	// Очищаем буфер
-	delete(e.messageBatch, threadId)
+	delete(e.MessageBatch, threadId)
 
 	// Разблокируем мьютекс на время операций с БД
 	e.batchMutex.Unlock()
@@ -102,8 +102,8 @@ func (e *Endpoint) FlushAllBatches() {
 	e.batchMutex.Lock()
 	defer e.batchMutex.Unlock()
 
-	for threadId := range e.messageBatch {
-		if len(e.messageBatch[threadId]) > 0 {
+	for threadId := range e.MessageBatch {
+		if len(e.MessageBatch[threadId]) > 0 {
 			e.flushThreadBatch(threadId)
 		}
 	}
@@ -166,10 +166,10 @@ func (e *Endpoint) SaveDialog(creator comm_db.CreatorType, treadId uint64, resp 
 	defer e.batchMutex.Unlock()
 
 	// Добавляем сообщение в буфер
-	e.messageBatch[treadId] = append(e.messageBatch[treadId], message)
+	e.MessageBatch[treadId] = append(e.MessageBatch[treadId], message)
 
 	// Если размер буфера достиг порога, сохраняем
-	if len(e.messageBatch[treadId]) >= e.batchSize {
+	if len(e.MessageBatch[treadId]) >= e.BatchSize {
 		e.flushThreadBatch(treadId)
 	}
 }
