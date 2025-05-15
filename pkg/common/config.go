@@ -90,8 +90,8 @@ func NewConf() (*Conf, error) {
 
 	// DB секция
 	var dbConfig DBConfig
-	if err := v.UnmarshalKey("db", &dbConfig); err != nil {
-		return nil, fmt.Errorf("ошибка разбора секции db: %w", err)
+	if err := v.UnmarshalKey("comm-db", &dbConfig); err != nil {
+		return nil, fmt.Errorf("ошибка разбора секции comm-db: %w", err)
 	}
 	conf.DB = dbConfig
 

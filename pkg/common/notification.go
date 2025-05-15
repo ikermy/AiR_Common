@@ -9,8 +9,6 @@ import (
 	"net/http"
 )
 
-var CarpinteroCh = make(chan CarpCh, 1) // Канал для передачи уведомлений
-
 func SendEvent(userId uint32, event, userName, assistName, target string) {
 	msg := CarpCh{
 		UserID:     userId,
@@ -28,7 +26,7 @@ func SendEvent(userId uint32, event, userName, assistName, target string) {
 }
 
 func SendWebhookNotification(msg CarpCh) error {
-	// Формируем URL для webhook
+	// URL для webhook
 	url := fmt.Sprintf("https://localhost:8088/notification")
 	//url := fmt.Sprintf("https://app:8088/notification")
 
@@ -82,11 +80,7 @@ func NotificationListener() {
 				log.Println("CarpinteroCh closed")
 				return
 			}
-			err := SendWebhookNotification(msg)
-			if err != nil {
-				log.Println("'NotificationListener': ошибка отправки уведомления:", err)
-			}
-
+			SendWebhookNotification(msg)
 		}
 	}
 }
