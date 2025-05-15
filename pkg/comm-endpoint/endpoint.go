@@ -1,10 +1,10 @@
-package endpoint
+package comm_endpoint
 
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ikermy/AiR_Common/pkg/comm-db"
 	"github.com/ikermy/AiR_Common/pkg/common"
-	"github.com/ikermy/AiR_Common/pkg/db"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"log"
 	"strings"
@@ -22,15 +22,15 @@ type Endpoint struct {
 	Db           DB
 	answers      []string
 	arrMsg       map[uint64]map[uint64][]string
-	messageBatch map[uint64][]db.Message // Буфер сообщений для каждого треда
-	batchSize    int                     // Размер батча
-	batchMutex   sync.Mutex              // Мьютекс для защиты буфера
+	messageBatch map[uint64][]comm_db.Message // Буфер сообщений для каждого треда
+	batchSize    int                          // Размер батча
+	batchMutex   sync.Mutex                   // Мьютекс для защиты буфера
 }
 
 func New(d DB) *Endpoint {
 	e := &Endpoint{
 		Db:           d,
-		messageBatch: make(map[uint64][]db.Message),
+		messageBatch: make(map[uint64][]comm_db.Message),
 		batchSize:    mode.BatchSize, // Размер батча по умолчанию
 	}
 
@@ -150,13 +150,13 @@ func (e *Endpoint) SetUserAsk(dialogId uint64, respId uint64, ask string, askLim
 	return true
 }
 
-func (e *Endpoint) SaveDialog(creator db.CreatorType, treadId uint64, resp *string) {
+func (e *Endpoint) SaveDialog(creator comm_db.CreatorType, treadId uint64, resp *string) {
 	ask := strings.TrimSpace(*resp)
 	if ask == "" || ask == "[]" { // Этого не может быть?! Но на всякий случай
 		return
 	}
 
-	message := db.Message{
+	message := comm_db.Message{
 		Creator:   creator,
 		Message:   *resp,
 		Timestamp: time.Now(),
