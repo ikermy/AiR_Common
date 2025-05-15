@@ -9,14 +9,6 @@ import (
 	"time"
 )
 
-//// CreatorType - из comm-db
-//type CreatorType uint8
-//
-//const (
-//	User CreatorType = iota
-//	AI
-//)
-
 // Question структура для хранения вопросов пользователя
 type Question struct {
 	Question []string
