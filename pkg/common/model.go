@@ -17,7 +17,6 @@ type Model interface {
 	GetCh(respId uint64) (Ch, error)
 	SaveAllContextDuringExit()
 	Request(modelId string, dialogId uint64, text *string) (string, error)
-	CleanDialogData(dialogId uint64)
 }
 
 type DB interface {
@@ -76,11 +75,9 @@ type Services struct {
 }
 
 type Ch struct {
-	TxCh     chan Message
-	RxCh     chan Message
-	UserId   uint32
-	DialogId uint64
-	RespName string
+	TxCh   chan Message
+	RxCh   chan Message
+	UserId uint32
 }
 
 type Message struct {
@@ -255,11 +252,9 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 
 	// Добавляем новый Ch в map
 	user.Chan[respId] = Ch{
-		TxCh:     make(chan Message, 1),
-		RxCh:     make(chan Message, 1),
-		UserId:   assist.UserId,
-		DialogId: dialogId,
-		RespName: respName,
+		TxCh:   make(chan Message, 1),
+		RxCh:   make(chan Message, 1),
+		UserId: assist.UserId,
 	}
 
 	// Читаю контекст из базы данных
