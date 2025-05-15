@@ -9,8 +9,24 @@ import (
 	"net/http"
 )
 
+func SendEvent(userId uint32, event, userName, assistName, target string) {
+	msg := CarpCh{
+		UserID:     userId,
+		Event:      event,
+		UserName:   userName,
+		AssistName: assistName,
+		Target:     target,
+	}
+
+	select {
+	case CarpinteroCh <- msg:
+	default:
+		log.Printf("CarpinteroCh: канал закрыт или переполнен, не удалось отправить сообщение: %+v", msg)
+	}
+}
+
 func SendWebhookNotification(msg CarpCh) error {
-	// Формируем URL для webhook
+	// URL для webhook
 	url := fmt.Sprintf("https://localhost:8088/notification")
 	//url := fmt.Sprintf("https://app:8088/notification")
 
