@@ -35,7 +35,7 @@ func New(d DB) *Endpoint {
 	}
 
 	// Запускаем горутину для периодической очистки буфера
-	go e.periodicFlush()
+	go e.PeriodicFlush()
 
 	////////// ИСПОЛЬЗУЕТСЯ В КАНАЛАХ ДОПУСКАЮЩИЙ ОТСЛЕЖИВАНИЕ ЗАВЕРШЕНИЯ ДИАЛОГА !!!!!!!!!
 	// Добавляем обработку событий для немедленного сохранения диалога
@@ -60,7 +60,7 @@ func (e *Endpoint) FlushThreadBatch(threadId uint64) {
 	}
 }
 
-func (e *Endpoint) periodicFlush() {
+func (e *Endpoint) PeriodicFlush() {
 	ticker := time.NewTicker(mode.TimePeriodicFlush * time.Second)
 	defer ticker.Stop()
 
