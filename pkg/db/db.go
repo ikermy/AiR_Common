@@ -1,4 +1,4 @@
-package common
+package db
 
 import (
 	"bytes"
@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"time"
 )
 
 type CreatorType uint8
@@ -15,6 +16,12 @@ const (
 	User CreatorType = 1
 	AI   CreatorType = 2
 )
+
+type Message struct {
+	Creator   CreatorType `json:"creator"`
+	Message   string      `json:"message"`
+	Timestamp time.Time   `json:"timestamp"`
+}
 
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction
 func DecompressAndExtractMetadata(compressedData []byte) (string, []string, error) {

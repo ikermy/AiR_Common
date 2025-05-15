@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"github.com/ikermy/AiR_Common/pkg/db"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"log"
 	"strings"
@@ -35,7 +36,7 @@ type BotInterface interface {
 type EndpointInterface interface {
 	GetUserAsk(dialogId uint64, respId uint64) []string
 	SetUserAsk(dialogId uint64, respId uint64, ask string, askLimit uint32) bool
-	SaveDialog(creator CreatorType, treadId uint64, resp *string)
+	SaveDialog(creator db.CreatorType, treadId uint64, resp *string)
 	Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string)
 }
 
