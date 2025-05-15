@@ -80,6 +80,7 @@ type Ch struct {
 	RxCh     chan Message
 	UserId   uint32
 	DialogId uint64
+	RespName string
 }
 
 type Message struct {
@@ -258,6 +259,7 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 		RxCh:     make(chan Message, 1),
 		UserId:   assist.UserId,
 		DialogId: dialogId,
+		RespName: respName,
 	}
 
 	// Читаю контекст из базы данных
