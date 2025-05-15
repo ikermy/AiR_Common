@@ -59,6 +59,15 @@ func NewStart(mod ModelInterface, end EndpointInterface, bot BotInterface) *Star
 	}
 }
 
+// NewStart создаёт новый экземпляр Start (бывший startpoint.New)
+func NewStart(mod ModelInterface, end EndpointInterface, bot BotInterface) *Start {
+	return &Start{
+		Mod: mod,
+		End: end,
+		Bot: bot,
+	}
+}
+
 func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (string, error) {
 	answerCh := make(chan string) // Канал для ответа
 	errCh := make(chan error)     // Канал для ошибок
