@@ -5,6 +5,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"log"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,8 @@ type Answer struct {
 // BotInterface - интерфейс для различных реализаций ботов
 type BotInterface interface {
 	NewMessage(msgType string, content, name *string) Message
+	StartBots() error
+	StopBot()
 }
 
 // EndpointInterface - интерфейс для работы с диалогами
@@ -29,11 +32,14 @@ type EndpointInterface interface {
 	SetUserAsk(dialogId uint64, respId uint64, ask string, askLimit uint32) bool
 	SaveDialog(creator CreatorType, treadId uint64, resp *string)
 	Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string)
+	FlushAllBatches()
 }
 
 // ModelInterface - интерфейс для моделей
 type ModelInterface interface {
 	Request(modelId string, dialogId uint64, ask *string) (string, error)
+	GetCh(respId uint64) (Ch, error)
+	CleanUp()
 }
 
 // Start структура с интерфейсами вместо конкретных типов
@@ -41,9 +47,10 @@ type Start struct {
 	Mod ModelInterface
 	End EndpointInterface
 	Bot BotInterface
+	mu  sync.Mutex
 }
 
-// NewStart создаёт новый экземпляр Start
+// NewStart создаёт новый экземпляр Start (бывший startpoint.New)
 func NewStart(mod ModelInterface, end EndpointInterface, bot BotInterface) *Start {
 	return &Start{
 		Mod: mod,
@@ -104,9 +111,8 @@ func (s *Start) Respondent(
 	errCh chan error,
 ) {
 	var (
-		deaf bool   // Не слушать ввод пользователя до момента получения ответа
-		ask  string // Вопрос пользователя
-		//respName string // Имя пользователя
+		deaf     bool   // Не слушать ввод пользователя до момента получения ответа
+		ask      string // Вопрос пользователя
 		askTimer *time.Timer
 	)
 
@@ -114,7 +120,7 @@ func (s *Start) Respondent(
 		select {
 		case <-u.Ctx.Done():
 			log.Println("Context.Done Respondent", u.RespName)
-			//return nil
+			return
 		case quest, open := <-questionCh: // Ждём ввод
 			if !open {
 				select {
@@ -126,8 +132,6 @@ func (s *Start) Respondent(
 				continue
 			}
 
-			//fmt.Printf("Respondent Получен вопрос: %s", quest)
-
 			// Проверяю наличие в запросе пользователя сообщения из u.Assist.Metas.Triggers
 			if len(u.Assist.Metas.Triggers) > 0 {
 				userQuestion := strings.Join(quest.Question, "\n")
@@ -135,14 +139,12 @@ func (s *Start) Respondent(
 					if strings.Contains(userQuestion, trigger) {
 						// Если триггер найден, то уведомляю пользователя в CarpinteroCh
 						s.End.Meta(u.Assist.UserId, treadId, "trigger", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
-						//common.SendEvent(u.Assist.UserId, "trigger", u.RespName, u.Assist.AssistName, userQuestion)
 					}
 				}
 			}
 
 			// сохраняю в глобальную переменную
 			ask = strings.Join(quest.Question, "\n")
-			//respName = quest.Name
 			// Добавляю вопрос для контекста
 			if s.End.SetUserAsk(treadId, respId, ask, u.Assist.Limit) {
 				askTimer = time.NewTimer(time.Duration(u.Assist.Espero) * time.Second) // Жду ещё ввода перед тем как ответить
@@ -192,7 +194,6 @@ func (s *Start) Respondent(
 
 				case <-askTimer.C:
 					askTimer.Stop()
-					//fmt.Println("Время ожидания вопроса истекло.")
 					// Sordo
 					if u.Assist.Ignore {
 						deaf = true
@@ -212,7 +213,6 @@ func (s *Start) Respondent(
 		}
 		// Сохраняю запрос пользователя для сохранения диалога
 		fullAsk := Answer{
-			//Name:   respName,
 			Answer: strings.Join(userAsk, "\n"),
 		}
 
@@ -234,10 +234,10 @@ func (s *Start) Respondent(
 		deaf = false
 
 		if err != nil {
-			log.Print(err) // Отправить бы в какй то канал для ошибок
-			continue       // Если ошибка, то просто продолжаем цикл
+			log.Print(err)
+			continue
 		}
-		// Или если пустой ответ от OpenAI (канал закрылся по таймауту или другая ошибка)
+		// Если пустой ответ от OpenAI
 		if answer == "" {
 			continue
 		}
@@ -246,13 +246,11 @@ func (s *Start) Respondent(
 		if u.Assist.Metas.MetaAction != "" {
 			if strings.Contains(answer, u.Assist.Metas.MetaAction) {
 				s.End.Meta(u.Assist.UserId, treadId, "target", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
-				//common.SendEvent(u.Assist.UserId, "target", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
 			}
 		}
 
 		// Отправляем ответ вызывающей функции
 		answ := Answer{
-			//Name:   respName,
 			Answer: answer,
 		}
 		//Проверяю что канал answerCh не закрыт
@@ -341,12 +339,9 @@ func (s *Start) Listener(
 				return nil
 			}
 
-			//fmt.Printf("Listener Получено сообщение: %s", msg.Content)
-
 			if msg.Type == "user" {
 				// Создаю вопрос
 				quest := Question{
-					//Name:     msg.UserName,
 					Question: strings.Split(msg.Content, "\n"),
 				}
 				// отправляю вопрос ассистенту
@@ -358,7 +353,7 @@ func (s *Start) Listener(
 					return fmt.Errorf("'Listener' канал TxCh закрыт или переполнен")
 				}
 			}
-		case quest := <-fullQuestCh: // Пришёл полный вопрос пользователя (такой вопрос уйдет в OpenAI)
+		case quest := <-fullQuestCh: // Пришёл полный вопрос пользователя
 			go s.End.SaveDialog(0, treadId, &quest.Answer)
 		case resp := <-answerCh: // Пришёл ответ ассистента
 			select {

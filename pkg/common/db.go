@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
 	"io"
 	"log"
 )
@@ -16,12 +15,6 @@ const (
 	User CreatorType = 1
 	AI   CreatorType = 2
 )
-
-//type Message struct {
-//	Creator CreatorType `json:"creator"`
-//	Message string      `json:"message"`
-//	Timestamp time.Time   `json:"timestamp"`
-//}
 
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction
 func DecompressAndExtractMetadata(compressedData []byte) (string, []string, error) {
