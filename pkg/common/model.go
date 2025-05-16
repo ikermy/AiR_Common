@@ -384,19 +384,19 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 		for respId, ch := range respModel.Chan {
 			safeClose(ch.TxCh)
 			safeClose(ch.RxCh)
-			log.Printf("Каналы закрыты для responderId %d", respId)
+			//log.Printf("Каналы закрыты для responderId %d", respId)
 			// Удаляем канал из TxCh
 			delete(respModel.Chan, respId)
 		}
 
-		log.Printf("Channels closed for dialogId %d", dialogId)
+		//log.Printf("Channels closed for dialogId %d", dialogId)
 
 		// Освобождаю контекст и завершаю горутины
 		respModel.Cancel()
 		// Удаляю запись из кэша
 		m.responders.Delete(dialogId)
 
-		log.Printf("Контекст отменен для dialogId %d", dialogId)
+		//log.Printf("Контекст отменен для dialogId %d", dialogId)
 	} else {
 		log.Printf("Контекст не найден для dialogId %d", dialogId)
 	}

@@ -113,7 +113,7 @@ func (s *Start) Respondent(
 	for {
 		select {
 		case <-u.Ctx.Done():
-			log.Println("Context.Done Respondent")
+			log.Println("Context.Done Respondent", u.RespName)
 			//return nil
 		case quest, open := <-questionCh: // Ждём ввод
 			if !open {
@@ -337,7 +337,7 @@ func (s *Start) Listener(
 			return nil
 		case msg, clos := <-usrCh.RxCh:
 			if !clos {
-				log.Println("Канал RxCh закрыт!")
+				log.Println("Канал RxCh закрыт", u.RespName)
 				return nil
 			}
 

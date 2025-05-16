@@ -9,8 +9,6 @@ import (
 	"net/http"
 )
 
-var CarpinteroCh = make(chan CarpCh, 1) // Канал для передачи уведомлений
-
 func SendEvent(userId uint32, event, userName, assistName, target string) {
 	msg := CarpCh{
 		UserID:     userId,
