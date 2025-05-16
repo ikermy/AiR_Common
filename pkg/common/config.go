@@ -18,6 +18,7 @@ type Conf struct {
 
 type TgConfig struct {
 	Token string `mapstructure:"token"`
+	Id    int64  `mapstructure:"id"`
 }
 
 type GPTConfig struct {
@@ -72,6 +73,19 @@ func NewConf() (*Conf, error) {
 	if err := v.UnmarshalKey("tg", &tgConfig); err != nil {
 		return nil, fmt.Errorf("ошибка разбора секции tg: %w", err)
 	}
+
+	// Отдельно обрабатываем id, так как может потребоваться преобразование из строки
+	if v.IsSet("tg.id") {
+		idStr := v.GetString("tg.id")
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("некорректное значение tg.id: %w", err)
+		}
+		tgConfig.Id = id
+	} else {
+		return nil, fmt.Errorf("не найден параметр tg.id")
+	}
+
 	conf.TG = tgConfig
 
 	// GPT секция
