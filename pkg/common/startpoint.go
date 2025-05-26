@@ -331,7 +331,7 @@ func (s *Start) Listener(
 		case err := <-errCh:
 			return err // Возвращаем возможные ошибки
 		case <-u.Ctx.Done():
-			log.Println("Context.Done Listener")
+			log.Println("Context.Done Listener", u.RespName)
 			return nil
 		case msg, clos := <-usrCh.RxCh:
 			if !clos {

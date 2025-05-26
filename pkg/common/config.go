@@ -30,6 +30,7 @@ type GPTConfig struct {
 type WebConfig struct {
 	TgBot  string `mapstructure:"tgbot"`
 	TgUser string `mapstructure:"tguser"`
+	Whats  string `mapstructure:"whats"`
 }
 
 type DBConfig struct {
