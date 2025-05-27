@@ -14,6 +14,8 @@ type Conf struct {
 	DB   DBConfig
 	AU   AUTH
 	GLOB GLOB
+	SMTP SMTP
+	AS   []AssistConfig
 }
 
 type TgConfig struct {
@@ -28,6 +30,7 @@ type GPTConfig struct {
 }
 
 type WebConfig struct {
+	Land   string `mapstructure:"land"`
 	TgBot  string `mapstructure:"tgbot"`
 	TgUser string `mapstructure:"tguser"`
 	Whats  string `mapstructure:"whats"`
@@ -48,6 +51,24 @@ type GLOB struct {
 	UserModelTTl int
 }
 
+type SMTP struct {
+	Host     string `mapstructure:"host"`
+	Port     string `mapstructure:"port"`
+	Email    string `mapstructure:"mail"`
+	Password string `mapstructure:"pass"`
+}
+
+type AssistConfig struct {
+	Name string
+	Key  string
+}
+
+type AssistRaw struct {
+	Psycho string `mapstructure:"psycho"`
+	Lawyer string `mapstructure:"lawyer"`
+	Tech   string `mapstructure:"tech"`
+}
+
 func NewConf() (*Conf, error) {
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {
@@ -61,7 +82,7 @@ func NewConf() (*Conf, error) {
 
 	v := viper.New()
 	v.SetConfigFile(configPath)
-	v.SetConfigType("yaml") // Изменен тип на yaml
+	v.SetConfigType("yaml")
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("ошибка чтения файла конфигурации: %w", err)
@@ -127,6 +148,31 @@ func NewConf() (*Conf, error) {
 		conf.GLOB = GLOB{UserModelTTl: usermodttl}
 	} else {
 		return nil, fmt.Errorf("не найден параметр glob.usermodttl")
+	}
+
+	// SMTP секция
+	var smtpConfig SMTP
+	if err := v.UnmarshalKey("smtp", &smtpConfig); err != nil {
+		return nil, fmt.Errorf("ошибка разбора секции smtp: %w", err)
+	}
+	conf.SMTP = smtpConfig
+
+	// Assist секция
+	var assistRaw AssistRaw
+	if err := v.UnmarshalKey("assist", &assistRaw); err != nil {
+		return nil, fmt.Errorf("ошибка разбора секции assist: %w", err)
+	}
+
+	// Преобразуем AssistRaw в массив AssistConfig
+	conf.AS = make([]AssistConfig, 0, 3)
+	if assistRaw.Psycho != "" {
+		conf.AS = append(conf.AS, AssistConfig{Name: "psycho", Key: assistRaw.Psycho})
+	}
+	if assistRaw.Lawyer != "" {
+		conf.AS = append(conf.AS, AssistConfig{Name: "lawyer", Key: assistRaw.Lawyer})
+	}
+	if assistRaw.Tech != "" {
+		conf.AS = append(conf.AS, AssistConfig{Name: "tech", Key: assistRaw.Tech})
 	}
 
 	return conf, nil
