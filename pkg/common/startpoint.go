@@ -12,11 +12,13 @@ import (
 // Question структура для хранения вопросов пользователя
 type Question struct {
 	Question []string
+	Voice    bool // Флаг, указывающий, что вопрос задан голосом
 }
 
 // Answer структура для хранения ответов пользователя
 type Answer struct {
-	Answer string
+	Answer        string
+	VoiceQuestion bool // Флаг, указывающий, что вопрос был задан голосом
 }
 
 // BotInterface - интерфейс для различных реализаций ботов
@@ -111,9 +113,10 @@ func (s *Start) Respondent(
 	errCh chan error,
 ) {
 	var (
-		deaf     bool   // Не слушать ввод пользователя до момента получения ответа
-		ask      string // Вопрос пользователя
-		askTimer *time.Timer
+		deaf          bool   // Не слушать ввод пользователя до момента получения ответа
+		ask           string // Вопрос пользователя
+		askTimer      *time.Timer
+		VoiceQuestion bool // Флаг, указывающий, что вопрос был задан голосом
 	)
 
 	for {
@@ -145,6 +148,9 @@ func (s *Start) Respondent(
 
 			// сохраняю в глобальную переменную
 			ask = strings.Join(quest.Question, "\n")
+			// Сохраняю информацию о голосовом вопросе
+			VoiceQuestion = quest.Voice
+
 			// Добавляю вопрос для контекста
 			if s.End.SetUserAsk(treadId, respId, ask, u.Assist.Limit) {
 				askTimer = time.NewTimer(time.Duration(u.Assist.Espero) * time.Second) // Жду ещё ввода перед тем как ответить
@@ -213,7 +219,8 @@ func (s *Start) Respondent(
 		}
 		// Сохраняю запрос пользователя для сохранения диалога
 		fullAsk := Answer{
-			Answer: strings.Join(userAsk, "\n"),
+			Answer:        strings.Join(userAsk, "\n"),
+			VoiceQuestion: VoiceQuestion, // Передаём информацию о голосовом вопросе
 		}
 
 		// Проверяю что канал fullQuestCh не закрыт
@@ -339,11 +346,26 @@ func (s *Start) Listener(
 				return nil
 			}
 
-			if msg.Type == "user" {
+			if msg.Type != "assist" {
 				// Создаю вопрос
-				quest := Question{
-					Question: strings.Split(msg.Content, "\n"),
+				var quest Question
+				switch msg.Type {
+				case "user":
+					quest = Question{
+						Question: strings.Split(msg.Content, "\n"),
+						Voice:    false, // Сообщение от пользователя не голосовое
+					}
+				case "user_voice":
+					quest = Question{
+						Question: strings.Split(msg.Content, "\n"),
+						Voice:    true, // Сообщение от пользователя голосовое
+					}
+				default:
+					// Неизвестный тип сообщения, пропускаю
+					log.Printf("Неизвестный тип сообщения: %s", msg.Type)
+					continue
 				}
+
 				// отправляю вопрос ассистенту
 				question <- quest
 				// Отправляю вопрос клиента в виде сообщения
@@ -354,7 +376,12 @@ func (s *Start) Listener(
 				}
 			}
 		case quest := <-fullQuestCh: // Пришёл полный вопрос пользователя
-			go s.End.SaveDialog(0, treadId, &quest.Answer)
+			switch quest.VoiceQuestion {
+			case false: // Вопрос задан текстом
+				go s.End.SaveDialog(0, treadId, &quest.Answer)
+			case true: // Вопрос задан голосом
+				go s.End.SaveDialog(2, treadId, &quest.Answer)
+			}
 		case resp := <-answerCh: // Пришёл ответ ассистента
 			select {
 			case usrCh.TxCh <- s.Bot.NewMessage("assist", &resp.Answer, &u.RespName):

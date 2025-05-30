@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -476,4 +477,30 @@ func (m *Models) SaveAllContextDuringExit() {
 
 		return true
 	})
+}
+
+func (m *Models) TranscribeAudio(audioData []byte, fileName string) (string, error) {
+	// Проверка наличия аудиоданных
+	if len(audioData) == 0 {
+		return "", fmt.Errorf("пустые аудиоданные")
+	}
+
+	// Создаем запрос для транскрибирования
+	req := openai.AudioRequest{
+		Model:    openai.Whisper1,
+		FilePath: fileName,
+		Reader:   bytes.NewReader(audioData),
+	}
+
+	// Транскрибируем аудио в текст
+	resp, err := m.client.CreateTranscription(m.ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("ошибка транскрибирования аудио: %w", err)
+	}
+
+	if resp.Text == "" {
+		return "", fmt.Errorf("получен пустой текст при транскрибировании")
+	}
+
+	return resp.Text, nil
 }

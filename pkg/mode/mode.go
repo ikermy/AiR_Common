@@ -6,7 +6,8 @@ const (
 )
 
 var (
-	TestAnswer = false
+	TestAnswer = false // Тестовый режим, когда ответ на вопрос возвращается сразу, без обращения к модели
+	AudioMsg   = false // Разрешает принимать аудио сообщения в диалоге
 
 	// BatchSize Endpoint
 	BatchSize = 100
@@ -14,4 +15,8 @@ var (
 
 func SetTestMode(enabled bool) {
 	TestAnswer = enabled
+}
+
+func SetAudioMode(enabled bool) {
+	AudioMsg = enabled
 }

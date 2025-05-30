@@ -12,8 +12,9 @@ import (
 type CreatorType uint8
 
 const (
-	User CreatorType = 1
-	AI   CreatorType = 2
+	User      CreatorType = 1
+	AI        CreatorType = 2
+	UserVoice CreatorType = 3
 )
 
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction
