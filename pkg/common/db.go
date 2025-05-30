@@ -12,8 +12,8 @@ import (
 type CreatorType uint8
 
 const (
-	User      CreatorType = 1
-	AI        CreatorType = 2
+	AI        CreatorType = 1
+	User      CreatorType = 2
 	UserVoice CreatorType = 3
 )
 
