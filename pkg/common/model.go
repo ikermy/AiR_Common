@@ -19,6 +19,7 @@ type Model interface {
 	SaveAllContextDuringExit()
 	Request(modelId string, dialogId uint64, text *string) (string, error)
 	CleanDialogData(dialogId uint64)
+	TranscribeAudio(audioData []byte, fileName string) (string, error)
 }
 
 type DB interface {
