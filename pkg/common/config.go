@@ -24,6 +24,7 @@ type TgConfig struct {
 }
 
 type GPTConfig struct {
+	Created string `mapstructure:"created"`
 	URL     string `mapstructure:"url"`
 	Project string `mapstructure:"project"`
 	Key     string `mapstructure:"key"`
