@@ -21,7 +21,7 @@ type Conf struct {
 type TgConfig struct {
 	Token string `mapstructure:"token"`
 	Id    int64  `mapstructure:"id"`
-	Name  string `mapstructure:"name"`
+	Name  string `mapstructure:"bot"`
 }
 
 type GPTConfig struct {
