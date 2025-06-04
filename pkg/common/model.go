@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/sashabaranov/go-openai"
 	"log"
 	"strings"
@@ -102,7 +103,7 @@ type StartCh struct {
 	RespId  uint64
 }
 
-func NewMod(conf *Conf, d DB) *Models {
+func NewMod(conf *conf.Conf, d DB) *Models {
 	return &Models{
 		client:       openai.NewClient(conf.GPT.Key),
 		ctx:          context.Background(),

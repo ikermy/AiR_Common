@@ -1,4 +1,4 @@
-package common
+package conf
 
 import (
 	"fmt"
@@ -21,6 +21,7 @@ type Conf struct {
 type TgConfig struct {
 	Token string `mapstructure:"token"`
 	Id    int64  `mapstructure:"id"`
+	Name  string `mapstructure:"name"`
 }
 
 type GPTConfig struct {
