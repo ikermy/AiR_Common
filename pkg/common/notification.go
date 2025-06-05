@@ -11,7 +11,9 @@ import (
 
 var (
 	CarpinteroCh = make(chan CarpCh, 1) // Канал для передачи уведомлений
-	Event        = make(chan uint64, 1) // Канал для передачи Id диалога при отключении клиента
+	//Event        = make(chan uint64, 1) // Канал для передачи Id диалога при отключении клиента
+	CarpinteroPort string
+	CarpinteroHost string
 )
 
 func SendEvent(userId uint32, event, userName, assistName, target string) {
@@ -32,8 +34,8 @@ func SendEvent(userId uint32, event, userName, assistName, target string) {
 
 func SendWebhookNotification(msg CarpCh) error {
 	// Формируем URL для webhook
-	url := fmt.Sprintf("https://localhost:8088/notification")
-	//url := fmt.Sprintf("https://app:8088/notification")
+	//url := fmt.Sprintf("https://localhost:8088/notification")
+	url := fmt.Sprintf("%s:%s/notification", CarpinteroHost, CarpinteroPort)
 
 	// Создаем данные для отправки
 	payload := map[string]interface{}{

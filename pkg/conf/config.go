@@ -8,20 +8,20 @@ import (
 )
 
 type Conf struct {
+	AS   []AssistConfig
 	TG   TgConfig
 	GPT  GPTConfig
 	WEB  WebConfig
 	DB   DBConfig
 	AU   AUTH
-	GLOB GLOB
 	SMTP SMTP
-	AS   []AssistConfig
+	GLOB GLOB
 }
 
 type TgConfig struct {
+	Name  string `mapstructure:"bot"`
 	Token string `mapstructure:"token"`
 	Id    int64  `mapstructure:"id"`
-	Name  string `mapstructure:"bot"`
 }
 
 type GPTConfig struct {
@@ -76,7 +76,7 @@ type AssistRaw struct {
 func NewConf() (*Conf, error) {
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {
-		configPath = ".env" // Изменено на .yaml файл
+		configPath = ".env"
 	}
 
 	// Проверяем существование файла

@@ -29,13 +29,13 @@ type DB interface {
 }
 
 type Models struct {
-	db           DB
-	client       *openai.Client
 	ctx          context.Context
+	client       *openai.Client
+	db           DB
 	responders   sync.Map
-	mu           sync.Mutex
 	waitChannels map[uint64]chan struct{}
 	UserModelTTl time.Duration
+	mu           sync.Mutex
 }
 
 // Notifications структура для хранения настроек уведомлений о событиях
@@ -52,25 +52,26 @@ type Target struct {
 }
 
 type Assistant struct {
-	UserId     uint32
-	AssistName string
+	// Размещаем поля от большего к меньшему
 	AssistId   string
-	Espero     uint8
-	Limit      uint32
-	Ignore     bool
-	Events     Notifications
+	AssistName string
 	Metas      Target
+	Events     Notifications
+	UserId     uint32
+	Limit      uint32
+	Espero     uint8
+	Ignore     bool
 }
 
 type RespModel struct {
-	Assist    Assistant
-	RespName  string
-	TreadsGPT map[uint64]*openai.Thread
-	TTL       time.Time
-	Chan      map[uint64]Ch
-	Services  Services
 	Ctx       context.Context
 	Cancel    context.CancelFunc
+	TreadsGPT map[uint64]*openai.Thread
+	Chan      map[uint64]Ch
+	TTL       time.Time
+	Assist    Assistant
+	RespName  string
+	Services  Services
 }
 
 type Services struct {

@@ -9,10 +9,10 @@ import (
 // CarpCh - канал для передачи уведомлений
 type CarpCh struct {
 	Event      string
-	UserID     uint32
 	UserName   string
 	AssistName string
 	Target     string
+	UserID     uint32
 }
 
 // ErrorCode - константы кодов ошибок подписки
@@ -28,8 +28,8 @@ const (
 
 // SubscriptionError - структура для ошибок подписки
 type SubscriptionError struct {
-	Code    ErrorCode
 	Message string
+	Code    ErrorCode
 	UserID  uint32
 }
 
@@ -63,12 +63,12 @@ func CheckUserSubscription(provider SubscriptionProvider, userId uint32) error {
 	}
 
 	type UserSubscription struct {
+		EndDate      time.Time `json:"-"`
+		EndDateStr   string    `json:"EndDate"`
 		Balance      float64   `json:"balance"`
 		MessageCost  float64   `json:"MessageCost"`
-		EndDateStr   string    `json:"EndDate"`
 		MessageLimit int       `json:"MessageLimit"`
 		MessagesUsed int       `json:"MessagesUsed"`
-		EndDate      time.Time `json:"-"`
 	}
 
 	var userSub UserSubscription
