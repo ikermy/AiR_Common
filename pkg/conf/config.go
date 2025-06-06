@@ -76,7 +76,7 @@ type AssistRaw struct {
 func NewConf() (*Conf, error) {
 	configPath := os.Getenv("CONFIG_PATH")
 	if configPath == "" {
-		configPath = ".env"
+		configPath = "cfg.env"
 	}
 
 	// Проверяем существование файла

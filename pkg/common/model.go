@@ -133,7 +133,6 @@ func (m *Models) CreateThead(dialogId uint64) error {
 	// Проверяем, существует ли уже тред для dialogId
 	thread, exists := respModel.TreadsGPT[dialogId]
 	if exists && thread != nil {
-		log.Printf("тред уже существует для dialogId %d", dialogId)
 		return nil
 	}
 
