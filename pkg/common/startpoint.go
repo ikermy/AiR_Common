@@ -5,7 +5,6 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"log"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -49,7 +48,7 @@ type Start struct {
 	Mod ModelInterface
 	End EndpointInterface
 	Bot BotInterface
-	mu  sync.Mutex
+	//mu  sync.Mutex
 }
 
 // NewStart создаёт новый экземпляр Start (бывший startpoint.New)

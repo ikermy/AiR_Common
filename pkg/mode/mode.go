@@ -1,8 +1,8 @@
 package mode
 
 const (
-	ErrorTimeOutDurationForAssistAnswer = 3
-	TimePeriodicFlush                   = 60
+	ErrorTimeOutDurationForAssistAnswer = 1
+	//TimePeriodicFlush                   = 60
 )
 
 var (
