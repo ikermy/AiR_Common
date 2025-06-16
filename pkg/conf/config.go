@@ -49,7 +49,7 @@ type DBConfig struct {
 type AUTH struct {
 	Session string `mapstructure:"session"`
 	Created string `mapstructure:"created"`
-	Token   string `mapstructure:"token"`
+	UserKey string `mapstructure:"userkey"`
 }
 
 type GLOB struct {
