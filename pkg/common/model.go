@@ -32,10 +32,9 @@ type Models struct {
 	ctx          context.Context
 	client       *openai.Client
 	db           DB
-	responders   sync.Map
-	waitChannels map[uint64]chan struct{}
+	responders   sync.Map // Хранит указатели на RespModel, а не сами структуры
+	waitChannels sync.Map // Хранит каналы для синхронизации горутин
 	UserModelTTl time.Duration
-	mu           sync.Mutex
 }
 
 // Notifications структура для хранения настроек уведомлений о событиях
@@ -72,6 +71,8 @@ type RespModel struct {
 	Assist    Assistant
 	RespName  string
 	Services  Services
+	mu        sync.RWMutex // Мютекс для защиты полей структуры
+	//activeOps sync.WaitGroup // ТЕСТИРОВАТЬ
 }
 
 type Services struct {
@@ -110,7 +111,7 @@ func NewMod(conf *conf.Conf, d DB) *Models {
 		ctx:          context.Background(),
 		db:           d,
 		responders:   sync.Map{},
-		waitChannels: make(map[uint64]chan struct{}),
+		waitChannels: sync.Map{},
 		UserModelTTl: time.Duration(conf.GLOB.UserModelTTl) * time.Minute,
 	}
 }
@@ -122,8 +123,21 @@ func (m *Models) CreateThead(dialogId uint64) error {
 		return fmt.Errorf("RespModel не найден для userId %d", dialogId)
 	}
 
-	// Приведение типа к RespModel
-	respModel := val.(RespModel)
+	// Приведение типа к указателю на RespModel
+	respModel := val.(*RespModel)
+
+	//  ТЕСТИРОВАТЬ
+	//respModel := val.(*RespModel)
+	//if respModel.isClosing {
+	//	return // Не начинаем новую операцию с закрывающимся объектом
+	//}
+	//
+	//respModel.activeOps.Add(1)
+	//defer respModel.activeOps.Done()
+
+	// Блокируем для записи
+	respModel.mu.Lock()
+	defer respModel.mu.Unlock()
 
 	// Инициализируем карту тредов, если она nil
 	if respModel.TreadsGPT == nil {
@@ -149,8 +163,7 @@ func (m *Models) CreateThead(dialogId uint64) error {
 
 	// Сохраняем новый тред в карте тредов пользователя
 	respModel.TreadsGPT[dialogId] = &th
-	// Обновляем модель пользователя в sync.Map
-	m.responders.Store(dialogId, respModel)
+	// Поскольку мы работаем с указателем, нет необходимости обновлять значение в m.responders
 
 	return nil
 }
@@ -168,7 +181,7 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (string,
 		return "", fmt.Errorf("пустое сообщение")
 	}
 	// Возможно стоит использовать канал о сигнализации о готовности треда
-	time.Sleep(1 * time.Second)
+	//time.Sleep(1 * time.Second) // Протестировать!!!
 	err := m.CreateThead(dialogId)
 	if err != nil {
 		// Логируем ошибку, но не прерываем выполнение, так как тред мог уже существовать
@@ -181,11 +194,14 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (string,
 		return "", fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
 	}
 
-	// Приведение типа к RespModel
-	respModel := val.(RespModel)
+	// Приведение типа к указателю на RespModel
+	respModel := val.(*RespModel)
 
-	// Получаем gptThread из карты тредов пользователя
+	// Используем блокировку для чтения, чтобы безопасно получить доступ к треду
+	respModel.mu.RLock()
 	thead, ok := respModel.TreadsGPT[dialogId]
+	respModel.mu.RUnlock()
+
 	if !ok || thead == nil {
 		// Если тред не найден после попытки создания, возвращаем ошибку
 		return "", fmt.Errorf("тред не найден для dialogId %d после попытки создания", dialogId)
@@ -232,21 +248,22 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (string,
 	return messagesList.Messages[0].Content[0].Text.Value, nil
 }
 
-func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (RespModel, error) {
+func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error) {
 	// Сначала проверяем кэш
 	if val, ok := m.responders.Load(dialogId); ok {
 		// Если пользователь найден в кэше
-		resp := val.(RespModel)
-		resp.TTL = time.Now().Add(m.UserModelTTl) // Обновляем TTL
-		m.responders.Store(dialogId, resp)        // Обновляем запись в кэше
+		respModel := val.(*RespModel)
+		respModel.mu.Lock()
+		respModel.TTL = time.Now().Add(m.UserModelTTl) // Обновляем TTL
+		respModel.mu.Unlock()
 		log.Printf("dialogId %d found in cache, TTL updated.\n", dialogId)
-		return resp, nil
+		return respModel, nil
 	}
 	// Если пользователь не найден в кэше, создаем новую запись
 	userCtx, cancel := context.WithCancel(context.Background())
 
 	// Создаем новый RespModel и добавляем в кэш
-	user := RespModel{
+	user := &RespModel{
 		Assist:   assist,
 		RespName: respName,
 		TTL:      time.Now().Add(m.UserModelTTl * time.Minute), // Устанавливаем TTL
@@ -284,7 +301,7 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 		err = json.Unmarshal(contextData, &threadMap)
 		if err != nil {
 			log.Printf("ошибка десериализации контекста для dialogId %d: %v", dialogId, err)
-			return RespModel{}, err
+			return nil, err
 		}
 
 		user.TreadsGPT = make(map[uint64]*openai.Thread)
@@ -296,26 +313,27 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 	//fmt.Printf("dialogId %d cached successfully with TTL %v minutes.\n", dialogId, mode.UserModelTTl)
 
 	// Сигнализируем ожидающим горутинам
-	m.mu.Lock()
-	if waitCh, exists := m.waitChannels[respId]; exists {
+	if waitChIface, exists := m.waitChannels.Load(respId); exists {
+		waitCh := waitChIface.(chan struct{})
 		close(waitCh)
-		delete(m.waitChannels, respId)
+		m.waitChannels.Delete(respId)
 	}
-	m.mu.Unlock()
 
 	return user, nil
 }
 
 func (m *Models) GetCh(respId uint64) (Ch, error) {
 	// Проверяем, есть ли уже канал для ожидания этого responderId
-	m.mu.Lock()
-	waitCh, exists := m.waitChannels[respId]
+	waitChInterface, exists := m.waitChannels.Load(respId)
+	var waitCh chan struct{}
+
 	if !exists {
 		// Создаем канал ожидания, если его нет
 		waitCh = make(chan struct{})
-		m.waitChannels[respId] = waitCh
+		m.waitChannels.Store(respId, waitCh)
+	} else {
+		waitCh = waitChInterface.(chan struct{})
 	}
-	m.mu.Unlock()
 
 	// Пробуем получить канал
 	userCh, err := m.getTryCh(respId)
@@ -339,12 +357,17 @@ func (m *Models) getTryCh(respId uint64) (Ch, error) {
 	var found bool
 
 	m.responders.Range(func(key, value interface{}) bool {
-		model, ok := value.(RespModel)
+		// Используем указатель на RespModel вместо копирования структуры
+		model, ok := value.(*RespModel)
 		if !ok {
 			return true
 		}
 
+		// Безопасно читаем Chan с использованием блокировки
+		model.mu.RLock()
 		ch, exists := model.Chan[respId]
+		model.mu.RUnlock()
+
 		if exists {
 			userCh = ch
 			found = true
@@ -367,11 +390,15 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 		return
 	}
 
-	// Приведение типа к RespModel
-	respModel := val.(RespModel)
+	// Приведение типа к указателю на RespModel
+	respModel := val.(*RespModel)
+
+	// Блокируем доступ к полям RespModel для чтения
+	respModel.mu.RLock()
+	tread := respModel.TreadsGPT[dialogId]
+	respModel.mu.RUnlock()
 
 	// Сохраняем контекст модели
-	tread := respModel.TreadsGPT[dialogId]
 	threadsJSON, err := json.Marshal(tread)
 	if err != nil {
 		log.Printf("ошибка сериализации контекста для treadId %v: %v", tread, err)
@@ -385,6 +412,8 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 
 	// Вызов функции Cancel, если она существует
 	if respModel.Cancel != nil {
+		// Блокируем доступ к полям RespModel для записи при закрытии каналов
+		respModel.mu.Lock()
 		// Закрытие всех каналов в TxCh
 		for respId, ch := range respModel.Chan {
 			safeClose(ch.TxCh)
@@ -393,12 +422,14 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 			// Удаляем канал из TxCh
 			delete(respModel.Chan, respId)
 		}
+		respModel.mu.Unlock()
 
 		//log.Printf("Channels closed for dialogId %d", dialogId)
 
 		// Освобождаю контекст и завершаю горутины
 		respModel.Cancel()
 		// Удаляю запись из кэша
+		//respModel.activeOps.Wait() // ТЕСТИРОВАТЬ
 		m.responders.Delete(dialogId)
 
 		//log.Printf("Контекст отменен для dialogId %d", dialogId)
@@ -419,7 +450,7 @@ func safeClose(ch chan Message) {
 
 // CleanUp Удаление устаревших записей
 func (m *Models) CleanUp() {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
 
 	for {
@@ -428,8 +459,14 @@ func (m *Models) CleanUp() {
 			now := time.Now()
 
 			m.responders.Range(func(key, value interface{}) bool {
-				responder := value.(RespModel)
-				if responder.TTL.Before(now) {
+				responder := value.(*RespModel) // Используем указатель вместо копирования
+
+				// Используем блокировку для безопасного чтения TTL
+				responder.mu.RLock()
+				ttlExpired := responder.TTL.Before(now)
+				responder.mu.RUnlock()
+
+				if ttlExpired {
 					dialogId, ok := key.(uint64)
 					if !ok {
 						log.Printf("Некорректный тип ключа: %T, ожидался uint64", key)
@@ -462,11 +499,15 @@ func (m *Models) SaveAllContextDuringExit() {
 			log.Printf("`SaveAllContextDuringExit` RespModel не найден для dialogId %d", dialogId)
 		}
 
-		// Приведение типа к RespModel
-		respModel := val.(RespModel)
+		// Приведение типа к указателю на RespModel
+		respModel := val.(*RespModel)
 
+		// Блокируем для чтения
+		respModel.mu.RLock()
 		// Сохраняем контекст модели
 		tread := respModel.TreadsGPT[dialogId]
+		respModel.mu.RUnlock()
+
 		threadsJSON, err := json.Marshal(tread)
 		if err != nil {
 			log.Printf("`SaveAllContextDuringExit` ошибка сериализации контекста для treadId %v: %v", tread, err)
@@ -474,7 +515,7 @@ func (m *Models) SaveAllContextDuringExit() {
 		// Сохраняю контекст модели
 		err = m.db.SaveContext(dialogId, threadsJSON)
 		if err != nil {
-			log.Printf("`SaveAllContextDuringExit` ошибка сохранения контекста для dialogId %d: %v", dialogId, err)
+			log.Printf("`SaveAllContextDuranteExit` ошибка сохранения контекста для dialogId %d: %v", dialogId, err)
 		}
 
 		return true
