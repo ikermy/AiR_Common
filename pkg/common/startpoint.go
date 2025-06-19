@@ -2,7 +2,6 @@ package common
 
 import (
 	"fmt"
-	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"log"
 	"strings"
@@ -32,7 +31,7 @@ type BotInterface interface {
 type EndpointInterface interface {
 	GetUserAsk(dialogId uint64, respId uint64) []string
 	SetUserAsk(dialogId uint64, respId uint64, ask string, askLimit uint32) bool
-	SaveDialog(creator comdb.CreatorType, treadId uint64, resp *string)
+	SaveDialog(creator CreatorType, treadId uint64, resp *string)
 	Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string)
 	FlushAllBatches()
 }
@@ -378,14 +377,14 @@ func (s *Start) Listener(
 		case quest := <-fullQuestCh: // Пришёл полный вопрос пользователя
 			switch quest.VoiceQuestion {
 			case false: // Вопрос задан текстом
-				go s.End.SaveDialog(comdb.User, treadId, &quest.Answer)
+				go s.End.SaveDialog(User, treadId, &quest.Answer)
 			case true: // Вопрос задан голосом
-				go s.End.SaveDialog(comdb.UserVoice, treadId, &quest.Answer)
+				go s.End.SaveDialog(UserVoice, treadId, &quest.Answer)
 			}
 		case resp := <-answerCh: // Пришёл ответ ассистента
 			select {
 			case usrCh.TxCh <- s.Bot.NewMessage("assist", &resp.Answer, &u.RespName):
-				go s.End.SaveDialog(comdb.AI, treadId, &resp.Answer)
+				go s.End.SaveDialog(AI, treadId, &resp.Answer)
 			default:
 				return fmt.Errorf("'Listener' канал TxCh закрыт или переполнен")
 			}

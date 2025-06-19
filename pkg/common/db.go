@@ -1,4 +1,4 @@
-package comdb
+package common
 
 import (
 	"bytes"
@@ -12,7 +12,7 @@ import (
 
 type CreatorType uint8
 
-type Message struct {
+type EndpointMessage struct {
 	Creator   CreatorType `json:"creator"`
 	Message   string      `json:"message"`
 	Timestamp time.Time   `json:"timestamp"`
