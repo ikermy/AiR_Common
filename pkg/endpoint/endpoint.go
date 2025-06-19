@@ -3,6 +3,7 @@ package endpoint
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/common"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"log"
@@ -21,15 +22,15 @@ type Endpoint struct {
 	Db DB
 	//answers      []string
 	arrMsg       map[uint64]map[uint64][]string
-	messageBatch map[uint64][]common.EndpointMessage // Буфер сообщений для каждого треда
-	batchSize    int                                 // Размер батча
-	mu           sync.Mutex                          // Мьютекс для защиты буфера
+	messageBatch map[uint64][]comdb.Message // Буфер сообщений для каждого треда
+	batchSize    int                        // Размер батча
+	mu           sync.Mutex                 // Мьютекс для защиты буфера
 }
 
 func New(d DB) *Endpoint {
 	e := &Endpoint{
 		Db:           d,
-		messageBatch: make(map[uint64][]common.EndpointMessage),
+		messageBatch: make(map[uint64][]comdb.Message),
 		batchSize:    mode.BatchSize, // Размер батча по умолчанию
 	}
 
@@ -146,13 +147,13 @@ func (e *Endpoint) SetUserAsk(dialogId uint64, respId uint64, ask string, askLim
 	return true
 }
 
-func (e *Endpoint) SaveDialog(creator common.CreatorType, treadId uint64, resp *string) {
+func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *string) {
 	ask := strings.TrimSpace(*resp)
 	if ask == "" || ask == "[]" { // Этого не может быть?! Но на всякий случай
 		return
 	}
 
-	message := common.EndpointMessage{
+	message := comdb.Message{
 		Creator:   creator,
 		Message:   *resp,
 		Timestamp: time.Now(),

@@ -1,10 +1,11 @@
-package common
+package comdb
 
 import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	_ "github.com/go-sql-driver/mysql"
 	"io"
 	"log"
 	"time"
@@ -12,7 +13,7 @@ import (
 
 type CreatorType uint8
 
-type EndpointMessage struct {
+type Message struct {
 	Creator   CreatorType `json:"creator"`
 	Message   string      `json:"message"`
 	Timestamp time.Time   `json:"timestamp"`
