@@ -1,4 +1,4 @@
-package common
+package db
 
 import (
 	"bytes"
@@ -7,9 +7,16 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"time"
 )
 
 type CreatorType uint8
+
+type Message struct {
+	Creator   CreatorType `json:"creator"`
+	Message   string      `json:"message"`
+	Timestamp time.Time   `json:"timestamp"`
+}
 
 const (
 	AI        CreatorType = 1
