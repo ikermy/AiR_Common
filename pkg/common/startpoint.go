@@ -103,7 +103,7 @@ func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (string, e
 }
 
 func (s *Start) Respondent(
-	u RespModel,
+	u *RespModel,
 	questionCh chan Question,
 	answerCh chan Answer,
 	fullQuestCh chan Answer,
@@ -273,7 +273,7 @@ func (s *Start) Respondent(
 }
 
 func (s *Start) StarterRespondent(
-	u RespModel,
+	u *RespModel,
 	questionCh chan Question,
 	answerCh chan Answer,
 	fullQuestCh chan Answer,
@@ -316,7 +316,7 @@ func (s *Start) StarterListener(start StartCh, errCh chan error) {
 }
 
 func (s *Start) Listener(
-	u RespModel,
+	u *RespModel,
 	usrCh Ch,
 	respId uint64,
 	treadId uint64,

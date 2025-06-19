@@ -99,7 +99,7 @@ type Message struct {
 
 // StartCh структура для передачи данных для запуска слушателя
 type StartCh struct {
-	Model   RespModel
+	Model   *RespModel
 	Chanel  Ch
 	TreadId uint64
 	RespId  uint64
