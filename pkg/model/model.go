@@ -1,4 +1,4 @@
-package common
+package model
 
 import (
 	"bytes"
@@ -105,7 +105,7 @@ type StartCh struct {
 	RespId  uint64
 }
 
-func NewMod(conf *conf.Conf, d DB) *Models {
+func New(conf *conf.Conf, d DB) *Models {
 	return &Models{
 		client:       openai.NewClient(conf.GPT.Key),
 		ctx:          context.Background(),

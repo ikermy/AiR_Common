@@ -1,9 +1,10 @@
-package common
+package startpoint
 
 import (
 	"fmt"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/mode"
+	"github.com/ikermy/AiR_Common/pkg/model"
 	"log"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ type Answer struct {
 
 // BotInterface - интерфейс для различных реализаций ботов
 type BotInterface interface {
-	NewMessage(msgType string, content, name *string) Message
+	NewMessage(msgType string, content, name *string) model.Message
 	StartBots() error
 	StopBot()
 }
@@ -40,7 +41,7 @@ type EndpointInterface interface {
 // ModelInterface - интерфейс для моделей
 type ModelInterface interface {
 	Request(modelId string, dialogId uint64, ask *string) (string, error)
-	GetCh(respId uint64) (Ch, error)
+	GetCh(respId uint64) (model.Ch, error)
 	CleanUp()
 }
 
@@ -52,8 +53,8 @@ type Start struct {
 	//mu  sync.Mutex
 }
 
-// NewStart создаёт новый экземпляр Start (бывший startpoint.New)
-func NewStart(mod ModelInterface, end EndpointInterface, bot BotInterface) *Start {
+// New создаёт новый экземпляр Start (бывший startpoint.New)
+func New(mod ModelInterface, end EndpointInterface, bot BotInterface) *Start {
 	return &Start{
 		Mod: mod,
 		End: end,
@@ -104,7 +105,7 @@ func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (string, e
 }
 
 func (s *Start) Respondent(
-	u *RespModel,
+	u *model.RespModel,
 	questionCh chan Question,
 	answerCh chan Answer,
 	fullQuestCh chan Answer,
@@ -274,7 +275,7 @@ func (s *Start) Respondent(
 }
 
 func (s *Start) StarterRespondent(
-	u *RespModel,
+	u *model.RespModel,
 	questionCh chan Question,
 	answerCh chan Answer,
 	fullQuestCh chan Answer,
@@ -304,7 +305,7 @@ func (s *Start) StarterRespondent(
 	}
 }
 
-func (s *Start) StarterListener(start StartCh, errCh chan error) {
+func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
 	if !start.Model.Services.Listener {
 		start.Model.Services.Listener = true
 		go func() {
@@ -317,8 +318,8 @@ func (s *Start) StarterListener(start StartCh, errCh chan error) {
 }
 
 func (s *Start) Listener(
-	u *RespModel,
-	usrCh Ch,
+	u *model.RespModel,
+	usrCh model.Ch,
 	respId uint64,
 	treadId uint64,
 ) error {
