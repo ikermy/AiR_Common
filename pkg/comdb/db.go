@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	_ "github.com/go-sql-driver/mysql"
 	"io"
 	"log"
 	"time"
