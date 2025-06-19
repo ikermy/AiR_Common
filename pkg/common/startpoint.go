@@ -23,7 +23,7 @@ type Answer struct {
 
 // BotInterface - интерфейс для различных реализаций ботов
 type BotInterface interface {
-	NewMessage(msgType string, content, name *string) db.Message
+	NewMessage(msgType string, content, name *string) Message
 	StartBots() error
 	StopBot()
 }
