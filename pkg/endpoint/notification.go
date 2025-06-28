@@ -29,7 +29,7 @@ func SendEvent(userId uint32, event, userName, assistName, target string) {
 	}
 }
 
-func (e *Endpoint) SendWebhookNotification(msg common.CarpCh) error {
+func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 	res, err := e.Db.GetNotificationChannel(msg.UserID)
 	if err != nil {
 		return fmt.Errorf("ошибка получения каналов уведомлений: %w", err)
@@ -43,8 +43,6 @@ func (e *Endpoint) SendWebhookNotification(msg common.CarpCh) error {
 	}
 
 	for _, ch := range channels {
-		fmt.Printf("Тип: %v, Значение: %v\n", ch["channel_type"], ch["channel_value"])
-
 		switch ch["channel_type"] {
 		case "telegram":
 			// Проверяю что Telegram не null
@@ -64,7 +62,7 @@ func (e *Endpoint) SendWebhookNotification(msg common.CarpCh) error {
 			if err != nil {
 				return fmt.Errorf("ошибка отправки Telegram уведомления: %w", err)
 			}
-		case "email":
+		case "mail":
 			// Проверяю что Email не null
 			if ch["channel_value"] == "null" {
 				return fmt.Errorf("у пользователя %d не задан Email, уведомление не отправлено", msg.UserID)
@@ -87,11 +85,21 @@ func (e *Endpoint) SendWebhookNotification(msg common.CarpCh) error {
 }
 
 func SendTelegramNotification(tId int64, event, userName, assistName, target string) error {
-	// Формируем URL для webhook
-	//url := fmt.Sprintf("https://localhost:8088/notification")
-	url := fmt.Sprintf("http://localhost:%s/notification", mode.CarpinteroPort)
+	var url string
+	var client *http.Client
 
-	// Создаем данные для отправки
+	if mode.ProductionMode {
+		url = fmt.Sprintf("http://localhost:%s/notification", mode.CarpinteroPort)
+		client = &http.Client{}
+	} else {
+		url = fmt.Sprintf("https://localhost:%s/notification", mode.CarpinteroPort)
+		client = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	}
+
 	payload := map[string]interface{}{
 		"tid":    tId,
 		"event":  event,
@@ -100,31 +108,23 @@ func SendTelegramNotification(tId int64, event, userName, assistName, target str
 		"target": target,
 	}
 
-	// Преобразуем данные в JSON
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("ошибка при преобразовании данных в JSON: %w", err)
 	}
 
-	// Создаем HTTP-запрос
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("ошибка при создании HTTP-запроса: %w", err)
 	}
-
-	// Устанавливаем заголовки
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{}
-
-	// Отправляем запрос
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("ошибка при отправке HTTP-запроса: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Проверяем статус ответа
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("неожиданный статус ответа: %d, тело: %s", resp.StatusCode, string(bodyBytes))
@@ -135,7 +135,7 @@ func SendTelegramNotification(tId int64, event, userName, assistName, target str
 
 func SendEmailNotification(email, event, userName, assistName, target string) error {
 	// Формируем URL для webhook
-	url := fmt.Sprintf("https://%s:%s/notification", mode.CarpinteroHost, mode.CarpinteroPort)
+	url := fmt.Sprintf("https://%s:%s/notification", mode.CarpinteroHost, mode.MailServerPort)
 
 	// Создаем данные для отправки
 	payload := map[string]interface{}{
@@ -223,7 +223,7 @@ func (e *Endpoint) NotificationListener() {
 				log.Println("CarpinteroCh closed")
 				return
 			}
-			err := e.SendWebhookNotification(msg)
+			err := e.SendNotification(msg)
 			if err != nil {
 				log.Println("'NotificationListener': ошибка отправки уведомления:", err)
 			}

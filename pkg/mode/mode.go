@@ -10,11 +10,14 @@ const (
 )
 
 var (
+	ProductionMode = false // Флаг, указывающий на режим продакшн
+
 	TestAnswer = false // Тестовый режим, когда ответ на вопрос возвращается сразу, без обращения к модели
 	AudioMsg   = false // Разрешает принимать аудио сообщения в диалоге
 
 	CarpinteroCh   = make(chan common.CarpCh, 1) // Канал для передачи уведомлений
 	Event          = make(chan uint64, 1)        // Канал для передачи Id диалога при отключении клиента
+	MailServerPort string
 	CarpinteroPort string
 	CarpinteroHost string
 )
