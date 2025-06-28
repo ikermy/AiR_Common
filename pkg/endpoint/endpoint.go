@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/common"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"log"
 	"strings"
@@ -16,6 +15,7 @@ import (
 type DB interface {
 	SaveDialog(treadId uint64, message json.RawMessage) error
 	UpdateDialogsMeta(dialogId uint64, meta string) error
+	GetNotificationChannel(userId uint32) (json.RawMessage, error)
 }
 
 type Endpoint struct {
@@ -40,7 +40,7 @@ func New(d DB) *Endpoint {
 	// ТОЛЬКО ДЛЯ КАНАЛОВ С ДОПУСКАЮЩИМ ОТСЛЕЖИВАНИЕМ ЗАВЕРШЕНИЯ ДИАЛОГА !!!!!
 	// Добавляем обработку событий для немедленного сохранения диалога
 	go func() {
-		for threadId := range common.Event {
+		for threadId := range mode.Event {
 			log.Printf("Endpoint: получен сигнал сохранения диалога %d", threadId)
 			e.mu.Lock()
 			e.flushThreadBatch(threadId)
@@ -177,5 +177,5 @@ func (e *Endpoint) Meta(userId uint32, dialogId uint64, meta string, respName st
 	if err != nil {
 		log.Printf("ошибка обновления метаданных для диалога %d: %v", dialogId, err)
 	}
-	common.SendEvent(userId, meta, respName, assistName, metaAction)
+	SendEvent(userId, meta, respName, assistName, metaAction)
 }
