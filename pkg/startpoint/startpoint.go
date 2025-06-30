@@ -379,14 +379,15 @@ func (s *Start) Listener(
 		case quest := <-fullQuestCh: // Пришёл полный вопрос пользователя
 			switch quest.VoiceQuestion {
 			case false: // Вопрос задан текстом
-				go s.End.SaveDialog(comdb.User, treadId, &quest.Answer)
+				// Нужно создать отдельный канал слушателя для сохранения диалога для использования асинхронного сохранения
+				s.End.SaveDialog(comdb.User, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			case true: // Вопрос задан голосом
-				go s.End.SaveDialog(comdb.UserVoice, treadId, &quest.Answer)
+				s.End.SaveDialog(comdb.UserVoice, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			}
 		case resp := <-answerCh: // Пришёл ответ ассистента
 			select {
 			case usrCh.TxCh <- s.Bot.NewMessage("assist", &resp.Answer, &u.RespName):
-				go s.End.SaveDialog(comdb.AI, treadId, &resp.Answer)
+				s.End.SaveDialog(comdb.AI, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			default:
 				return fmt.Errorf("'Listener' канал TxCh закрыт или переполнен")
 			}
