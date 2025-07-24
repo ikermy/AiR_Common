@@ -94,11 +94,14 @@ func logMessage(format string, level string, skip int, args ...interface{}) {
 		message = format
 	}
 
+	// Добавляем timestamp
+	now := time.Now().Format("2006/01/02 15:04:05")
+
 	// Логируем с или без userId
 	if userID != nil {
-		generalLogger.Printf("%s %s [USER:%d] %s", caller, level, *userID, message)
+		generalLogger.Printf("%s %s %s [USER:%d] %s", now, caller, level, *userID, message)
 	} else {
-		generalLogger.Printf("%s %s %s", caller, level, message)
+		generalLogger.Printf("%s %s %s %s", now, caller, level, message)
 	}
 }
 
