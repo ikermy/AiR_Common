@@ -1,12 +1,5 @@
 git add .
-git commit -m "v1.21.1"
-git tag -a v1.21.1 -m "new custom logger"
+git commit -m "v1.21.2"
+git tag -a v1.21.2 -m "new custom logger"
 git push origin master
-git push origin v1.21.1
-
-!!!!! TEST !!!!!
-git add .
-git commit -m "v1.21.0"
-git tag -a v1.21.0 -m "new custom logger"
-git push origin json
-git push origin v1.21.0
+git push origin v1.21.2

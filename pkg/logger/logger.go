@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -21,28 +22,40 @@ func Set(patch string) {
 		Compress:   true,
 	}
 	multiWriter := io.MultiWriter(os.Stdout, logFile)
-	generalLogger = log.New(multiWriter, "", log.LstdFlags|log.Lshortfile)
+	//generalLogger = log.New(multiWriter, "", log.LstdFlags)
+	generalLogger = log.New(multiWriter, "", 0)
 }
 
 // Info записывает информационное сообщение с поддержкой форматирования
 func Info(format string, args ...interface{}) {
-	logMessage(format, "[INFO]", args...)
+	logMessage(format, "[INFO]", 2, args...)
 }
 
 // Error записывает сообщение об ошибке с поддержкой форматирования
 func Error(format string, args ...interface{}) {
-	logMessage(format, "[ERROR]", args...)
+	logMessage(format, "[ERROR]", 2, args...)
 }
 
-// Warning записывает предупреждение с поддержкой форматирования
-func Warning(format string, args ...interface{}) {
-	logMessage(format, "[WARNING]", args...)
+// Warn записывает предупреждение с поддержкой форматирования
+func Warn(format string, args ...interface{}) {
+	logMessage(format, "[WARNING]", 2, args...)
 }
 
 // logMessage обрабатывает форматирование и определяет наличие userId
-func logMessage(format string, level string, args ...interface{}) {
+func logMessage(format string, level string, skip int, args ...interface{}) {
 	var userID *uint32
 	var formatArgs []interface{}
+
+	// Получаем информацию о вызывающем коде
+	_, file, line, ok := runtime.Caller(skip)
+	var caller string
+	if ok {
+		// Извлекаем только имя файла без полного пути
+		parts := strings.Split(file, "/")
+		if len(parts) > 0 {
+			caller = fmt.Sprintf("%s:%d:", parts[len(parts)-1], line)
+		}
+	}
 
 	// Проверяем последний аргумент - если это uint32, считаем его userId
 	if len(args) > 0 {
@@ -64,9 +77,9 @@ func logMessage(format string, level string, args ...interface{}) {
 
 	// Логируем с или без userId
 	if userID != nil {
-		generalLogger.Printf("%s [USER:%d] %s", level, *userID, message)
+		generalLogger.Printf("%s %s [USER:%d] %s", caller, level, *userID, message)
 	} else {
-		generalLogger.Printf("%s %s", level, message)
+		generalLogger.Printf("%s %s %s", caller, level, message)
 	}
 }
 
