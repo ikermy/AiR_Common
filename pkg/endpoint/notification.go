@@ -25,7 +25,7 @@ func SendEvent(userId uint32, event, userName, assistName, target string) {
 	select {
 	case mode.CarpinteroCh <- msg:
 	default:
-		logger.Warning("CarpinteroCh: канал закрыт или переполнен, не удалось отправить сообщение: %+v", msg)
+		logger.Warn("CarpinteroCh: канал закрыт или переполнен, не удалось отправить сообщение: %+v", msg)
 	}
 }
 
@@ -77,7 +77,7 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 				return fmt.Errorf("ошибка отправки Email уведомления: %w", err)
 			}
 		default:
-			logger.Warning("Неизвестный канал уведомлений: %s для пользователя %d", ch["channel_type"], msg.UserID, msg.UserID)
+			logger.Warn("Неизвестный канал уведомлений: %s для пользователя %d", ch["channel_type"], msg.UserID, msg.UserID)
 		}
 	}
 

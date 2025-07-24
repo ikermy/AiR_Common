@@ -185,7 +185,7 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (string,
 	err := m.CreateThead(dialogId)
 	if err != nil {
 		// Логируем ошибку, но не прерываем выполнение, так как тред мог уже существовать
-		logger.Warning("не удалось создать тред: %v", err)
+		logger.Warn("не удалось создать тред: %v", err)
 	}
 
 	// Получение RespModel, который содержит информацию о тредах пользователя
@@ -386,7 +386,7 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 	// Получаем RespModel из структуры Models
 	val, ok := m.responders.Load(dialogId)
 	if !ok {
-		logger.Warning("RespModel не найден для dialogId %d", dialogId)
+		logger.Warn("RespModel не найден для dialogId %d", dialogId)
 		return
 	}
 

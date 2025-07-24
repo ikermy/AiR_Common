@@ -130,7 +130,7 @@ func (s *Start) Respondent(
 				select {
 				case errCh <- fmt.Errorf("'respondent' канал questionCh закрыт"):
 				default:
-					logger.Warning("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
+					logger.Warn("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
 					return
 				}
 				continue
@@ -194,7 +194,7 @@ func (s *Start) Respondent(
 						select {
 						case errCh <- fmt.Errorf("'respondent' канал questionCh закрыт"):
 						default:
-							logger.Warning("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
+							logger.Warn("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
 							return
 						}
 					}
@@ -232,7 +232,7 @@ func (s *Start) Respondent(
 			select {
 			case errCh <- fmt.Errorf("'respondent' канал fullQuestCh закрыт или переполнен"):
 			default:
-				logger.Warning("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
+				logger.Warn("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
 			}
 		}
 
@@ -268,7 +268,7 @@ func (s *Start) Respondent(
 			select {
 			case errCh <- fmt.Errorf("'respondent' канал answerCh закрыт или переполнен"):
 			default:
-				logger.Warning("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
+				logger.Warn("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
 			}
 		}
 	}
@@ -363,7 +363,7 @@ func (s *Start) Listener(
 					}
 				default:
 					// Неизвестный тип сообщения, пропускаю
-					logger.Warning("Неизвестный тип сообщения: %s", msg.Type, u.Assist.UserId)
+					logger.Warn("Неизвестный тип сообщения: %s", msg.Type, u.Assist.UserId)
 					continue
 				}
 
