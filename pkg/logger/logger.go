@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 )
 
 var generalLogger *log.Logger
@@ -50,6 +51,12 @@ func Warn(format string, args ...interface{}) {
 // Fatal записывает критическое сообщение об ошибке и завершает программу
 func Fatal(args ...interface{}) {
 	logMessageConcat("[FATAL]", 2, args...)
+	os.Exit(1)
+}
+
+// Fatalf записывает критическое сообщение об ошибке с форматированием и завершает программу
+func Fatalf(format string, args ...interface{}) {
+	logMessage(format, "[FATAL]", 2, args...)
 	os.Exit(1)
 }
 
@@ -136,12 +143,6 @@ func logMessageConcat(level string, skip int, args ...interface{}) {
 	} else {
 		generalLogger.Printf("%s %s %s %s", now, caller, level, message)
 	}
-}
-
-// Fatalf записывает критическое сообщение об ошибке с форматированием и завершает программу
-func Fatalf(format string, args ...interface{}) {
-	logMessage(format, "[FATAL]", 2, args...)
-	os.Exit(1)
 }
 
 // GetUserLogs выводит все логи для конкретного пользователя через callback функцию
