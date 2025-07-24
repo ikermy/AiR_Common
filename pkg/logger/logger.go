@@ -27,6 +27,11 @@ func Set(patch string) {
 	generalLogger = log.New(multiWriter, "", 0)
 }
 
+// Infoln записывает информационное сообщение, объединяя все аргументы
+func Infoln(args ...interface{}) {
+	logMessageConcat("[INFO]", 2, args...)
+}
+
 // Info записывает информационное сообщение с поддержкой форматирования
 func Info(format string, args ...interface{}) {
 	logMessage(format, "[INFO]", 2, args...)
@@ -40,6 +45,12 @@ func Error(format string, args ...interface{}) {
 // Warn записывает предупреждение с поддержкой форматирования
 func Warn(format string, args ...interface{}) {
 	logMessage(format, "[WARNING]", 2, args...)
+}
+
+// Fatal записывает критическое сообщение об ошибке и завершает программу
+func Fatal(args ...interface{}) {
+	logMessageConcat("[FATAL]", 2, args...)
+	os.Exit(1)
 }
 
 // logMessage обрабатывает форматирование и определяет наличие userId
@@ -82,6 +93,55 @@ func logMessage(format string, level string, skip int, args ...interface{}) {
 	} else {
 		generalLogger.Printf("%s %s %s", caller, level, message)
 	}
+}
+
+// logMessageConcat обрабатывает конкатенацию аргументов
+func logMessageConcat(level string, skip int, args ...interface{}) {
+	var userID *uint32
+	var messageArgs []interface{}
+
+	// Получаем информацию о вызывающем коде
+	_, file, line, ok := runtime.Caller(skip)
+	var caller string
+	if ok {
+		parts := strings.Split(file, "/")
+		if len(parts) > 0 {
+			caller = fmt.Sprintf("%s:%d:", parts[len(parts)-1], line)
+		}
+	}
+
+	// Проверяем последний аргумент - если это uint32, считаем его userId
+	if len(args) > 0 {
+		if uid, ok := args[len(args)-1].(uint32); ok {
+			userID = &uid
+			messageArgs = args[:len(args)-1]
+		} else {
+			messageArgs = args
+		}
+	}
+
+	// Объединяем все аргументы в строку
+	var parts []string
+	for _, arg := range messageArgs {
+		parts = append(parts, fmt.Sprintf("%v", arg))
+	}
+	message := strings.Join(parts, " ")
+
+	// Добавляем timestamp
+	now := time.Now().Format("2006/01/02 15:04:05")
+
+	// Логируем
+	if userID != nil {
+		generalLogger.Printf("%s %s %s [USER:%d] %s", now, caller, level, *userID, message)
+	} else {
+		generalLogger.Printf("%s %s %s %s", now, caller, level, message)
+	}
+}
+
+// Fatalf записывает критическое сообщение об ошибке с форматированием и завершает программу
+func Fatalf(format string, args ...interface{}) {
+	logMessage(format, "[FATAL]", 2, args...)
+	os.Exit(1)
 }
 
 // GetUserLogs выводит все логи для конкретного пользователя через callback функцию
