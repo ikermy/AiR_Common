@@ -6,9 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ikermy/AiR_Common/pkg/common"
+	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"io"
-	"log"
 	"net/http"
 	"strconv"
 )
@@ -25,7 +25,7 @@ func SendEvent(userId uint32, event, userName, assistName, target string) {
 	select {
 	case mode.CarpinteroCh <- msg:
 	default:
-		log.Printf("CarpinteroCh: канал закрыт или переполнен, не удалось отправить сообщение: %+v", msg)
+		logger.Warning("CarpinteroCh: канал закрыт или переполнен, не удалось отправить сообщение: %+v", msg)
 	}
 }
 
@@ -77,7 +77,7 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 				return fmt.Errorf("ошибка отправки Email уведомления: %w", err)
 			}
 		default:
-			log.Printf("Неизвестный канал уведомлений: %s для пользователя %d", ch["channel_type"], msg.UserID)
+			logger.Warning("Неизвестный канал уведомлений: %s для пользователя %d", ch["channel_type"], msg.UserID, msg.UserID)
 		}
 	}
 
@@ -220,12 +220,12 @@ func (e *Endpoint) NotificationListener() {
 		select {
 		case msg, ok := <-mode.CarpinteroCh:
 			if !ok {
-				log.Println("CarpinteroCh closed")
+				logger.Error("CarpinteroCh closed")
 				return
 			}
 			err := e.SendNotification(msg)
 			if err != nil {
-				log.Println("'NotificationListener': ошибка отправки уведомления:", err)
+				logger.Error("'NotificationListener': ошибка отправки уведомления: %v", err, msg.UserID)
 			}
 		}
 	}

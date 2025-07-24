@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ikermy/AiR_Common/pkg/conf"
+	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/sashabaranov/go-openai"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -185,7 +185,7 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (string,
 	err := m.CreateThead(dialogId)
 	if err != nil {
 		// Логируем ошибку, но не прерываем выполнение, так как тред мог уже существовать
-		log.Printf("не удалось создать тред: %v", err)
+		logger.Warning("не удалось создать тред: %v", err)
 	}
 
 	// Получение RespModel, который содержит информацию о тредах пользователя
@@ -256,7 +256,7 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 		respModel.mu.Lock()
 		respModel.TTL = time.Now().Add(m.UserModelTTl) // Обновляем TTL
 		respModel.mu.Unlock()
-		log.Printf("dialogId %d found in cache, TTL updated.\n", dialogId)
+		logger.Info("dialogId %d found in cache, TTL updated", dialogId, assist.UserId)
 		return respModel, nil
 	}
 	// Если пользователь не найден в кэше, создаем новую запись
@@ -289,18 +289,18 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 		// Проверяем тип ошибки
 		if strings.Contains(err.Error(), "получены пустые данные") {
 			// Для нового диалога это нормально - инициализируем структуры без ошибки
-			log.Printf("Инициализация нового диалога %d", dialogId)
+			logger.Info("Инициализация нового диалога %d", dialogId, assist.UserId)
 			user.TreadsGPT = make(map[uint64]*openai.Thread)
 		} else {
 			// Это реальная ошибка - логируем
-			log.Printf("ошибка чтения контекста для dialogId %d: %v", dialogId, err)
+			logger.Error("ошибка чтения контекста для dialogId %d: %v", dialogId, err, assist.UserId)
 		}
 	} else {
 		// Если есть данные, десериализуем их
 		var threadMap *openai.Thread
 		err = json.Unmarshal(contextData, &threadMap)
 		if err != nil {
-			log.Printf("ошибка десериализации контекста для dialogId %d: %v", dialogId, err)
+			logger.Error("ошибка десериализации контекста для dialogId %d: %v", dialogId, err, assist.UserId)
 			return nil, err
 		}
 
@@ -386,12 +386,15 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 	// Получаем RespModel из структуры Models
 	val, ok := m.responders.Load(dialogId)
 	if !ok {
-		log.Printf("RespModel не найден для dialogId %d", dialogId)
+		logger.Warning("RespModel не найден для dialogId %d", dialogId)
 		return
 	}
 
 	// Приведение типа к указателю на RespModel
 	respModel := val.(*RespModel)
+
+	// Получаем userId для логирования
+	userId := respModel.Assist.UserId
 
 	// Блокируем доступ к полям RespModel для чтения
 	respModel.mu.RLock()
@@ -401,13 +404,13 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 	// Сохраняем контекст модели
 	threadsJSON, err := json.Marshal(tread)
 	if err != nil {
-		log.Printf("ошибка сериализации контекста для treadId %v: %v", tread, err)
+		logger.Error("ошибка сериализации контекста для treadId %v: %v", tread, err, userId)
 		return
 	}
 
 	err = m.db.SaveContext(dialogId, threadsJSON)
 	if err != nil {
-		log.Printf("ошибка сохранения контекста для dialogId %d: %v", dialogId, err)
+		logger.Error("ошибка сохранения контекста для dialogId %d: %v", dialogId, err, userId)
 	}
 
 	// Вызов функции Cancel, если она существует
@@ -434,7 +437,7 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 
 		//log.Printf("Контекст отменен для dialogId %d", dialogId)
 	} else {
-		log.Printf("Контекст не найден для dialogId %d", dialogId)
+		logger.Error("Контекст не найден для dialogId %d", dialogId, userId)
 	}
 }
 
@@ -442,7 +445,7 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 func safeClose(ch chan Message) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("Паника при закрытии канала: %v", r)
+			logger.Error("Паника при закрытии канала: %v", r)
 		}
 	}()
 	close(ch)
@@ -469,7 +472,7 @@ func (m *Models) CleanUp() {
 				if ttlExpired {
 					dialogId, ok := key.(uint64)
 					if !ok {
-						log.Printf("Некорректный тип ключа: %T, ожидался uint64", key)
+						logger.Error("Некорректный тип ключа: %T, ожидался uint64", key)
 						return true
 					}
 
@@ -477,7 +480,7 @@ func (m *Models) CleanUp() {
 					m.CleanDialogData(dialogId)
 					// m.responders.Delete не требуется, так как уже вызывается в CleanDialogData
 
-					log.Printf("Удалена просроченная запись для dialogId %d\n", dialogId)
+					logger.Info("Удалена просроченная запись для dialogId %d\n", dialogId)
 				}
 				return true
 			})
@@ -490,13 +493,13 @@ func (m *Models) SaveAllContextDuringExit() {
 	m.responders.Range(func(key, value interface{}) bool {
 		dialogId, ok := key.(uint64)
 		if !ok {
-			log.Printf("`SaveAllContextDuringExit` некорректный тип ключа: %T, ожидался uint64", key)
+			logger.Error("`SaveAllContextDuringExit` некорректный тип ключа: %T, ожидался uint64", key)
 		}
 
 		// Получаем RespModel из структуры Models
 		val, ok := m.responders.Load(dialogId)
 		if !ok {
-			log.Printf("`SaveAllContextDuringExit` RespModel не найден для dialogId %d", dialogId)
+			logger.Error("`SaveAllContextDuranteExit` RespModel не найден для dialogId %d", dialogId)
 		}
 
 		// Приведение типа к указателю на RespModel
@@ -510,12 +513,12 @@ func (m *Models) SaveAllContextDuringExit() {
 
 		threadsJSON, err := json.Marshal(tread)
 		if err != nil {
-			log.Printf("`SaveAllContextDuringExit` ошибка сериализации контекста для treadId %v: %v", tread, err)
+			logger.Error("`SaveAllContextDuringExit` ошибка сериализации контекста для treadId %v: %v", tread, err)
 		}
 		// Сохраняю контекст модели
 		err = m.db.SaveContext(dialogId, threadsJSON)
 		if err != nil {
-			log.Printf("`SaveAllContextDuranteExit` ошибка сохранения контекста для dialogId %d: %v", dialogId, err)
+			logger.Error("`SaveAllContextDuranteExit` ошибка сохранения контекста для dialogId %d: %v", dialogId, err)
 		}
 
 		return true

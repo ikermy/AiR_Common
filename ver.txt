@@ -1,0 +1,12 @@
+git add .
+git commit -m "v1.20.6"
+git tag -a v1.20.6 -m "new func SetProductionMode"
+git push origin master
+git push origin v1.20.6
+
+!!!!! TEST !!!!!
+git add .
+git commit -m "v1.21.0"
+git tag -a v1.21.0 -m "new custom logger"
+git push origin json
+git push origin v1.21.0

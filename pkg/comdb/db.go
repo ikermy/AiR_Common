@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"time"
+
+	"github.com/ikermy/AiR_Common/pkg/logger"
 )
 
 type CreatorType uint8
@@ -39,7 +40,7 @@ func DecompressAndExtractMetadata(compressedData []byte) (string, []string, *Esp
 	defer func(gzipReader *gzip.Reader) {
 		err := gzipReader.Close()
 		if err != nil {
-			log.Printf("ошибка закрытия gzip reader: %v", err)
+			logger.Error("ошибка закрытия gzip reader: %v", err)
 		}
 	}(gzipReader)
 

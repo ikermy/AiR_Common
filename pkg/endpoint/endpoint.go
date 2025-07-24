@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
+	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
-	"log"
 	"strings"
 	"sync"
 	"time"
@@ -19,8 +19,7 @@ type DB interface {
 }
 
 type Endpoint struct {
-	Db DB
-	//answers      []string
+	Db           DB
 	arrMsg       map[uint64]map[uint64][]string
 	messageBatch map[uint64][]comdb.Message // Буфер сообщений для каждого треда
 	batchSize    int                        // Размер батча
@@ -41,12 +40,12 @@ func New(d DB) *Endpoint {
 	// Добавляем обработку событий для немедленного сохранения диалога
 	go func() {
 		for threadId := range mode.Event {
-			log.Printf("Endpoint: получен сигнал сохранения диалога %d", threadId)
+			logger.Info("Endpoint: получен сигнал сохранения диалога %d", threadId)
 			e.mu.Lock()
 			e.flushThreadBatch(threadId)
 			e.mu.Unlock()
 		}
-		log.Println("НЕВОЗМОЖНОЕСООБЩЕНИЕ: канал Event был закрыт, сохранение диалогов по событиям остановлено")
+		logger.Error("НЕВОЗМОЖНОЕСООБЩЕНИЕ: канал Event был закрыт, сохранение диалогов по событиям остановлено")
 	}()
 
 	return e
@@ -79,11 +78,11 @@ func (e *Endpoint) flushThreadBatch(threadId uint64) {
 	for _, msg := range batch {
 		jsonData, err := json.Marshal(msg)
 		if err != nil {
-			log.Printf("Ошибка сериализации: %v", err)
+			logger.Error("Ошибка сериализации: %v", err)
 			continue
 		}
 		if err := e.Db.SaveDialog(threadId, jsonData); err != nil {
-			log.Printf("Ошибка сохранения диалога: %v", err)
+			logger.Error("Ошибка сохранения диалога: %v", err)
 		}
 	}
 }
@@ -175,7 +174,7 @@ func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *s
 func (e *Endpoint) Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string) {
 	err := e.Db.UpdateDialogsMeta(dialogId, meta)
 	if err != nil {
-		log.Printf("ошибка обновления метаданных для диалога %d: %v", dialogId, err)
+		logger.Error("ошибка обновления метаданных для диалога %d: %v", dialogId, err)
 	}
 	SendEvent(userId, meta, respName, assistName, metaAction)
 }

@@ -3,9 +3,9 @@ package startpoint
 import (
 	"fmt"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
+	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
-	"log"
 	"strings"
 	"time"
 )
@@ -123,14 +123,14 @@ func (s *Start) Respondent(
 	for {
 		select {
 		case <-u.Ctx.Done():
-			log.Println("Context.Done Respondent", u.RespName)
+			logger.Info("Context.Done Respondent %s", u.RespName, u.Assist.UserId)
 			return
 		case quest, open := <-questionCh: // Ждём ввод
 			if !open {
 				select {
 				case errCh <- fmt.Errorf("'respondent' канал questionCh закрыт"):
 				default:
-					log.Println("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен")
+					logger.Warning("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
 					return
 				}
 				continue
@@ -194,7 +194,7 @@ func (s *Start) Respondent(
 						select {
 						case errCh <- fmt.Errorf("'respondent' канал questionCh закрыт"):
 						default:
-							log.Println("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен")
+							logger.Warning("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
 							return
 						}
 					}
@@ -232,7 +232,7 @@ func (s *Start) Respondent(
 			select {
 			case errCh <- fmt.Errorf("'respondent' канал fullQuestCh закрыт или переполнен"):
 			default:
-				log.Println("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен")
+				logger.Warning("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
 			}
 		}
 
@@ -242,7 +242,7 @@ func (s *Start) Respondent(
 		deaf = false
 
 		if err != nil {
-			log.Print(err)
+			logger.Error("Ошибка запроса к модели: %v", err, u.Assist.UserId)
 			continue
 		}
 		// Если пустой ответ от OpenAI
@@ -268,7 +268,7 @@ func (s *Start) Respondent(
 			select {
 			case errCh <- fmt.Errorf("'respondent' канал answerCh закрыт или переполнен"):
 			default:
-				log.Printf("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен")
+				logger.Warning("'Respondent' не удалось отправить ошибку: канал errCh закрыт или переполнен", u.Assist.UserId)
 			}
 		}
 	}
@@ -296,7 +296,7 @@ func (s *Start) StarterRespondent(
 			select {
 			case err := <-errCh:
 				if err != nil {
-					log.Printf("Ошибка из канала errCh: %v", err)
+					logger.Error("Ошибка из канала errCh: %v", err, u.Assist.UserId)
 				}
 			default:
 				// Нет ошибок в канале
@@ -339,11 +339,11 @@ func (s *Start) Listener(
 		case err := <-errCh:
 			return err // Возвращаем возможные ошибки
 		case <-u.Ctx.Done():
-			log.Println("Context.Done Listener", u.RespName)
+			logger.Info("Context.Done Listener %s", u.RespName, u.Assist.UserId)
 			return nil
 		case msg, clos := <-usrCh.RxCh:
 			if !clos {
-				log.Println("Канал RxCh закрыт", u.RespName)
+				logger.Info("Канал RxCh закрыт %s", u.RespName, u.Assist.UserId)
 				return nil
 			}
 
@@ -363,7 +363,7 @@ func (s *Start) Listener(
 					}
 				default:
 					// Неизвестный тип сообщения, пропускаю
-					log.Printf("Неизвестный тип сообщения: %s", msg.Type)
+					logger.Warning("Неизвестный тип сообщения: %s", msg.Type, u.Assist.UserId)
 					continue
 				}
 
