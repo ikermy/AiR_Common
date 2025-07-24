@@ -21,6 +21,7 @@ func Set(patch string) {
 		MaxAge:     30,
 		Compress:   true,
 	}
+
 	multiWriter := io.MultiWriter(os.Stdout, logFile)
 	//generalLogger = log.New(multiWriter, "", log.LstdFlags)
 	generalLogger = log.New(multiWriter, "", 0)
