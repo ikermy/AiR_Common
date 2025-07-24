@@ -48,6 +48,11 @@ func Warn(format string, args ...interface{}) {
 	logMessage(format, "[WARNING]", 2, args...)
 }
 
+// Debug записывает отладочное сообщение с поддержкой форматирования
+func Debug(format string, args ...interface{}) {
+	logMessage(format, "[DEBUG]", 2, args...)
+}
+
 // Fatal записывает критическое сообщение об ошибке и завершает программу
 func Fatal(args ...interface{}) {
 	logMessageConcat("[FATAL]", 2, args...)
