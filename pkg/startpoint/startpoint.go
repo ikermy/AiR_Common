@@ -18,13 +18,13 @@ type Question struct {
 
 // Answer структура для хранения ответов пользователя
 type Answer struct {
-	Answer        string
+	Answer        model.AssistResponse
 	VoiceQuestion bool // Флаг, указывающий, что вопрос был задан голосом
 }
 
 // BotInterface - интерфейс для различных реализаций ботов
 type BotInterface interface {
-	NewMessage(msgType string, content, name *string) model.Message
+	NewMessage(msgType string, content *model.AssistResponse, name *string) model.Message
 	StartBots() error
 	StopBot()
 }
@@ -33,14 +33,14 @@ type BotInterface interface {
 type EndpointInterface interface {
 	GetUserAsk(dialogId uint64, respId uint64) []string
 	SetUserAsk(dialogId uint64, respId uint64, ask string, askLimit uint32) bool
-	SaveDialog(creator comdb.CreatorType, treadId uint64, resp *string)
+	SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse)
 	Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string)
 	FlushAllBatches()
 }
 
 // ModelInterface - интерфейс для моделей
 type ModelInterface interface {
-	Request(modelId string, dialogId uint64, ask *string) (string, error)
+	Request(modelId string, dialogId uint64, ask *string) (model.AssistResponse, error)
 	GetCh(respId uint64) (model.Ch, error)
 	CleanUp()
 }
@@ -62,9 +62,10 @@ func New(mod ModelInterface, end EndpointInterface, bot BotInterface) *Start {
 	}
 }
 
-func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (string, error) {
-	answerCh := make(chan string) // Канал для ответа
-	errCh := make(chan error)     // Канал для ошибок
+func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (model.AssistResponse, error) {
+	var emptyResponse model.AssistResponse
+	answerCh := make(chan model.AssistResponse) // Канал для ответа
+	errCh := make(chan error)                   // Канал для ошибок
 	defer close(answerCh)
 	defer close(errCh)
 
@@ -76,11 +77,16 @@ func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (string, e
 	}
 
 	if ask == "" {
-		return "", fmt.Errorf("ASK EMPTY MESSAGE")
+		return emptyResponse, fmt.Errorf("ASK EMPTY MESSAGE")
 	}
 
+	//if mode.TestAnswer {
+	//	return "AssistId model " + " resp " + ask, nil
+	//} // Тестовый ответ
 	if mode.TestAnswer {
-		return "AssistId model " + " resp " + ask, nil
+		return model.AssistResponse{
+			Message: "AssistId model " + " resp " + ask,
+		}, nil
 	} // Тестовый ответ
 
 	go func() {
@@ -98,9 +104,9 @@ func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (string, e
 	case body := <-answerCh:
 		return body, nil
 	case err := <-errCh:
-		return "", err
+		return emptyResponse, err
 	case <-timeout:
-		return "", nil
+		return emptyResponse, nil
 	}
 }
 
@@ -220,7 +226,10 @@ func (s *Start) Respondent(
 		}
 		// Сохраняю запрос пользователя для сохранения диалога
 		fullAsk := Answer{
-			Answer:        strings.Join(userAsk, "\n"),
+			//Answer:        strings.Join(userAsk, "\n"),
+			Answer: model.AssistResponse{
+				Message: strings.Join(userAsk, "\n"),
+			},
 			VoiceQuestion: VoiceQuestion, // Передаём информацию о голосовом вопросе
 		}
 
@@ -246,13 +255,19 @@ func (s *Start) Respondent(
 			continue
 		}
 		// Если пустой ответ от OpenAI
-		if answer == "" {
+		//if answer == "" {
+		if answer.Message == "" && answer.SendPhoto == "" && answer.SendVideo == "" && answer.SendAudio == "" && len(answer.SendDocument) == 0 {
 			continue
 		}
 
 		// Проверяю на содержание в ответе цели из u.Assist.Metas.MetaAction
+		//if u.Assist.Metas.MetaAction != "" {
+		//	if strings.Contains(answer, u.Assist.Metas.MetaAction) {
+		//		s.End.Meta(u.Assist.UserId, treadId, "target", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
+		//	}
+		//}
 		if u.Assist.Metas.MetaAction != "" {
-			if strings.Contains(answer, u.Assist.Metas.MetaAction) {
+			if strings.Contains(answer.Message, u.Assist.Metas.MetaAction) {
 				s.End.Meta(u.Assist.UserId, treadId, "target", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
 			}
 		}
@@ -353,12 +368,12 @@ func (s *Start) Listener(
 				switch msg.Type {
 				case "user":
 					quest = Question{
-						Question: strings.Split(msg.Content, "\n"),
+						Question: strings.Split(msg.Content.Message, "\n"),
 						Voice:    false, // Сообщение от пользователя не голосовое
 					}
 				case "user_voice":
 					quest = Question{
-						Question: strings.Split(msg.Content, "\n"),
+						Question: strings.Split(msg.Content.Message, "\n"),
 						Voice:    true, // Сообщение от пользователя голосовое
 					}
 				default:

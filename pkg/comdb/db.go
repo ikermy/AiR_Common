@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"github.com/ikermy/AiR_Common/pkg/model"
 	"io"
 	"time"
 
@@ -14,9 +15,9 @@ import (
 type CreatorType uint8
 
 type Message struct {
-	Creator   CreatorType `json:"creator"`
-	Message   string      `json:"message"`
-	Timestamp time.Time   `json:"timestamp"`
+	Creator   CreatorType          `json:"creator"`
+	Message   model.AssistResponse `json:"message"`
+	Timestamp time.Time            `json:"timestamp"`
 }
 type Espero struct {
 	Limit  uint16 `json:"limit"`

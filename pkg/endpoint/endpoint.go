@@ -6,6 +6,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
+	"github.com/ikermy/AiR_Common/pkg/model"
 	"strings"
 	"sync"
 	"time"
@@ -146,11 +147,11 @@ func (e *Endpoint) SetUserAsk(dialogId uint64, respId uint64, ask string, askLim
 	return true
 }
 
-func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *string) {
-	ask := strings.TrimSpace(*resp)
-	if ask == "" || ask == "[]" { // Этого не может быть?! Но на всякий случай
-		return
-	}
+func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse) {
+	//ask := strings.TrimSpace(*resp)
+	//if ask == "" || ask == "[]" { // Этого не может быть?! Но на всякий случай
+	//	return
+	//}
 
 	message := comdb.Message{
 		Creator:   creator,

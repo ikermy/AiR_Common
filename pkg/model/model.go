@@ -80,6 +80,22 @@ type Services struct {
 	Respondent bool
 }
 
+type MediaFile struct {
+	URL      string `json:"url,omitempty"`
+	FileID   string `json:"file_id,omitempty"`
+	FileName string `json:"file_name,omitempty"`
+	Caption  string `json:"caption,omitempty"`
+	MimeType string `json:"mime_type,omitempty"`
+}
+
+type AssistResponse struct {
+	Message      string      `json:"message"`
+	SendPhoto    string      `json:"photo,omitempty"`
+	SendVideo    string      `json:"video,omitempty"`
+	SendAudio    string      `json:"audio,omitempty"`
+	SendDocument []MediaFile `json:"document,omitempty"`
+}
+
 type Ch struct {
 	TxCh     chan Message
 	RxCh     chan Message
@@ -89,12 +105,12 @@ type Ch struct {
 }
 
 type Message struct {
-	UserName  string    `json:"uname"` // Фактически не используется
-	Type      string    `json:"type"`
-	Content   string    `json:"content"`
-	Name      string    `json:"name"`
-	Token     string    `json:"token"`
-	Timestamp time.Time `json:"timestamp"`
+	UserName  string         `json:"uname"` // Фактически не используется
+	Type      string         `json:"type"`
+	Content   AssistResponse `json:"content"`
+	Name      string         `json:"name"`
+	Token     string         `json:"token"`
+	Timestamp time.Time      `json:"timestamp"`
 }
 
 // StartCh структура для передачи данных для запуска слушателя
@@ -161,6 +177,21 @@ func (m *Models) CreateThead(dialogId uint64) error {
 		return fmt.Errorf("не удалось создать тред: %w", err)
 	}
 
+	//// Создаем новый тред с системным сообщением о JSON-формате
+	//th, err := m.client.CreateThread(m.ctx, openai.ThreadRequest{
+	//	Messages: []openai.ThreadMessage{
+	//		{
+	//			Role: "user",
+	//		},
+	//	},
+	//	Metadata: map[string]interface{}{
+	//		"dialogId": fmt.Sprintf("%d", dialogId),
+	//	},
+	//})
+	//if err != nil {
+	//	return fmt.Errorf("не удалось создать тред: %w", err)
+	//}
+
 	// Сохраняем новый тред в карте тредов пользователя
 	respModel.TreadsGPT[dialogId] = &th
 	// Поскольку мы работаем с указателем, нет необходимости обновлять значение в m.responders
@@ -176,9 +207,11 @@ func createMsg(text *string) openai.MessageRequest {
 	return lastMessage
 }
 
-func (m *Models) Request(modelId string, dialogId uint64, text *string) (string, error) {
+func (m *Models) Request(modelId string, dialogId uint64, text *string) (AssistResponse, error) {
+	var emptyResponse AssistResponse
+
 	if *text == "" {
-		return "", fmt.Errorf("пустое сообщение")
+		return emptyResponse, fmt.Errorf("пустое сообщение")
 	}
 	// Возможно стоит использовать канал о сигнализации о готовности треда
 	//time.Sleep(1 * time.Second) // Протестировать!!!
@@ -191,7 +224,7 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (string,
 	// Получение RespModel, который содержит информацию о тредах пользователя
 	val, ok := m.responders.Load(dialogId)
 	if !ok {
-		return "", fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
+		return emptyResponse, fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
 	}
 
 	// Приведение типа к указателю на RespModel
@@ -204,12 +237,12 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (string,
 
 	if !ok || thead == nil {
 		// Если тред не найден после попытки создания, возвращаем ошибку
-		return "", fmt.Errorf("тред не найден для dialogId %d после попытки создания", dialogId)
+		return emptyResponse, fmt.Errorf("тред не найден для dialogId %d после попытки создания", dialogId)
 	}
 
 	_, err = m.client.CreateMessage(m.ctx, thead.ID, createMsg(text))
 	if err != nil {
-		return "", fmt.Errorf("не удалось создать сообщение: %w", err)
+		return emptyResponse, fmt.Errorf("не удалось создать сообщение: %w", err)
 	}
 
 	runRequest := openai.RunRequest{
@@ -218,34 +251,76 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (string,
 
 	run, err := m.client.CreateRun(m.ctx, thead.ID, runRequest)
 	if err != nil {
-		return "", fmt.Errorf("не удалось создать запуск: %w", err)
+		return emptyResponse, fmt.Errorf("не удалось создать запуск: %w", err)
 	}
 
 	// Опрашиваем статус запуска, пока он не будет завершен
 	for run.Status == openai.RunStatusQueued || run.Status == openai.RunStatusInProgress {
 		run, err = m.client.RetrieveRun(m.ctx, run.ThreadID, run.ID)
 		if err != nil {
-			return "", fmt.Errorf("не удалось получить статус запуска: %w", err)
+			return emptyResponse, fmt.Errorf("не удалось получить статус запуска: %w", err)
 		}
 		time.Sleep(100 * time.Millisecond) // Небольшая задержка перед следующим опросом
 	}
 	if run.Status != openai.RunStatusCompleted {
-		return "", fmt.Errorf("запуск завершился неудачно со статусом %s", run.Status)
+		return emptyResponse, fmt.Errorf("запуск завершился неудачно со статусом %s", run.Status)
 	}
 
+	//// Получаем список сообщений из треда
+	//numMessages := 1 // Нас интересует только последнее сообщение
+	//order := "desc"  // Сортировка по убыванию, чтобы последнее сообщение было первым
+	//messagesList, err := m.client.ListMessage(m.ctx, run.ThreadID, &numMessages, &order, nil, nil, nil)
+	//if err != nil {
+	//	return "", fmt.Errorf("не удалось получить список сообщений: %w", err)
+	//}
+	//
+	//if len(messagesList.Messages) == 0 || len(messagesList.Messages[0].Content) == 0 {
+	//	return "", fmt.Errorf("получен пустой список сообщений или пустое содержимое сообщения")
+	//}
+	//
+	//return messagesList.Messages[0].Content[0].Text.Value, nil
 	// Получаем список сообщений из треда
-	numMessages := 1 // Нас интересует только последнее сообщение
-	order := "desc"  // Сортировка по убыванию, чтобы последнее сообщение было первым
-	messagesList, err := m.client.ListMessage(m.ctx, run.ThreadID, &numMessages, &order, nil, nil, nil)
+	order := "desc" // Сортировка по убыванию, чтобы последние сообщения были первыми
+	messagesList, err := m.client.ListMessage(m.ctx, run.ThreadID, nil, &order, nil, nil, nil)
 	if err != nil {
-		return "", fmt.Errorf("не удалось получить список сообщений: %w", err)
+		return emptyResponse, fmt.Errorf("не удалось получить список сообщений: %w", err)
 	}
 
-	if len(messagesList.Messages) == 0 || len(messagesList.Messages[0].Content) == 0 {
-		return "", fmt.Errorf("получен пустой список сообщений или пустое содержимое сообщения")
+	if len(messagesList.Messages) == 0 {
+		return emptyResponse, fmt.Errorf("получен пустой список сообщений")
 	}
 
-	return messagesList.Messages[0].Content[0].Text.Value, nil
+	// Собираем все сообщения от ассистента после запуска
+	var fullResponse strings.Builder
+	for _, message := range messagesList.Messages {
+		// Проверяем, что это сообщение от ассистента и создано после запуска
+		if message.Role == "assistant" && int64(message.CreatedAt) >= run.CreatedAt {
+			for _, content := range message.Content {
+				if content.Text != nil {
+					fullResponse.WriteString(content.Text.Value)
+				}
+			}
+		}
+	}
+
+	response := fullResponse.String()
+	if response == "" {
+		return emptyResponse, fmt.Errorf("получен пустой ответ от модели")
+	}
+
+	//// Валидируем, что ответ является корректным JSON
+	//var jsonTest interface{}
+	//if err := json.Unmarshal([]byte(response), &jsonTest); err != nil {
+	//	return "", fmt.Errorf("ответ модели не является валидным JSON: %w", err)
+	//}
+
+	// Десериализуем JSON в структуру assistResponse
+	var assistResp AssistResponse
+	if err = json.Unmarshal([]byte(response), &assistResp); err != nil {
+		return emptyResponse, fmt.Errorf("ответ модели не является валидным JSON: %w", err)
+	}
+	//return response, nil
+	return assistResp, nil
 }
 
 func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error) {

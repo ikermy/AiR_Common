@@ -12,7 +12,35 @@ import (
 	"time"
 )
 
+// ANSI цветовые коды
+const (
+	ColorReset  = "\033[0m"
+	ColorWhite  = "\033[37m" // INFO - белый
+	ColorRed    = "\033[31m" // ERROR - красный
+	ColorYellow = "\033[33m" // WARNING - желтый
+	ColorGreen  = "\033[32m" // DEBUG - зеленый
+	ColorPurple = "\033[35m" // FATAL - фиолетовый
+)
+
 var generalLogger *log.Logger
+
+// getColorForLevel возвращает цветовой код для уровня логирования
+func getColorForLevel(level string) string {
+	switch level {
+	case "[INFO]":
+		return ColorWhite
+	case "[ERROR]":
+		return ColorRed
+	case "[WARNING]":
+		return ColorYellow
+	case "[DEBUG]":
+		return ColorGreen
+	case "[FATAL]":
+		return ColorPurple
+	default:
+		return ColorWhite
+	}
+}
 
 func Set(patch string) {
 	logFile := &lumberjack.Logger{
@@ -102,11 +130,14 @@ func logMessage(format string, level string, skip int, args ...interface{}) {
 	// Добавляем timestamp
 	now := time.Now().Format("2006/01/02 15:04:05")
 
-	// Логируем с или без userId
+	// Получаем цвет для уровня
+	color := getColorForLevel(level)
+
+	// Логируем с или без userId с цветом
 	if userID != nil {
-		generalLogger.Printf("%s %s %s [USER:%d] %s", now, caller, level, *userID, message)
+		generalLogger.Printf("%s%s %s %s [USER:%d] %s%s", color, now, caller, level, *userID, message, ColorReset)
 	} else {
-		generalLogger.Printf("%s %s %s %s", now, caller, level, message)
+		generalLogger.Printf("%s%s %s %s %s%s", color, now, caller, level, message, ColorReset)
 	}
 }
 
@@ -145,11 +176,14 @@ func logMessageConcat(level string, skip int, args ...interface{}) {
 	// Добавляем timestamp
 	now := time.Now().Format("2006/01/02 15:04:05")
 
-	// Логируем
+	// Получаем цвет для уровня
+	color := getColorForLevel(level)
+
+	// Логируем с цветом
 	if userID != nil {
-		generalLogger.Printf("%s %s %s [USER:%d] %s", now, caller, level, *userID, message)
+		generalLogger.Printf("%s%s %s %s [USER:%d] %s%s", color, now, caller, level, *userID, message, ColorReset)
 	} else {
-		generalLogger.Printf("%s %s %s %s", now, caller, level, message)
+		generalLogger.Printf("%s%s %s %s %s%s", color, now, caller, level, message, ColorReset)
 	}
 }
 
