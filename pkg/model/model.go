@@ -8,6 +8,8 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/sashabaranov/go-openai"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -15,10 +17,12 @@ import (
 
 // Model интерфейс для работы с моделями Assistant
 type Model interface {
+	NewMessage(msgType string, content *AssistResponse, name *string) Message
+	GetFileAsReader(file File) (io.Reader, error)
 	GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error)
 	GetCh(respId uint64) (Ch, error)
 	SaveAllContextDuringExit()
-	Request(modelId string, dialogId uint64, text *string) (string, error)
+	Request(modelId string, dialogId uint64, text *string) (AssistResponse, error)
 	CleanDialogData(dialogId uint64)
 	TranscribeAudio(audioData []byte, fileName string) (string, error)
 }
@@ -71,7 +75,7 @@ type RespModel struct {
 	Assist    Assistant
 	RespName  string
 	Services  Services
-	mu        sync.RWMutex // Мютекс для защиты полей структуры
+	mu        sync.RWMutex
 	//activeOps sync.WaitGroup // ТЕСТИРОВАТЬ
 }
 
@@ -80,20 +84,31 @@ type Services struct {
 	Respondent bool
 }
 
-type MediaFile struct {
-	URL      string `json:"url,omitempty"`
-	FileID   string `json:"file_id,omitempty"`
-	FileName string `json:"file_name,omitempty"`
-	Caption  string `json:"caption,omitempty"`
-	MimeType string `json:"mime_type,omitempty"`
+type Action struct {
+	SendFiles []File `json:"send_files,omitempty"` // Массив файлов для отправки
 }
 
+type FileType string
+
+const (
+	Photo FileType = "photo"
+	Video FileType = "video"
+	Audio FileType = "audio"
+	Doc   FileType = "doc"
+)
+
+type File struct {
+	Type     FileType `json:"type,omitempty"`      // Тип файла, не может быть пустым, должно быть одним из Photo, Video, Audio, Doc
+	URL      string   `json:"url,omitempty"`       // URL файла для загрузки может быть пустым если используется FileID
+	FileID   string   `json:"file_id,omitempty"`   // Идентификатор файла в векторном хранилище может быть пустым если используется URL
+	FileName string   `json:"file_name,omitempty"` // Имя файла для сохранения может быть пустым
+	Caption  string   `json:"caption,omitempty"`   // Подпись к файлу может быть пустым
+}
+
+// AssistResponse представляет ответ от AI-ассистента
 type AssistResponse struct {
-	Message      string      `json:"message"`
-	SendPhoto    string      `json:"photo,omitempty"`
-	SendVideo    string      `json:"video,omitempty"`
-	SendAudio    string      `json:"audio,omitempty"`
-	SendDocument []MediaFile `json:"document,omitempty"`
+	Message string `json:"message,omitempty"` // Текстовое сообщение ответа может быть пустым если есть Action
+	Action  Action `json:"action,omitempty"`  // Действия для выполнения может быть пустым если есть Message
 }
 
 type Ch struct {
@@ -130,6 +145,57 @@ func New(conf *conf.Conf, d DB) *Models {
 		waitChannels: sync.Map{},
 		UserModelTTl: time.Duration(conf.GLOB.UserModelTTl) * time.Minute,
 	}
+}
+
+func (m *Models) NewMessage(msgType string, content *AssistResponse, name *string) Message {
+	return Message{
+		Type:      msgType,
+		Content:   *content,
+		Name:      *name,
+		Timestamp: time.Now(),
+	}
+}
+
+// GetFileAsReader получает файл в виде io.Reader из векторного хранилища или по URL
+func (m *Models) GetFileAsReader(file File) (io.Reader, error) {
+	// Проверяем, что у нас есть источник файла
+	if file.URL == "" && file.FileID == "" {
+		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL и FileID")
+	}
+
+	// Если есть FileID, получаем файл из векторного хранилища OpenAI
+	if file.FileID != "" {
+		// ВОЗМОЖНО НУЖНО ДОБАВИТЬ И ЭТОТ ВЫВОД ВМЕСТЕ С []byte
+		//fileResp, err := m.client.GetFile(m.ctx, file.FileID)
+		//if err != nil {
+		//	return nil, fmt.Errorf("ошибка получения файла из векторного хранилища: %w", err)
+		//}
+
+		// Получаем содержимое файла
+		content, err := m.client.GetFileContent(m.ctx, file.FileID)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка получения содержимого файла: %w", err)
+		}
+
+		return content, nil
+	}
+
+	// Если есть URL, загружаем файл по HTTP
+	if file.URL != "" {
+		resp, err := http.Get(file.URL)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка загрузки файла по URL: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return nil, fmt.Errorf("ошибка HTTP при загрузке файла: статус %d", resp.StatusCode)
+		}
+
+		return resp.Body, nil
+	}
+
+	return nil, fmt.Errorf("неизвестный источник файла")
 }
 
 func (m *Models) CreateThead(dialogId uint64) error {

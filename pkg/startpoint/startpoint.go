@@ -24,7 +24,6 @@ type Answer struct {
 
 // BotInterface - интерфейс для различных реализаций ботов
 type BotInterface interface {
-	NewMessage(msgType string, content *model.AssistResponse, name *string) model.Message
 	StartBots() error
 	StopBot()
 }
@@ -40,6 +39,7 @@ type EndpointInterface interface {
 
 // ModelInterface - интерфейс для моделей
 type ModelInterface interface {
+	NewMessage(msgType string, content *model.AssistResponse, name *string) model.Message
 	Request(modelId string, dialogId uint64, ask *string) (model.AssistResponse, error)
 	GetCh(respId uint64) (model.Ch, error)
 	CleanUp()
@@ -256,7 +256,7 @@ func (s *Start) Respondent(
 		}
 		// Если пустой ответ от OpenAI
 		//if answer == "" {
-		if answer.Message == "" && answer.SendPhoto == "" && answer.SendVideo == "" && answer.SendAudio == "" && len(answer.SendDocument) == 0 {
+		if answer.Message == "" && len(answer.Action.SendFiles) == 0 {
 			continue
 		}
 
@@ -386,7 +386,7 @@ func (s *Start) Listener(
 				question <- quest
 				// Отправляю вопрос клиента в виде сообщения
 				select {
-				case usrCh.TxCh <- s.Bot.NewMessage("user", &msg.Content, &msg.UserName):
+				case usrCh.TxCh <- s.Mod.NewMessage("user", &msg.Content, &msg.UserName):
 				default:
 					return fmt.Errorf("'Listener' канал TxCh закрыт или переполнен")
 				}
@@ -401,7 +401,7 @@ func (s *Start) Listener(
 			}
 		case resp := <-answerCh: // Пришёл ответ ассистента
 			select {
-			case usrCh.TxCh <- s.Bot.NewMessage("assist", &resp.Answer, &u.RespName):
+			case usrCh.TxCh <- s.Mod.NewMessage("assist", &resp.Answer, &u.RespName):
 				s.End.SaveDialog(comdb.AI, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			default:
 				return fmt.Errorf("'Listener' канал TxCh закрыт или переполнен")
