@@ -64,8 +64,8 @@ func New(mod ModelInterface, end EndpointInterface, bot BotInterface) *Start {
 
 func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
-	answerCh := make(chan model.AssistResponse) // Канал для ответа
-	errCh := make(chan error)                   // Канал для ошибок
+	answerCh := make(chan model.AssistResponse, 1) // Канал для ответа
+	errCh := make(chan error, 1)                   // Канал для ошибок
 	defer close(answerCh)
 	defer close(errCh)
 
@@ -80,9 +80,6 @@ func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (model.Ass
 		return emptyResponse, fmt.Errorf("ASK EMPTY MESSAGE")
 	}
 
-	//if mode.TestAnswer {
-	//	return "AssistId model " + " resp " + ask, nil
-	//} // Тестовый ответ
 	if mode.TestAnswer {
 		return model.AssistResponse{
 			Message: "AssistId model " + " resp " + ask,
@@ -90,12 +87,28 @@ func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (model.Ass
 	} // Тестовый ответ
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// Игнорируем панику от записи в закрытый канал
+				logger.Warn("Восстановлено от паники в горутине Ask: %v", r)
+			}
+		}()
+
 		body, err := s.Mod.Request(modelId, dialogId, &ask)
 		if err != nil {
-			errCh <- fmt.Errorf("ask error making request: %w", err)
+			select {
+			case errCh <- fmt.Errorf("ask error making request: %w", err):
+			default:
+				// Канал заполнен или закрыт
+			}
 			return
 		}
-		answerCh <- body
+
+		select {
+		case answerCh <- body:
+		default:
+			// Канал заполнен или закрыт
+		}
 	}()
 
 	timeout := time.After(mode.ErrorTimeOutDurationForAssistAnswer * time.Minute)
@@ -261,13 +274,9 @@ func (s *Start) Respondent(
 		}
 
 		// Проверяю на содержание в ответе цели из u.Assist.Metas.MetaAction
-		//if u.Assist.Metas.MetaAction != "" {
-		//	if strings.Contains(answer, u.Assist.Metas.MetaAction) {
-		//		s.End.Meta(u.Assist.UserId, treadId, "target", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
-		//	}
-		//}
-		if u.Assist.Metas.MetaAction != "" {
-			if strings.Contains(answer.Message, u.Assist.Metas.MetaAction) {
+		if u.Assist.Metas.MetaAction != "" { // Убрать вообще MetaAction из настроек модели!?
+			//if strings.Contains(answer.Message, u.Assist.Metas.MetaAction) {
+			if answer.Meta { // Ассистент пометил ответ как достигший цели
 				s.End.Meta(u.Assist.UserId, treadId, "target", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
 			}
 		}

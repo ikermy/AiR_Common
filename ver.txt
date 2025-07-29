@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.22.2"
-git tag -a v1.22.2 -m "RunAction"
+git commit -m "v1.22.3"
+git tag -a v1.22.3 -m "json_schema - target"
 git push origin master
-git push origin v1.22.2
+git push origin v1.22.3

@@ -109,6 +109,7 @@ type File struct {
 type AssistResponse struct {
 	Message string `json:"message,omitempty"` // Текстовое сообщение ответа может быть пустым если есть Action
 	Action  Action `json:"action,omitempty"`  // Действия для выполнения может быть пустым если есть Message
+	Meta    bool   `json:"target,omitempty"`  // Флаг, что ответ содержит достижение цели по мнению ассистента
 }
 
 type Ch struct {
@@ -120,12 +121,10 @@ type Ch struct {
 }
 
 type Message struct {
-	//UserName  string         `json:"uname"` // Фактически не используется
-	Type      string         `json:"type"`
-	Content   AssistResponse `json:"content"`
-	Name      string         `json:"name"`
-	Token     string         `json:"token"`
-	Timestamp time.Time      `json:"timestamp"`
+	Type      string
+	Content   AssistResponse
+	Name      string
+	Timestamp time.Time
 }
 
 // StartCh структура для передачи данных для запуска слушателя
@@ -138,7 +137,7 @@ type StartCh struct {
 
 // ActionHandler интерфейс для обработки функций OpenAI ассистента
 type ActionHandler interface {
-	RunAction(functionName string) json.RawMessage
+	RunAction(functionName, arguments string) string
 }
 
 func New(conf *conf.Conf, d DB, actionHandler ActionHandler) *Models {
@@ -218,197 +217,11 @@ func (m *Models) CreateThead(dialogId uint64) error {
 		return fmt.Errorf("не удалось создать тред: %w", err)
 	}
 
-	//// Создаем новый тред с системным сообщением о JSON-формате
-	//th, err := m.client.CreateThread(m.ctx, openai.ThreadRequest{
-	//	Messages: []openai.ThreadMessage{
-	//		{
-	//			Role: "user",
-	//		},
-	//	},
-	//	Metadata: map[string]interface{}{
-	//		"dialogId": fmt.Sprintf("%d", dialogId),
-	//	},
-	//})
-	//if err != nil {
-	//	return fmt.Errorf("не удалось создать тред: %w", err)
-	//}
-
 	// Сохраняем новый тред в карте тредов пользователя
 	respModel.TreadsGPT[dialogId] = &th
 	// Поскольку мы работаем с указателем, нет необходимости обновлять значение в m.responders
 
 	return nil
-}
-
-func createMsg(text *string) openai.MessageRequest {
-	lastMessage := openai.MessageRequest{
-		Role:    "user",
-		Content: *text,
-	}
-	return lastMessage
-}
-
-// handleRequiredAction обрабатывает статус RunStatusRequiresAction
-func (m *Models) handleRequiredAction(ctx context.Context, run *openai.Run) (*openai.Run, error) {
-	if run.RequiredAction == nil || run.RequiredAction.SubmitToolOutputs == nil {
-		return run, nil
-	}
-
-	toolOutputs := make([]openai.ToolOutput, 0)
-
-	for _, toolCall := range run.RequiredAction.SubmitToolOutputs.ToolCalls {
-		var output openai.ToolOutput
-
-		if m.actionHandler != nil {
-			result := m.actionHandler.RunAction(toolCall.Function.Name)
-			output = openai.ToolOutput{
-				ToolCallID: toolCall.ID,
-				Output:     result,
-			}
-		} else {
-			output = openai.ToolOutput{
-				ToolCallID: toolCall.ID,
-				Output:     fmt.Sprintf("Функция %s не поддерживается", toolCall.Function.Name),
-			}
-		}
-
-		toolOutputs = append(toolOutputs, output)
-	}
-
-	// Отправляем результаты выполнения функций
-	updatedRun, err := m.client.SubmitToolOutputs(ctx, run.ThreadID, run.ID, openai.SubmitToolOutputsRequest{
-		ToolOutputs: toolOutputs,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("не удалось отправить результаты функций: %w", err)
-	}
-
-	return &updatedRun, nil
-}
-
-// waitForRunCompletion ожидает завершения выполнения run
-func (m *Models) waitForRunCompletion(ctx context.Context, run *openai.Run) (*openai.Run, error) {
-	currentRun := run
-
-	for currentRun.Status == openai.RunStatusQueued ||
-		currentRun.Status == openai.RunStatusInProgress ||
-		currentRun.Status == openai.RunStatusRequiresAction {
-
-		// Обработка RunStatusRequiresAction
-		if currentRun.Status == openai.RunStatusRequiresAction {
-			updatedRun, err := m.handleRequiredAction(ctx, currentRun)
-			if err != nil {
-				return nil, err
-			}
-			currentRun = updatedRun
-		}
-
-		time.Sleep(100 * time.Millisecond)
-
-		retrievedRun, err := m.client.RetrieveRun(ctx, currentRun.ThreadID, currentRun.ID)
-		if err != nil {
-			return nil, fmt.Errorf("не удалось получить статус запуска: %w", err)
-		}
-		currentRun = &retrievedRun
-	}
-
-	if currentRun.Status != openai.RunStatusCompleted {
-		return nil, fmt.Errorf("запуск завершился неудачно со статусом %s", currentRun.Status)
-	}
-
-	return currentRun, nil
-}
-
-// extractAssistantResponse извлекает ответ ассистента из сообщений треда
-func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) (AssistResponse, error) {
-	var emptyResponse AssistResponse
-
-	// Получаем список сообщений из треда
-	order := "desc"
-	messagesList, err := m.client.ListMessage(ctx, run.ThreadID, nil, &order, nil, nil, nil)
-	if err != nil {
-		return emptyResponse, fmt.Errorf("не удалось получить список сообщений: %w", err)
-	}
-
-	if len(messagesList.Messages) == 0 {
-		return emptyResponse, fmt.Errorf("получен пустой список сообщений")
-	}
-
-	// Собираем все сообщения от ассистента после запуска
-	var fullResponse strings.Builder
-	for _, message := range messagesList.Messages {
-		if message.Role == "assistant" && int64(message.CreatedAt) >= run.CreatedAt {
-			for _, content := range message.Content {
-				if content.Text != nil {
-					fullResponse.WriteString(content.Text.Value)
-				}
-			}
-		}
-	}
-
-	response := fullResponse.String()
-	if response == "" {
-		return emptyResponse, fmt.Errorf("получен пустой ответ от модели")
-	}
-
-	var assistResp AssistResponse
-	if err = json.Unmarshal([]byte(response), &assistResp); err != nil {
-		logger.Error(response)
-		return emptyResponse, fmt.Errorf("ответ модели не является валидным JSON: %w", err)
-	}
-
-	return assistResp, nil
-}
-
-func (m *Models) Request(modelId string, dialogId uint64, text *string) (AssistResponse, error) {
-	var emptyResponse AssistResponse
-
-	if *text == "" {
-		return emptyResponse, fmt.Errorf("пустое сообщение")
-	}
-
-	err := m.CreateThead(dialogId)
-	if err != nil {
-		logger.Warn("не удалось создать тред: %v", err)
-	}
-
-	val, ok := m.responders.Load(dialogId)
-	if !ok {
-		return emptyResponse, fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
-	}
-
-	respModel := val.(*RespModel)
-
-	respModel.mu.RLock()
-	thead, ok := respModel.TreadsGPT[dialogId]
-	respModel.mu.RUnlock()
-
-	if !ok || thead == nil {
-		return emptyResponse, fmt.Errorf("тред не найден для dialogId %d после попытки создания", dialogId)
-	}
-
-	_, err = m.client.CreateMessage(m.ctx, thead.ID, createMsg(text))
-	if err != nil {
-		return emptyResponse, fmt.Errorf("не удалось создать сообщение: %w", err)
-	}
-
-	runRequest := openai.RunRequest{
-		AssistantID: modelId,
-	}
-
-	run, err := m.client.CreateRun(m.ctx, thead.ID, runRequest)
-	if err != nil {
-		return emptyResponse, fmt.Errorf("не удалось создать запуск: %w", err)
-	}
-
-	// Ожидаем завершения выполнения
-	completedRun, err := m.waitForRunCompletion(m.ctx, &run)
-	if err != nil {
-		return emptyResponse, err
-	}
-
-	// Извлекаем ответ ассистента
-	return m.extractAssistantResponse(m.ctx, completedRun)
 }
 
 func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error) {
