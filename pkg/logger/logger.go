@@ -14,8 +14,9 @@ import (
 
 // ANSI цветовые коды
 const (
-	ColorReset  = "\033[0m"
-	ColorWhite  = "\033[37m" // INFO - белый
+	ColorReset = "\033[0m"
+	//ColorWhite  = "\033[37m" // INFO - белый
+	ColorWhite  = ""         // INFO - белый
 	ColorRed    = "\033[31m" // ERROR - красный
 	ColorYellow = "\033[33m" // WARNING - желтый
 	ColorGreen  = "\033[32m" // DEBUG - зеленый

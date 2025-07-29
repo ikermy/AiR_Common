@@ -386,7 +386,8 @@ func (s *Start) Listener(
 				question <- quest
 				// Отправляю вопрос клиента в виде сообщения
 				select {
-				case usrCh.TxCh <- s.Mod.NewMessage("user", &msg.Content, &msg.UserName):
+				//case usrCh.TxCh <- s.Mod.NewMessage("user", &msg.Content, &msg.UserName):
+				case usrCh.TxCh <- s.Mod.NewMessage("user", &msg.Content, &msg.Name):
 				default:
 					return fmt.Errorf("'Listener' канал TxCh закрыт или переполнен")
 				}

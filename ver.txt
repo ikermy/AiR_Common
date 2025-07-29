@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.22.1"
-git tag -a v1.22.1 -m "new logger, new AssistResponse"
+git commit -m "v1.22.2"
+git tag -a v1.22.2 -m "RunAction"
 git push origin master
-git push origin v1.22.1
+git push origin v1.22.2

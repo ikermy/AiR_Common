@@ -18,7 +18,7 @@ import (
 // Model интерфейс для работы с моделями Assistant
 type Model interface {
 	NewMessage(msgType string, content *AssistResponse, name *string) Message
-	GetFileAsReader(file File) (io.Reader, error)
+	GetFileAsReader(url string) (io.Reader, error)
 	GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error)
 	GetCh(respId uint64) (Ch, error)
 	SaveAllContextDuringExit()
@@ -33,12 +33,13 @@ type DB interface {
 }
 
 type Models struct {
-	ctx          context.Context
-	client       *openai.Client
-	db           DB
-	responders   sync.Map // Хранит указатели на RespModel, а не сами структуры
-	waitChannels sync.Map // Хранит каналы для синхронизации горутин
-	UserModelTTl time.Duration
+	ctx           context.Context
+	client        *openai.Client
+	db            DB
+	responders    sync.Map // Хранит указатели на RespModel, а не сами структуры
+	waitChannels  sync.Map // Хранит каналы для синхронизации горутин
+	UserModelTTl  time.Duration
+	actionHandler ActionHandler
 }
 
 // Notifications структура для хранения настроек уведомлений о событиях
@@ -99,8 +100,7 @@ const (
 
 type File struct {
 	Type     FileType `json:"type,omitempty"`      // Тип файла, не может быть пустым, должно быть одним из Photo, Video, Audio, Doc
-	URL      string   `json:"url,omitempty"`       // URL файла для загрузки может быть пустым если используется FileID
-	FileID   string   `json:"file_id,omitempty"`   // Идентификатор файла в векторном хранилище может быть пустым если используется URL
+	URL      string   `json:"url,omitempty"`       // URL файла для загрузки может быть пустым если используется
 	FileName string   `json:"file_name,omitempty"` // Имя файла для сохранения может быть пустым
 	Caption  string   `json:"caption,omitempty"`   // Подпись к файлу может быть пустым
 }
@@ -120,7 +120,7 @@ type Ch struct {
 }
 
 type Message struct {
-	UserName  string         `json:"uname"` // Фактически не используется
+	//UserName  string         `json:"uname"` // Фактически не используется
 	Type      string         `json:"type"`
 	Content   AssistResponse `json:"content"`
 	Name      string         `json:"name"`
@@ -136,14 +136,20 @@ type StartCh struct {
 	RespId  uint64
 }
 
-func New(conf *conf.Conf, d DB) *Models {
+// ActionHandler интерфейс для обработки функций OpenAI ассистента
+type ActionHandler interface {
+	RunAction(functionName string) json.RawMessage
+}
+
+func New(conf *conf.Conf, d DB, actionHandler ActionHandler) *Models {
 	return &Models{
-		client:       openai.NewClient(conf.GPT.Key),
-		ctx:          context.Background(),
-		db:           d,
-		responders:   sync.Map{},
-		waitChannels: sync.Map{},
-		UserModelTTl: time.Duration(conf.GLOB.UserModelTTl) * time.Minute,
+		client:        openai.NewClient(conf.GPT.Key),
+		ctx:           context.Background(),
+		db:            d,
+		responders:    sync.Map{},
+		waitChannels:  sync.Map{},
+		UserModelTTl:  time.Duration(conf.GLOB.UserModelTTl) * time.Minute,
+		actionHandler: actionHandler,
 	}
 }
 
@@ -157,45 +163,23 @@ func (m *Models) NewMessage(msgType string, content *AssistResponse, name *strin
 }
 
 // GetFileAsReader получает файл в виде io.Reader из векторного хранилища или по URL
-func (m *Models) GetFileAsReader(file File) (io.Reader, error) {
+func (m *Models) GetFileAsReader(url string) (io.Reader, error) {
 	// Проверяем, что у нас есть источник файла
-	if file.URL == "" && file.FileID == "" {
-		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL и FileID")
+	if url == "" {
+		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
 	}
 
-	// Если есть FileID, получаем файл из векторного хранилища OpenAI
-	if file.FileID != "" {
-		// ВОЗМОЖНО НУЖНО ДОБАВИТЬ И ЭТОТ ВЫВОД ВМЕСТЕ С []byte
-		//fileResp, err := m.client.GetFile(m.ctx, file.FileID)
-		//if err != nil {
-		//	return nil, fmt.Errorf("ошибка получения файла из векторного хранилища: %w", err)
-		//}
-
-		// Получаем содержимое файла
-		content, err := m.client.GetFileContent(m.ctx, file.FileID)
-		if err != nil {
-			return nil, fmt.Errorf("ошибка получения содержимого файла: %w", err)
-		}
-
-		return content, nil
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка загрузки файла по URL: %w", err)
 	}
 
-	// Если есть URL, загружаем файл по HTTP
-	if file.URL != "" {
-		resp, err := http.Get(file.URL)
-		if err != nil {
-			return nil, fmt.Errorf("ошибка загрузки файла по URL: %w", err)
-		}
-
-		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			return nil, fmt.Errorf("ошибка HTTP при загрузке файла: статус %d", resp.StatusCode)
-		}
-
-		return resp.Body, nil
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("ошибка HTTP при загрузке файла: статус %d", resp.StatusCode)
 	}
 
-	return nil, fmt.Errorf("неизвестный источник файла")
+	return resp.Body, nil
 }
 
 func (m *Models) CreateThead(dialogId uint64) error {
@@ -207,15 +191,6 @@ func (m *Models) CreateThead(dialogId uint64) error {
 
 	// Приведение типа к указателю на RespModel
 	respModel := val.(*RespModel)
-
-	//  ТЕСТИРОВАТЬ
-	//respModel := val.(*RespModel)
-	//if respModel.isClosing {
-	//	return // Не начинаем новую операцию с закрывающимся объектом
-	//}
-	//
-	//respModel.activeOps.Add(1)
-	//defer respModel.activeOps.Done()
 
 	// Блокируем для записи
 	respModel.mu.Lock()
@@ -273,36 +248,142 @@ func createMsg(text *string) openai.MessageRequest {
 	return lastMessage
 }
 
+// handleRequiredAction обрабатывает статус RunStatusRequiresAction
+func (m *Models) handleRequiredAction(ctx context.Context, run *openai.Run) (*openai.Run, error) {
+	if run.RequiredAction == nil || run.RequiredAction.SubmitToolOutputs == nil {
+		return run, nil
+	}
+
+	toolOutputs := make([]openai.ToolOutput, 0)
+
+	for _, toolCall := range run.RequiredAction.SubmitToolOutputs.ToolCalls {
+		var output openai.ToolOutput
+
+		if m.actionHandler != nil {
+			result := m.actionHandler.RunAction(toolCall.Function.Name)
+			output = openai.ToolOutput{
+				ToolCallID: toolCall.ID,
+				Output:     result,
+			}
+		} else {
+			output = openai.ToolOutput{
+				ToolCallID: toolCall.ID,
+				Output:     fmt.Sprintf("Функция %s не поддерживается", toolCall.Function.Name),
+			}
+		}
+
+		toolOutputs = append(toolOutputs, output)
+	}
+
+	// Отправляем результаты выполнения функций
+	updatedRun, err := m.client.SubmitToolOutputs(ctx, run.ThreadID, run.ID, openai.SubmitToolOutputsRequest{
+		ToolOutputs: toolOutputs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("не удалось отправить результаты функций: %w", err)
+	}
+
+	return &updatedRun, nil
+}
+
+// waitForRunCompletion ожидает завершения выполнения run
+func (m *Models) waitForRunCompletion(ctx context.Context, run *openai.Run) (*openai.Run, error) {
+	currentRun := run
+
+	for currentRun.Status == openai.RunStatusQueued ||
+		currentRun.Status == openai.RunStatusInProgress ||
+		currentRun.Status == openai.RunStatusRequiresAction {
+
+		// Обработка RunStatusRequiresAction
+		if currentRun.Status == openai.RunStatusRequiresAction {
+			updatedRun, err := m.handleRequiredAction(ctx, currentRun)
+			if err != nil {
+				return nil, err
+			}
+			currentRun = updatedRun
+		}
+
+		time.Sleep(100 * time.Millisecond)
+
+		retrievedRun, err := m.client.RetrieveRun(ctx, currentRun.ThreadID, currentRun.ID)
+		if err != nil {
+			return nil, fmt.Errorf("не удалось получить статус запуска: %w", err)
+		}
+		currentRun = &retrievedRun
+	}
+
+	if currentRun.Status != openai.RunStatusCompleted {
+		return nil, fmt.Errorf("запуск завершился неудачно со статусом %s", currentRun.Status)
+	}
+
+	return currentRun, nil
+}
+
+// extractAssistantResponse извлекает ответ ассистента из сообщений треда
+func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) (AssistResponse, error) {
+	var emptyResponse AssistResponse
+
+	// Получаем список сообщений из треда
+	order := "desc"
+	messagesList, err := m.client.ListMessage(ctx, run.ThreadID, nil, &order, nil, nil, nil)
+	if err != nil {
+		return emptyResponse, fmt.Errorf("не удалось получить список сообщений: %w", err)
+	}
+
+	if len(messagesList.Messages) == 0 {
+		return emptyResponse, fmt.Errorf("получен пустой список сообщений")
+	}
+
+	// Собираем все сообщения от ассистента после запуска
+	var fullResponse strings.Builder
+	for _, message := range messagesList.Messages {
+		if message.Role == "assistant" && int64(message.CreatedAt) >= run.CreatedAt {
+			for _, content := range message.Content {
+				if content.Text != nil {
+					fullResponse.WriteString(content.Text.Value)
+				}
+			}
+		}
+	}
+
+	response := fullResponse.String()
+	if response == "" {
+		return emptyResponse, fmt.Errorf("получен пустой ответ от модели")
+	}
+
+	var assistResp AssistResponse
+	if err = json.Unmarshal([]byte(response), &assistResp); err != nil {
+		logger.Error(response)
+		return emptyResponse, fmt.Errorf("ответ модели не является валидным JSON: %w", err)
+	}
+
+	return assistResp, nil
+}
+
 func (m *Models) Request(modelId string, dialogId uint64, text *string) (AssistResponse, error) {
 	var emptyResponse AssistResponse
 
 	if *text == "" {
 		return emptyResponse, fmt.Errorf("пустое сообщение")
 	}
-	// Возможно стоит использовать канал о сигнализации о готовности треда
-	//time.Sleep(1 * time.Second) // Протестировать!!!
+
 	err := m.CreateThead(dialogId)
 	if err != nil {
-		// Логируем ошибку, но не прерываем выполнение, так как тред мог уже существовать
 		logger.Warn("не удалось создать тред: %v", err)
 	}
 
-	// Получение RespModel, который содержит информацию о тредах пользователя
 	val, ok := m.responders.Load(dialogId)
 	if !ok {
 		return emptyResponse, fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
 	}
 
-	// Приведение типа к указателю на RespModel
 	respModel := val.(*RespModel)
 
-	// Используем блокировку для чтения, чтобы безопасно получить доступ к треду
 	respModel.mu.RLock()
 	thead, ok := respModel.TreadsGPT[dialogId]
 	respModel.mu.RUnlock()
 
 	if !ok || thead == nil {
-		// Если тред не найден после попытки создания, возвращаем ошибку
 		return emptyResponse, fmt.Errorf("тред не найден для dialogId %d после попытки создания", dialogId)
 	}
 
@@ -320,73 +401,14 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (AssistR
 		return emptyResponse, fmt.Errorf("не удалось создать запуск: %w", err)
 	}
 
-	// Опрашиваем статус запуска, пока он не будет завершен
-	for run.Status == openai.RunStatusQueued || run.Status == openai.RunStatusInProgress {
-		run, err = m.client.RetrieveRun(m.ctx, run.ThreadID, run.ID)
-		if err != nil {
-			return emptyResponse, fmt.Errorf("не удалось получить статус запуска: %w", err)
-		}
-		time.Sleep(100 * time.Millisecond) // Небольшая задержка перед следующим опросом
-	}
-	if run.Status != openai.RunStatusCompleted {
-		return emptyResponse, fmt.Errorf("запуск завершился неудачно со статусом %s", run.Status)
-	}
-
-	//// Получаем список сообщений из треда
-	//numMessages := 1 // Нас интересует только последнее сообщение
-	//order := "desc"  // Сортировка по убыванию, чтобы последнее сообщение было первым
-	//messagesList, err := m.client.ListMessage(m.ctx, run.ThreadID, &numMessages, &order, nil, nil, nil)
-	//if err != nil {
-	//	return "", fmt.Errorf("не удалось получить список сообщений: %w", err)
-	//}
-	//
-	//if len(messagesList.Messages) == 0 || len(messagesList.Messages[0].Content) == 0 {
-	//	return "", fmt.Errorf("получен пустой список сообщений или пустое содержимое сообщения")
-	//}
-	//
-	//return messagesList.Messages[0].Content[0].Text.Value, nil
-	// Получаем список сообщений из треда
-	order := "desc" // Сортировка по убыванию, чтобы последние сообщения были первыми
-	messagesList, err := m.client.ListMessage(m.ctx, run.ThreadID, nil, &order, nil, nil, nil)
+	// Ожидаем завершения выполнения
+	completedRun, err := m.waitForRunCompletion(m.ctx, &run)
 	if err != nil {
-		return emptyResponse, fmt.Errorf("не удалось получить список сообщений: %w", err)
+		return emptyResponse, err
 	}
 
-	if len(messagesList.Messages) == 0 {
-		return emptyResponse, fmt.Errorf("получен пустой список сообщений")
-	}
-
-	// Собираем все сообщения от ассистента после запуска
-	var fullResponse strings.Builder
-	for _, message := range messagesList.Messages {
-		// Проверяем, что это сообщение от ассистента и создано после запуска
-		if message.Role == "assistant" && int64(message.CreatedAt) >= run.CreatedAt {
-			for _, content := range message.Content {
-				if content.Text != nil {
-					fullResponse.WriteString(content.Text.Value)
-				}
-			}
-		}
-	}
-
-	response := fullResponse.String()
-	if response == "" {
-		return emptyResponse, fmt.Errorf("получен пустой ответ от модели")
-	}
-
-	//// Валидируем, что ответ является корректным JSON
-	//var jsonTest interface{}
-	//if err := json.Unmarshal([]byte(response), &jsonTest); err != nil {
-	//	return "", fmt.Errorf("ответ модели не является валидным JSON: %w", err)
-	//}
-
-	// Десериализуем JSON в структуру assistResponse
-	var assistResp AssistResponse
-	if err = json.Unmarshal([]byte(response), &assistResp); err != nil {
-		return emptyResponse, fmt.Errorf("ответ модели не является валидным JSON: %w", err)
-	}
-	//return response, nil
-	return assistResp, nil
+	// Извлекаем ответ ассистента
+	return m.extractAssistantResponse(m.ctx, completedRun)
 }
 
 func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error) {
