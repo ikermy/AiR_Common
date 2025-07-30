@@ -17,13 +17,12 @@ import (
 
 // Model интерфейс для работы с моделями Assistant
 type Model interface {
-	NewMessage(msgType string, content *AssistResponse, name *string) Message
+	NewMessage(msgType string, content *AssistResponse, name *string, files ...FileUpload) Message
 	GetFileAsReader(url string) (io.Reader, error)
 	GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error)
 	GetCh(respId uint64) (Ch, error)
 	SaveAllContextDuringExit()
-	Request(modelId string, dialogId uint64, text *string) (AssistResponse, error)
-	RequestWithFiles(modelId string, dialogId uint64, text *string, files []FileUpload) (AssistResponse, error) // Новый метод
+	Request(modelId string, dialogId uint64, text *string, files ...FileUpload) (AssistResponse, error)
 	CleanDialogData(dialogId uint64)
 	TranscribeAudio(audioData []byte, fileName string) (string, error)
 }
@@ -133,6 +132,7 @@ type Message struct {
 	Content   AssistResponse
 	Name      string
 	Timestamp time.Time
+	Files     []FileUpload `json:"files,omitempty"`
 }
 
 // StartCh структура для передачи данных для запуска слушателя
@@ -160,7 +160,7 @@ func New(conf *conf.Conf, d DB, actionHandler ActionHandler) *Models {
 	}
 }
 
-func (m *Models) NewMessage(msgType string, content *AssistResponse, name *string) Message {
+func (m *Models) OldNewMessage(msgType string, content *AssistResponse, name *string) Message {
 	return Message{
 		Type:      msgType,
 		Content:   *content,
@@ -169,26 +169,14 @@ func (m *Models) NewMessage(msgType string, content *AssistResponse, name *strin
 	}
 }
 
-func NewMessageWithFiles(text *string, fileIDs []string) openai.MessageRequest {
-	msg := openai.MessageRequest{
-		Role:    "user",
-		Content: *text,
+func (m *Models) NewMessage(msgType string, content *AssistResponse, name *string, files ...FileUpload) Message {
+	return Message{
+		Type:      msgType,
+		Content:   *content,
+		Name:      *name,
+		Timestamp: time.Now(),
+		Files:     files,
 	}
-
-	if len(fileIDs) > 0 {
-		attachments := make([]openai.ThreadAttachment, 0, len(fileIDs))
-		for _, fileID := range fileIDs {
-			attachments = append(attachments, openai.ThreadAttachment{
-				FileID: fileID,
-				Tools: []openai.ThreadAttachmentTool{
-					{Type: "code_interpreter"},
-				},
-			})
-		}
-		msg.Attachments = attachments
-	}
-
-	return msg
 }
 
 func createMsgWithFiles(text *string, fileIDs []string) openai.MessageRequest {

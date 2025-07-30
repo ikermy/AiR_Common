@@ -12,8 +12,9 @@ import (
 
 // Question структура для хранения вопросов пользователя
 type Question struct {
-	Question []string
-	Voice    bool // Флаг, указывающий, что вопрос задан голосом
+	Question []string           `json:"question"`        // Вопрос пользователя, может состоять из нескольких вопросов
+	Voice    bool               `json:"voice"`           // Флаг, указывающий, что вопрос был задан голосом
+	Files    []model.FileUpload `json:"files,omitempty"` // Файлы, прикрепленные к вопросу
 }
 
 // Answer структура для хранения ответов пользователя
@@ -39,8 +40,8 @@ type EndpointInterface interface {
 
 // ModelInterface - интерфейс для моделей
 type ModelInterface interface {
-	NewMessage(msgType string, content *model.AssistResponse, name *string) model.Message
-	Request(modelId string, dialogId uint64, ask *string) (model.AssistResponse, error)
+	NewMessage(msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message
+	Request(modelId string, dialogId uint64, ask *string, files ...model.FileUpload) (model.AssistResponse, error)
 	GetCh(respId uint64) (model.Ch, error)
 	CleanUp()
 }
@@ -50,7 +51,6 @@ type Start struct {
 	Mod ModelInterface
 	End EndpointInterface
 	Bot BotInterface
-	//mu  sync.Mutex
 }
 
 // New создаёт новый экземпляр Start (бывший startpoint.New)
@@ -62,7 +62,7 @@ func New(mod ModelInterface, end EndpointInterface, bot BotInterface) *Start {
 	}
 }
 
-func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (model.AssistResponse, error) {
+func (s *Start) OldAsk(modelId string, dialogId uint64, arrAsk []string) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 	answerCh := make(chan model.AssistResponse, 1) // Канал для ответа
 	errCh := make(chan error, 1)                   // Канал для ошибок
@@ -123,6 +123,68 @@ func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string) (model.Ass
 	}
 }
 
+func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {
+	var emptyResponse model.AssistResponse
+	answerCh := make(chan model.AssistResponse, 1)
+	errCh := make(chan error, 1)
+	defer close(answerCh)
+	defer close(errCh)
+
+	var ask string
+	for _, v := range arrAsk {
+		if v != "" {
+			ask += v + "\n"
+		}
+	}
+
+	if ask == "" && len(files) == 0 {
+		return emptyResponse, fmt.Errorf("ASK EMPTY MESSAGE AND NO FILES")
+	}
+
+	if mode.TestAnswer {
+		filesInfo := ""
+		if len(files) > 0 {
+			filesInfo = fmt.Sprintf(" with %d files", len(files))
+		}
+		return model.AssistResponse{
+			Message: "AssistId model " + " resp " + ask + filesInfo,
+		}, nil
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Warn("Восстановлено от паники в горутине Ask: %v", r)
+			}
+		}()
+
+		body, err := s.Mod.Request(modelId, dialogId, &ask, files...)
+		if err != nil {
+			select {
+			case errCh <- fmt.Errorf("ask error making request: %w", err):
+			default:
+			}
+			return
+		}
+
+		select {
+		case answerCh <- body:
+		default:
+		}
+	}()
+
+	timeout := time.After(mode.ErrorTimeOutDurationForAssistAnswer * time.Minute)
+
+	select {
+	case body := <-answerCh:
+		return body, nil
+	case err := <-errCh:
+		return emptyResponse, err
+	case <-timeout:
+		return emptyResponse, nil
+	}
+}
+
 func (s *Start) Respondent(
 	u *model.RespModel,
 	questionCh chan Question,
@@ -136,7 +198,8 @@ func (s *Start) Respondent(
 		deaf          bool   // Не слушать ввод пользователя до момента получения ответа
 		ask           string // Вопрос пользователя
 		askTimer      *time.Timer
-		VoiceQuestion bool // Флаг, указывающий, что вопрос был задан голосом
+		VoiceQuestion bool     // Флаг, указывающий, что вопрос был задан голосом
+		currentQuest  Question // Текущий вопрос пользователя, который обрабатывается
 	)
 
 	for {
@@ -154,6 +217,9 @@ func (s *Start) Respondent(
 				}
 				continue
 			}
+
+			// Сохраняем текущий вопрос
+			currentQuest = quest
 
 			// Проверяю наличие в запросе пользователя сообщения из u.Assist.Metas.Triggers
 			if len(u.Assist.Metas.Triggers) > 0 {
@@ -259,7 +325,7 @@ func (s *Start) Respondent(
 		}
 
 		// Отправляю запрос в OpenAI
-		answer, err := s.Ask(u.Assist.AssistId, treadId, userAsk)
+		answer, err := s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
 		// Oyente
 		deaf = false
 
@@ -378,12 +444,14 @@ func (s *Start) Listener(
 				case "user":
 					quest = Question{
 						Question: strings.Split(msg.Content.Message, "\n"),
-						Voice:    false, // Сообщение от пользователя не голосовое
+						Voice:    false,     // Сообщение от пользователя не голосовое
+						Files:    msg.Files, // Файлы, прикрепленные к вопросу
 					}
 				case "user_voice":
 					quest = Question{
 						Question: strings.Split(msg.Content.Message, "\n"),
-						Voice:    true, // Сообщение от пользователя голосовое
+						Voice:    true,      // Сообщение от пользователя голосовое
+						Files:    msg.Files, // Файлы, прикрепленные к вопросу
 					}
 				default:
 					// Неизвестный тип сообщения, пропускаю

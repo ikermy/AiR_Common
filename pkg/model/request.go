@@ -197,7 +197,7 @@ func (m *Models) mergeResponses(responses []AssistResponse) AssistResponse {
 	return merged
 }
 
-func (m *Models) Request(modelId string, dialogId uint64, text *string) (AssistResponse, error) {
+func (m *Models) OldRequest(modelId string, dialogId uint64, text *string) (AssistResponse, error) {
 	var emptyResponse AssistResponse
 
 	if *text == "" {
@@ -302,10 +302,10 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (AssistR
 	return m.extractAssistantResponse(m.ctx, completedRun)
 }
 
-func (m *Models) RequestWithFiles(modelId string, dialogId uint64, text *string, files []FileUpload) (AssistResponse, error) {
+func (m *Models) Request(modelId string, dialogId uint64, text *string, files ...FileUpload) (AssistResponse, error) {
 	var emptyResponse AssistResponse
 
-	if *text == "" && len(files) == 0 {
+	if (text == nil || *text == "") && len(files) == 0 {
 		return emptyResponse, fmt.Errorf("пустое сообщение и нет файлов")
 	}
 
@@ -338,13 +338,20 @@ func (m *Models) RequestWithFiles(modelId string, dialogId uint64, text *string,
 		}
 	}
 
-	// Создаем сообщение с файлами
-	_, err = m.client.CreateMessage(m.ctx, thead.ID, createMsgWithFiles(text, fileIDs))
+	// Создаем сообщение с файлами или без них
+	var messageReq openai.MessageRequest
+	if len(fileIDs) > 0 {
+		messageReq = createMsgWithFiles(text, fileIDs)
+	} else {
+		messageReq = createMsg(text)
+	}
+
+	_, err = m.client.CreateMessage(m.ctx, thead.ID, messageReq)
 	if err != nil {
 		return emptyResponse, fmt.Errorf("не удалось создать сообщение: %w", err)
 	}
 
-	// Создаем схему ответа (как в оригинальном методе)
+	// Создаем схему ответа
 	additionalFalse := false
 	schema := JSONSchemaDefinition{
 		Type: "object",
@@ -360,21 +367,12 @@ func (m *Models) RequestWithFiles(modelId string, dialogId uint64, text *string,
 						Items: &JSONSchemaProperty{
 							Type: "object",
 							Properties: map[string]JSONSchemaProperty{
-								"type": {
-									Type: "string",
-									Enum: []string{"photo", "video", "audio", "doc"},
-								},
-								"url": {
-									Type: "string",
-								},
-								"file_name": {
-									Type: "string",
-								},
-								"caption": {
-									Type: "string",
-								},
+								"type":      {Type: "string", Enum: []string{"photo", "video", "audio", "doc"}},
+								"url":       {Type: "string"},
+								"file_name": {Type: "string"},
+								"caption":   {Type: "string"},
 							},
-							Required:   []string{"type", "url", "file_name", "caption"},
+							Required:   []string{"type"},
 							Additional: &additionalFalse,
 						},
 					},
@@ -417,7 +415,9 @@ func (m *Models) RequestWithFiles(modelId string, dialogId uint64, text *string,
 	response, err := m.extractAssistantResponse(m.ctx, completedRun)
 
 	// Очищаем загруженные файлы после обработки
-	go m.cleanupFiles(fileIDs)
+	if len(fileIDs) > 0 {
+		go m.cleanupFiles(fileIDs)
+	}
 
 	return response, err
 }
