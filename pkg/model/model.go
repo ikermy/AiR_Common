@@ -529,7 +529,8 @@ func (m *Models) cancelActiveRuns(threadID string) error {
 			run.Status == openai.RunStatusInProgress ||
 			run.Status == openai.RunStatusRequiresAction {
 
-			logger.Debug("Отменяю активный run %s со статусом %s", run.ID, run.Status)
+			// ПРОТЕСТИРОВАТЬ!
+			//logger.Debug("Отменяю активный run %s со статусом %s", run.ID, run.Status)
 
 			_, err := m.client.CancelRun(m.ctx, threadID, run.ID)
 			if err != nil {
@@ -678,8 +679,6 @@ func (m *Models) extractGeneratedFiles(ctx context.Context, run *openai.Run) ([]
 	}
 
 	var generatedFileIDs []string
-
-	logger.Debug("Ищем созданные файлы в %d сообщениях", len(messagesList.Messages))
 
 	for _, message := range messagesList.Messages {
 		if message.Role == "assistant" && int64(message.CreatedAt) >= run.CreatedAt {

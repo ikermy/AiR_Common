@@ -138,8 +138,6 @@ func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) 
 						continue
 					}
 
-					logger.Debug("Получен JSON ответ от ассистента: %s", response)
-
 					var assistResp AssistResponse
 					if err := json.Unmarshal([]byte(response), &assistResp); err != nil {
 						logger.Error("Ошибка парсинга JSON: %v. Ответ: %s", err, response)
@@ -156,14 +154,10 @@ func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) 
 	generatedFiles, err := m.extractGeneratedFiles(ctx, run)
 	if err != nil {
 		logger.Warn("Не удалось извлечь созданные файлы: %v", err)
-	} else {
-		logger.Debug("Найдено %d созданных файлов Code Interpreter: %v", len(generatedFiles), generatedFiles)
 	}
 
 	// ИСПРАВЛЕННАЯ ЛОГИКА ЗАМЕНЫ URL
 	if len(generatedFiles) > 0 && len(validResponses) > 0 {
-		logger.Debug("Начинаем замену URL в %d ответах", len(validResponses))
-
 		for i := range validResponses {
 			for j := range validResponses[i].Action.SendFiles {
 				originalURL := validResponses[i].Action.SendFiles[j].URL
@@ -173,16 +167,9 @@ func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) 
 					newURL := fmt.Sprintf("openai_file:%s", generatedFiles[j])
 					validResponses[i].Action.SendFiles[j].URL = newURL
 
-					logger.Debug("Заменен placeholder URL на: %s для файла: %s",
-						newURL, validResponses[i].Action.SendFiles[j].FileName)
-				} else {
-					logger.Debug("URL не заменен: '%s' (placeholder: %v, файлов: %d)",
-						originalURL, originalURL == "file_placeholder_will_be_replaced_by_system", len(generatedFiles))
 				}
 			}
 		}
-	} else {
-		logger.Debug("Замена URL пропущена: файлов=%d, ответов=%d", len(generatedFiles), len(validResponses))
 	}
 
 	if len(validResponses) == 0 {
@@ -190,14 +177,6 @@ func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) 
 	}
 
 	finalResponse := m.mergeResponses(validResponses)
-
-	// Финальное логирование для проверки
-	logger.Debug("Финальный ответ - Message: '%s', Files count: %d",
-		finalResponse.Message, len(finalResponse.Action.SendFiles))
-
-	for i, file := range finalResponse.Action.SendFiles {
-		logger.Debug("Файл %d: URL='%s', Name='%s'", i, file.URL, file.FileName)
-	}
 
 	return finalResponse, nil
 }
