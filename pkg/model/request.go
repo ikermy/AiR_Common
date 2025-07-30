@@ -138,6 +138,8 @@ func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) 
 						continue
 					}
 
+					logger.Debug("Получен JSON ответ от ассистента: %s", response)
+
 					var assistResp AssistResponse
 					if err := json.Unmarshal([]byte(response), &assistResp); err != nil {
 						logger.Error("Ошибка парсинга JSON: %v. Ответ: %s", err, response)
@@ -150,12 +152,54 @@ func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) 
 		}
 	}
 
+	// Извлекаем созданные файлы
+	generatedFiles, err := m.extractGeneratedFiles(ctx, run)
+	if err != nil {
+		logger.Warn("Не удалось извлечь созданные файлы: %v", err)
+	} else {
+		logger.Debug("Найдено %d созданных файлов Code Interpreter: %v", len(generatedFiles), generatedFiles)
+	}
+
+	// ИСПРАВЛЕННАЯ ЛОГИКА ЗАМЕНЫ URL
+	if len(generatedFiles) > 0 && len(validResponses) > 0 {
+		logger.Debug("Начинаем замену URL в %d ответах", len(validResponses))
+
+		for i := range validResponses {
+			for j := range validResponses[i].Action.SendFiles {
+				originalURL := validResponses[i].Action.SendFiles[j].URL
+
+				// Проверяем точное соответствие placeholder
+				if originalURL == "file_placeholder_will_be_replaced_by_system" && j < len(generatedFiles) {
+					newURL := fmt.Sprintf("openai_file:%s", generatedFiles[j])
+					validResponses[i].Action.SendFiles[j].URL = newURL
+
+					logger.Debug("Заменен placeholder URL на: %s для файла: %s",
+						newURL, validResponses[i].Action.SendFiles[j].FileName)
+				} else {
+					logger.Debug("URL не заменен: '%s' (placeholder: %v, файлов: %d)",
+						originalURL, originalURL == "file_placeholder_will_be_replaced_by_system", len(generatedFiles))
+				}
+			}
+		}
+	} else {
+		logger.Debug("Замена URL пропущена: файлов=%d, ответов=%d", len(generatedFiles), len(validResponses))
+	}
+
 	if len(validResponses) == 0 {
 		return emptyResponse, fmt.Errorf("не найдено валидных ответов от ассистента")
 	}
 
-	// Обрабатываем несколько ответов
-	return m.mergeResponses(validResponses), nil
+	finalResponse := m.mergeResponses(validResponses)
+
+	// Финальное логирование для проверки
+	logger.Debug("Финальный ответ - Message: '%s', Files count: %d",
+		finalResponse.Message, len(finalResponse.Action.SendFiles))
+
+	for i, file := range finalResponse.Action.SendFiles {
+		logger.Debug("Файл %d: URL='%s', Name='%s'", i, file.URL, file.FileName)
+	}
+
+	return finalResponse, nil
 }
 
 // mergeResponses объединяет несколько ответов в один
@@ -195,111 +239,6 @@ func (m *Models) mergeResponses(responses []AssistResponse) AssistResponse {
 	}
 
 	return merged
-}
-
-func (m *Models) OldRequest(modelId string, dialogId uint64, text *string) (AssistResponse, error) {
-	var emptyResponse AssistResponse
-
-	if *text == "" {
-		return emptyResponse, fmt.Errorf("пустое сообщение")
-	}
-
-	err := m.CreateThead(dialogId)
-	if err != nil {
-		logger.Warn("не удалось создать тред: %v", err)
-	}
-
-	val, ok := m.responders.Load(dialogId)
-	if !ok {
-		return emptyResponse, fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
-	}
-
-	respModel := val.(*RespModel)
-
-	respModel.mu.RLock()
-	thead, ok := respModel.TreadsGPT[dialogId]
-	respModel.mu.RUnlock()
-
-	if !ok || thead == nil {
-		return emptyResponse, fmt.Errorf("тред не найден для dialogId %d после попытки создания", dialogId)
-	}
-
-	_, err = m.client.CreateMessage(m.ctx, thead.ID, createMsg(text))
-	if err != nil {
-		return emptyResponse, fmt.Errorf("не удалось создать сообщение: %w", err)
-	}
-
-	// Создаем JSON схему с условной логикой
-	additionalFalse := false
-	schema := JSONSchemaDefinition{
-		Type: "object",
-		Properties: map[string]JSONSchemaProperty{
-			"message": {
-				Type: "string",
-			},
-			"action": {
-				Type: "object",
-				Properties: map[string]JSONSchemaProperty{
-					"send_files": {
-						Type: "array",
-						Items: &JSONSchemaProperty{
-							Type: "object",
-							Properties: map[string]JSONSchemaProperty{
-								"type": {
-									Type: "string",
-									Enum: []string{"photo", "video", "audio", "doc"},
-								},
-								"url": {
-									Type: "string",
-								},
-								"file_name": {
-									Type: "string",
-								},
-								"caption": {
-									Type: "string",
-								},
-							},
-							Required:   []string{"type", "url", "file_name", "caption"},
-							Additional: &additionalFalse,
-						},
-					},
-				},
-				Required:   []string{"send_files"},
-				Additional: &additionalFalse,
-			},
-			"target": {
-				Type: "boolean",
-			},
-		},
-		Required:   []string{"message", "action", "target"},
-		Additional: &additionalFalse,
-	}
-
-	responseFormat := &openai.ChatCompletionResponseFormat{
-		Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
-		JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
-			Name:   "assist_response",
-			Strict: true,
-			Schema: schema,
-		},
-	}
-
-	runRequest := openai.RunRequest{
-		AssistantID:    modelId,
-		ResponseFormat: responseFormat,
-	}
-
-	run, err := m.client.CreateRun(m.ctx, thead.ID, runRequest)
-	if err != nil {
-		return emptyResponse, fmt.Errorf("не удалось создать запуск: %w", err)
-	}
-
-	completedRun, err := m.waitForRunCompletion(m.ctx, &run)
-	if err != nil {
-		return emptyResponse, err
-	}
-
-	return m.extractAssistantResponse(m.ctx, completedRun)
 }
 
 func (m *Models) Request(modelId string, dialogId uint64, text *string, files ...FileUpload) (AssistResponse, error) {
@@ -372,7 +311,7 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 								"file_name": {Type: "string"},
 								"caption":   {Type: "string"},
 							},
-							Required:   []string{"type"},
+							Required:   []string{"type", "url", "file_name", "caption"},
 							Additional: &additionalFalse,
 						},
 					},

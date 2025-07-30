@@ -160,15 +160,6 @@ func New(conf *conf.Conf, d DB, actionHandler ActionHandler) *Models {
 	}
 }
 
-func (m *Models) OldNewMessage(msgType string, content *AssistResponse, name *string) Message {
-	return Message{
-		Type:      msgType,
-		Content:   *content,
-		Name:      *name,
-		Timestamp: time.Now(),
-	}
-}
-
 func (m *Models) NewMessage(msgType string, content *AssistResponse, name *string, files ...FileUpload) Message {
 	return Message{
 		Type:      msgType,
@@ -208,6 +199,17 @@ func (m *Models) GetFileAsReader(url string) (io.Reader, error) {
 		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
 	}
 
+	// Проверяем, это файл из OpenAI
+	if strings.HasPrefix(url, "openai_file:") {
+		fileID := strings.TrimPrefix(url, "openai_file:")
+		content, err := m.downloadFileFromOpenAI(fileID)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка получения файла из OpenAI: %w", err)
+		}
+		return bytes.NewReader(content), nil
+	}
+
+	// Обычная загрузка по HTTP
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка загрузки файла по URL: %w", err)
@@ -665,4 +667,51 @@ func (m *Models) cleanupFiles(fileIDs []string) {
 			logger.Warn("не удалось удалить файл %s: %v", fileID, err)
 		}
 	}
+}
+
+// Метод для получения файлов из ответа ассистента
+func (m *Models) extractGeneratedFiles(ctx context.Context, run *openai.Run) ([]string, error) {
+	order := "desc"
+	messagesList, err := m.client.ListMessage(ctx, run.ThreadID, nil, &order, nil, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось получить сообщения: %w", err)
+	}
+
+	var generatedFileIDs []string
+
+	logger.Debug("Ищем созданные файлы в %d сообщениях", len(messagesList.Messages))
+
+	for _, message := range messagesList.Messages {
+		if message.Role == "assistant" && int64(message.CreatedAt) >= run.CreatedAt {
+			for _, content := range message.Content {
+				// Проверяем файлы в содержимом сообщения
+				if content.ImageFile != nil {
+					generatedFileIDs = append(generatedFileIDs, content.ImageFile.FileID)
+				}
+			}
+
+			for _, fileID := range message.FileIds {
+				generatedFileIDs = append(generatedFileIDs, fileID)
+			}
+		}
+	}
+
+	return generatedFileIDs, nil
+}
+
+// downloadFileFromOpenAI скачивает файл из OpenAI и возвращает данные
+func (m *Models) downloadFileFromOpenAI(fileID string) ([]byte, error) {
+	rawResponse, err := m.client.GetFileContent(m.ctx, fileID)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось скачать содержимое файла: %w", err)
+	}
+	defer rawResponse.Close()
+
+	// Читаем содержимое из RawResponse
+	content, err := io.ReadAll(rawResponse)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось прочитать содержимое файла: %w", err)
+	}
+
+	return content, nil
 }

@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.22.5"
-git tag -a v1.22.5 -m "code interpreter fix"
+git commit -m "v1.22.6"
+git tag -a v1.22.6 -m "code interpreter final fix"
 git push origin master
-git push origin v1.22.5
+git push origin v1.22.6
