@@ -42,43 +42,69 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 		return fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
+	var lastError error
+	successCount := 0
+
 	for _, ch := range channels {
 		switch ch["channel_type"] {
 		case "telegram":
 			// Проверяю что Telegram не null
 			if ch["channel_value"] == "null" {
-				return fmt.Errorf("у пользователя %d не задан Telegram ID, уведомление не отправлено", msg.UserID)
+				logger.Error("у пользователя %d не задан Telegram ID, уведомление не отправлено", msg.UserID)
+				lastError = fmt.Errorf("у пользователя %d не задан Telegram ID", msg.UserID)
+				continue
 			}
 			// Подготовка сообщения Telegram
 			telegramValue, ok := ch["channel_value"].(string)
 			if !ok {
-				return fmt.Errorf("channel_value не является строкой")
+				logger.Error("channel_value не является строкой для пользователя %d", msg.UserID)
+				lastError = fmt.Errorf("channel_value не является строкой")
+				continue
 			}
 			tId, err := strconv.ParseInt(telegramValue, 10, 64)
 			if err != nil {
-				return fmt.Errorf("ошибка преобразования Telegram ID: %w", err)
+				logger.Error("ошибка преобразования Telegram ID для пользователя %d: %v", msg.UserID, err)
+				lastError = err
+				continue
 			}
 			err = SendTelegramNotification(tId, msg.Event, msg.UserName, msg.AssistName, msg.Target)
 			if err != nil {
-				return fmt.Errorf("ошибка отправки Telegram уведомления: %w", err)
+				logger.Error("ошибка отправки Telegram уведомления для пользователя %d: %v", msg.UserID, err)
+				lastError = err
+				continue
 			}
+			successCount++
+
 		case "mail":
 			// Проверяю что Email не null
 			if ch["channel_value"] == "null" {
-				return fmt.Errorf("у пользователя %d не задан Email, уведомление не отправлено", msg.UserID)
+				logger.Error("у пользователя %d не задан Email, уведомление не отправлено", msg.UserID)
+				lastError = fmt.Errorf("у пользователя %d не задан Email", msg.UserID)
+				continue
 			}
 			// Подготовка сообщения Email
 			emailValue, ok := ch["channel_value"].(string)
 			if !ok {
-				return fmt.Errorf("channel_value не является строкой")
+				logger.Error("channel_value не является строкой для пользователя %d", msg.UserID)
+				lastError = fmt.Errorf("channel_value не является строкой")
+				continue
 			}
 			err = SendEmailNotification(emailValue, msg.Event, msg.UserName, msg.AssistName, msg.Target)
 			if err != nil {
-				return fmt.Errorf("ошибка отправки Email уведомления: %w", err)
+				logger.Error("ошибка отправки Email уведомления для пользователя %d: %v", msg.UserID, err)
+				lastError = err
+				continue
 			}
+			successCount++
+
 		default:
-			logger.Warn("Неизвестный канал уведомлений: %s для пользователя %d", ch["channel_type"], msg.UserID, msg.UserID)
+			logger.Warn("Неизвестный канал уведомлений: %s для пользователя %d", ch["channel_type"], msg.UserID)
 		}
+	}
+
+	// Если ни одно уведомление не отправилось успешно, возвращаем последнюю ошибку
+	if successCount == 0 && lastError != nil {
+		return lastError
 	}
 
 	return nil
@@ -216,11 +242,13 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 }
 
 func (e *Endpoint) NotificationListener() {
+	logger.Info("Запуск 'NotificationListener' для прослушивания канала mode.CarpinteroCh")
+
 	for {
 		select {
 		case msg, ok := <-mode.CarpinteroCh:
 			if !ok {
-				logger.Error("CarpinteroCh closed")
+				logger.Error("mode.CarpinteroCh closed")
 				return
 			}
 			err := e.SendNotification(msg)

@@ -23,6 +23,7 @@ type Model interface {
 	GetCh(respId uint64) (Ch, error)
 	SaveAllContextDuringExit()
 	Request(modelId string, dialogId uint64, text *string) (AssistResponse, error)
+	RequestWithFiles(modelId string, dialogId uint64, text *string, files []FileUpload) (AssistResponse, error) // Новый метод
 	CleanDialogData(dialogId uint64)
 	TranscribeAudio(audioData []byte, fileName string) (string, error)
 }
@@ -83,6 +84,13 @@ type RespModel struct {
 type Services struct {
 	Listener   bool
 	Respondent bool
+}
+
+// FileUpload представляет файл для отправки для code interpreter
+type FileUpload struct {
+	Name     string    `json:"name"`
+	Content  io.Reader `json:"-"`
+	MimeType string    `json:"mime_type"`
 }
 
 type Action struct {
@@ -159,6 +167,50 @@ func (m *Models) NewMessage(msgType string, content *AssistResponse, name *strin
 		Name:      *name,
 		Timestamp: time.Now(),
 	}
+}
+
+func NewMessageWithFiles(text *string, fileIDs []string) openai.MessageRequest {
+	msg := openai.MessageRequest{
+		Role:    "user",
+		Content: *text,
+	}
+
+	if len(fileIDs) > 0 {
+		attachments := make([]openai.ThreadAttachment, 0, len(fileIDs))
+		for _, fileID := range fileIDs {
+			attachments = append(attachments, openai.ThreadAttachment{
+				FileID: fileID,
+				Tools: []openai.ThreadAttachmentTool{
+					{Type: "code_interpreter"},
+				},
+			})
+		}
+		msg.Attachments = attachments
+	}
+
+	return msg
+}
+
+func createMsgWithFiles(text *string, fileIDs []string) openai.MessageRequest {
+	msg := openai.MessageRequest{
+		Role:    "user",
+		Content: *text,
+	}
+
+	if len(fileIDs) > 0 {
+		attachments := make([]openai.ThreadAttachment, 0, len(fileIDs))
+		for _, fileID := range fileIDs {
+			attachments = append(attachments, openai.ThreadAttachment{
+				FileID: fileID,
+				Tools: []openai.ThreadAttachmentTool{
+					{Type: "code_interpreter"},
+				},
+			})
+		}
+		msg.Attachments = attachments
+	}
+
+	return msg
 }
 
 // GetFileAsReader получает файл в виде io.Reader из векторного хранилища или по URL
@@ -377,6 +429,13 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 	tread := respModel.TreadsGPT[dialogId]
 	respModel.mu.RUnlock()
 
+	// Отменяем активные runs перед сохранением и очисткой
+	if tread != nil {
+		if err := m.cancelActiveRuns(tread.ID); err != nil {
+			logger.Warn("Ошибка при отмене активных runs для dialogId %d: %v", dialogId, err, userId)
+		}
+	}
+
 	// Сохраняем контекст модели
 	threadsJSON, err := json.Marshal(tread)
 	if err != nil {
@@ -464,6 +523,63 @@ func (m *Models) CleanUp() {
 	}
 }
 
+// cancelActiveRuns отменяет все активные runs в треде
+func (m *Models) cancelActiveRuns(threadID string) error {
+	// Получаем список активных runs
+	runsList, err := m.client.ListRuns(m.ctx, threadID, openai.Pagination{
+		Limit: func(i int) *int { return &i }(20),
+	})
+	if err != nil {
+		return fmt.Errorf("не удалось получить список runs: %w", err)
+	}
+
+	// Отменяем активные runs
+	for _, run := range runsList.Runs {
+		if run.Status == openai.RunStatusQueued ||
+			run.Status == openai.RunStatusInProgress ||
+			run.Status == openai.RunStatusRequiresAction {
+
+			logger.Debug("Отменяю активный run %s со статусом %s", run.ID, run.Status)
+
+			_, err := m.client.CancelRun(m.ctx, threadID, run.ID)
+			if err != nil {
+				logger.Warn("Не удалось отменить run %s: %v", run.ID, err)
+				continue
+			}
+
+			// Ждем отмены run
+			if err := m.waitForRunCancellation(threadID, run.ID); err != nil {
+				logger.Warn("Ошибка при ожидании отмены run %s: %v", run.ID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// waitForRunCancellation ждет отмены run
+func (m *Models) waitForRunCancellation(threadID, runID string) error {
+	maxRetries := 50 // 5 секунд максимум
+
+	for i := 0; i < maxRetries; i++ {
+		run, err := m.client.RetrieveRun(m.ctx, threadID, runID)
+		if err != nil {
+			return fmt.Errorf("не удалось получить статус run: %w", err)
+		}
+
+		if run.Status == openai.RunStatusCancelled ||
+			run.Status == openai.RunStatusCompleted ||
+			run.Status == openai.RunStatusFailed ||
+			run.Status == openai.RunStatusExpired {
+			return nil
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return fmt.Errorf("превышено время ожидания отмены run %s", runID)
+}
+
 // SaveAllContextDuringExit сохраняет все контексты в БД при выходе
 func (m *Models) SaveAllContextDuringExit() {
 	m.responders.Range(func(key, value interface{}) bool {
@@ -525,4 +641,40 @@ func (m *Models) TranscribeAudio(audioData []byte, fileName string) (string, err
 	}
 
 	return resp.Text, nil
+}
+
+func (m *Models) uploadFiles(files []FileUpload) ([]string, error) {
+	var fileIDs []string
+
+	for _, file := range files {
+		// Читаем содержимое файла в байты
+		data, err := io.ReadAll(file.Content)
+		if err != nil {
+			return nil, fmt.Errorf("не удалось прочитать содержимое файла %s: %w", file.Name, err)
+		}
+
+		uploadReq := openai.FileBytesRequest{
+			Name:    file.Name,
+			Bytes:   data,
+			Purpose: openai.PurposeAssistants,
+		}
+
+		uploadedFile, err := m.client.CreateFileBytes(m.ctx, uploadReq)
+		if err != nil {
+			return nil, fmt.Errorf("не удалось загрузить файл %s: %w", file.Name, err)
+		}
+
+		fileIDs = append(fileIDs, uploadedFile.ID)
+	}
+
+	return fileIDs, nil
+}
+
+func (m *Models) cleanupFiles(fileIDs []string) {
+	for _, fileID := range fileIDs {
+		err := m.client.DeleteFile(m.ctx, fileID)
+		if err != nil {
+			logger.Warn("не удалось удалить файл %s: %v", fileID, err)
+		}
+	}
 }

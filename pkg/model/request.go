@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
-	"time"
-
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/sashabaranov/go-openai"
+	"strings"
+	"time"
 )
 
 // JSONSchemaDefinition представляет JSON схему для ответа ассистента
@@ -97,7 +96,7 @@ func (m *Models) waitForRunCompletion(ctx context.Context, run *openai.Run) (*op
 			currentRun = updatedRun
 		}
 
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 
 		retrievedRun, err := m.client.RetrieveRun(ctx, currentRun.ThreadID, currentRun.ID)
 		if err != nil {
@@ -301,4 +300,124 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string) (AssistR
 	}
 
 	return m.extractAssistantResponse(m.ctx, completedRun)
+}
+
+func (m *Models) RequestWithFiles(modelId string, dialogId uint64, text *string, files []FileUpload) (AssistResponse, error) {
+	var emptyResponse AssistResponse
+
+	if *text == "" && len(files) == 0 {
+		return emptyResponse, fmt.Errorf("пустое сообщение и нет файлов")
+	}
+
+	err := m.CreateThead(dialogId)
+	if err != nil {
+		logger.Warn("не удалось создать тред: %v", err)
+	}
+
+	val, ok := m.responders.Load(dialogId)
+	if !ok {
+		return emptyResponse, fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
+	}
+
+	respModel := val.(*RespModel)
+
+	respModel.mu.RLock()
+	thead, ok := respModel.TreadsGPT[dialogId]
+	respModel.mu.RUnlock()
+
+	if !ok || thead == nil {
+		return emptyResponse, fmt.Errorf("тред не найден для dialogId %d после попытки создания", dialogId)
+	}
+
+	// Загружаем файлы, если они есть
+	var fileIDs []string
+	if len(files) > 0 {
+		fileIDs, err = m.uploadFiles(files)
+		if err != nil {
+			return emptyResponse, fmt.Errorf("не удалось загрузить файлы: %w", err)
+		}
+	}
+
+	// Создаем сообщение с файлами
+	_, err = m.client.CreateMessage(m.ctx, thead.ID, createMsgWithFiles(text, fileIDs))
+	if err != nil {
+		return emptyResponse, fmt.Errorf("не удалось создать сообщение: %w", err)
+	}
+
+	// Создаем схему ответа (как в оригинальном методе)
+	additionalFalse := false
+	schema := JSONSchemaDefinition{
+		Type: "object",
+		Properties: map[string]JSONSchemaProperty{
+			"message": {
+				Type: "string",
+			},
+			"action": {
+				Type: "object",
+				Properties: map[string]JSONSchemaProperty{
+					"send_files": {
+						Type: "array",
+						Items: &JSONSchemaProperty{
+							Type: "object",
+							Properties: map[string]JSONSchemaProperty{
+								"type": {
+									Type: "string",
+									Enum: []string{"photo", "video", "audio", "doc"},
+								},
+								"url": {
+									Type: "string",
+								},
+								"file_name": {
+									Type: "string",
+								},
+								"caption": {
+									Type: "string",
+								},
+							},
+							Required:   []string{"type", "url", "file_name", "caption"},
+							Additional: &additionalFalse,
+						},
+					},
+				},
+				Required:   []string{"send_files"},
+				Additional: &additionalFalse,
+			},
+			"target": {
+				Type: "boolean",
+			},
+		},
+		Required:   []string{"message", "action", "target"},
+		Additional: &additionalFalse,
+	}
+
+	responseFormat := &openai.ChatCompletionResponseFormat{
+		Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
+		JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
+			Name:   "assist_response",
+			Strict: true,
+			Schema: schema,
+		},
+	}
+
+	runRequest := openai.RunRequest{
+		AssistantID:    modelId,
+		ResponseFormat: responseFormat,
+	}
+
+	run, err := m.client.CreateRun(m.ctx, thead.ID, runRequest)
+	if err != nil {
+		return emptyResponse, fmt.Errorf("не удалось создать запуск: %w", err)
+	}
+
+	completedRun, err := m.waitForRunCompletion(m.ctx, &run)
+	if err != nil {
+		return emptyResponse, err
+	}
+
+	response, err := m.extractAssistantResponse(m.ctx, completedRun)
+
+	// Очищаем загруженные файлы после обработки
+	go m.cleanupFiles(fileIDs)
+
+	return response, err
 }
