@@ -46,7 +46,7 @@ type Models struct {
 	shutdownMu    sync.RWMutex // Мьютекс для безопасного доступа к флагу
 }
 
-// Notifications структура для хра��ения настроек уведомлений о событиях
+// Notifications структура для хранения настроек уведомлений о событиях
 type Notifications struct {
 	Start  bool
 	End    bool
@@ -81,7 +81,7 @@ type RespModel struct {
 	RespName  string
 	Services  Services
 	mu        sync.RWMutex
-	//activeOps sync.WaitGroup // ТЕСТИРОВА��Ь
+	//activeOps sync.WaitGroup // ТЕСТИРОВАТЬ
 }
 
 type Services struct {
@@ -203,7 +203,7 @@ func (m *Models) waitForFileProcessing(vectorStoreID, fileID string) error {
 	retryDelay := 1 * time.Second
 
 	for i := 0; i < maxRetries; i++ {
-		// Получае�� статус файла в векторном хранилище
+		// Получает статус файла в векторном хранилище
 		vectorStoreFile, err := m.client.RetrieveVectorStoreFile(
 			context.Background(),
 			vectorStoreID,
@@ -404,7 +404,7 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 
 	//fmt.Printf("dialogId %d cached successfully with TTL %v minutes.\n", dialogId, mode.UserModelTTl)
 
-	// Сигнализ��руем ожидающим горутинам
+	// Сигнализируем ожидающим горутинам
 	if waitChIface, exists := m.waitChannels.Load(respId); exists {
 		waitCh := waitChIface.(chan struct{})
 		close(waitCh)
@@ -727,7 +727,7 @@ func (m *Models) uploadFiles(files []FileUpload) ([]string, error) {
 
 func (m *Models) cleanupFiles(fileIDs []string, vectorStoreID ...string) {
 	for _, fileID := range fileIDs {
-		// Сначала удаляем из векторного хранилища, если оно указа��о
+		// Сначала удаляем из векторного хранилища, если оно указанно
 		if len(vectorStoreID) > 0 && vectorStoreID[0] != "" {
 			err := m.client.DeleteVectorStoreFile(m.ctx, vectorStoreID[0], fileID)
 			if err != nil {
@@ -740,7 +740,7 @@ func (m *Models) cleanupFiles(fileIDs []string, vectorStoreID ...string) {
 			}
 		}
 
-		// Затем удаляе�� из общего хранилища
+		// Затем удаляю из общего хранилища
 		err := m.client.DeleteFile(m.ctx, fileID)
 		if err != nil {
 			// Аналогично для общего хранилища
@@ -799,7 +799,7 @@ func (m *Models) downloadFileFromOpenAI(fileID string) ([]byte, error) {
 }
 
 // Shutdown корректно завершает работу модуля, отменяет все операции и сохраняет контексты
-func (m *Models) Shutdown() error {
+func (m *Models) Shutdown() {
 	var shutdownErrors []string
 
 	m.shutdownOnce.Do(func() {
@@ -812,7 +812,7 @@ func (m *Models) Shutdown() error {
 			m.cancel()
 		}
 
-		// Ждем немного, чтоб�� активные операции могли корректно завершиться
+		// Ждем немного, что бы активные операции могли корректно завершиться
 		time.Sleep(500 * time.Millisecond)
 
 		// Отменяем все активные runs в тредах перед сохранением
@@ -836,10 +836,10 @@ func (m *Models) Shutdown() error {
 	})
 
 	if len(shutdownErrors) > 0 {
-		return fmt.Errorf("ошибки при завершении работы: %s", strings.Join(shutdownErrors, "; "))
+		logger.Error("ошибки при завершении работы: %s", strings.Join(shutdownErrors, "; "))
 	}
 
-	return nil
+	logger.Info("Модуль Models успешно завершил работу")
 }
 
 // cancelAllActiveRuns отменяет все активные runs во всех тредах

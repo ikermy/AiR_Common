@@ -266,11 +266,11 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 		messageReq = createMsg(text)
 	}
 
-	debugMsg, err := m.client.CreateMessage(m.ctx, thead.ID, messageReq)
+	_, err = m.client.CreateMessage(m.ctx, thead.ID, messageReq)
 	if err != nil {
 		return emptyResponse, fmt.Errorf("не удалось создать сообщение: %w", err)
 	}
-	logger.Debug("Создано сообщение: %v", debugMsg)
+
 	// Создаем схему ответа
 	additionalFalse := false
 	schema := JSONSchemaDefinition{
