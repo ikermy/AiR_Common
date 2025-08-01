@@ -56,7 +56,6 @@ func createMsgWithFiles(text *string, fileNames []string) openai.MessageRequest 
 	} else {
 		*text += fmt.Sprintf("\n\nОБЯЗАТЕЛЬНО используй file_search для анализа содержимого этих файлов: %s. И если потребуется code_interpreter. ИГНОРИРУЙ все остальные файлы в векторном хранилище - это важно!", strings.Join(fileNames, ", "))
 	}
-	logger.Debug("*text: %s", *text)
 	msg.Content = *text
 
 	return msg

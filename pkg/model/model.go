@@ -25,6 +25,7 @@ type Model interface {
 	Request(modelId string, dialogId uint64, text *string, files ...FileUpload) (AssistResponse, error)
 	CleanDialogData(dialogId uint64)
 	TranscribeAudio(audioData []byte, fileName string) (string, error)
+	Shutdown() error
 }
 
 type DB interface {
@@ -34,12 +35,15 @@ type DB interface {
 
 type Models struct {
 	ctx           context.Context
+	cancel        context.CancelFunc
 	client        *openai.Client
 	db            DB
 	responders    sync.Map // Хранит указатели на RespModel, а не сами структуры
 	waitChannels  sync.Map // Хранит каналы для синхронизации горутин
 	UserModelTTl  time.Duration
 	actionHandler ActionHandler
+	shutdownOnce  sync.Once    // Гарантирует однократное выполнение shutdown
+	shutdownMu    sync.RWMutex // Мьютекс для безопасного доступа к флагу
 }
 
 // Notifications структура для хра��ения настроек уведомлений о событиях
@@ -134,9 +138,11 @@ type ActionHandler interface {
 }
 
 func New(conf *conf.Conf, d DB, actionHandler ActionHandler) *Models {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Models{
+		ctx:           ctx,
+		cancel:        cancel,
 		client:        openai.NewClient(conf.GPT.Key),
-		ctx:           context.Background(),
 		db:            d,
 		responders:    sync.Map{},
 		waitChannels:  sync.Map{},
@@ -213,7 +219,7 @@ func (m *Models) waitForFileProcessing(vectorStoreID, fileID string) error {
 
 		switch vectorStoreFile.Status {
 		case "completed":
-			//logger.Debug("Файл %s успешно обработа�� в векторном хранилище %s", fileID, vectorStoreID)
+			//logger.Debug("Файл %s успешно обработанно векторном хранилище %s", fileID, vectorStoreID)
 			return nil
 		case "failed":
 			return fmt.Errorf("обработка файла %s в векторном хранилище завершилась неудачей", fileID)
@@ -790,4 +796,192 @@ func (m *Models) downloadFileFromOpenAI(fileID string) ([]byte, error) {
 	}
 
 	return content, nil
+}
+
+// Shutdown корректно завершает работу модуля, отменяет все операции и сохраняет контексты
+func (m *Models) Shutdown() error {
+	var shutdownErrors []string
+
+	m.shutdownOnce.Do(func() {
+		logger.Info("Начинается процесс завершения работы модуля Models")
+
+		// Устанавливаем флаг завершения работы
+
+		// Отменяем главный контекст, что приведет к остановке всех операций
+		if m.cancel != nil {
+			m.cancel()
+		}
+
+		// Ждем немного, чтоб�� активные операции могли корректно завершиться
+		time.Sleep(500 * time.Millisecond)
+
+		// Отменяем все активные runs в тредах перед сохранением
+		if err := m.cancelAllActiveRuns(); err != nil {
+			shutdownErrors = append(shutdownErrors, fmt.Sprintf("ошибка отмены активных runs: %v", err))
+		}
+
+		// Сохраняем все контексты в базу данных
+		logger.Info("Сохранение всех контекстов при завершении работы")
+		if err := m.saveAllContextsGracefully(); err != nil {
+			shutdownErrors = append(shutdownErrors, fmt.Sprintf("ошибка сохранения контекстов: %v", err))
+		}
+
+		// Закрываем все каналы и очищаем данные
+		m.cleanupAllResponders()
+
+		// Очищаем каналы ожидания
+		m.cleanupWaitChannels()
+
+		logger.Info("Процесс завершения работы модуля Models завершен")
+	})
+
+	if len(shutdownErrors) > 0 {
+		return fmt.Errorf("ошибки при завершении работы: %s", strings.Join(shutdownErrors, "; "))
+	}
+
+	return nil
+}
+
+// cancelAllActiveRuns отменяет все активные runs во всех тредах
+func (m *Models) cancelAllActiveRuns() error {
+	logger.Info("Отмена всех активных runs")
+
+	var cancelErrors []string
+
+	m.responders.Range(func(key, value interface{}) bool {
+		respModel := value.(*RespModel)
+
+		respModel.mu.RLock()
+		for _, thread := range respModel.TreadsGPT {
+			if thread != nil {
+				if err := m.cancelActiveRuns(thread.ID); err != nil {
+					cancelErrors = append(cancelErrors, fmt.Sprintf("треда %s: %v", thread.ID, err))
+				}
+			}
+		}
+		respModel.mu.RUnlock()
+
+		return true
+	})
+
+	if len(cancelErrors) > 0 {
+		return fmt.Errorf("ошибки отмены runs: %s", strings.Join(cancelErrors, "; "))
+	}
+
+	return nil
+}
+
+// saveAllContextsGracefully сохраняет все контексты с обработкой ошибок
+func (m *Models) saveAllContextsGracefully() error {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var saveErrors []string
+
+	m.responders.Range(func(key, value interface{}) bool {
+		dialogId, ok := key.(uint64)
+		if !ok {
+			mu.Lock()
+			saveErrors = append(saveErrors, fmt.Sprintf("некорректный тип ключа: %T, ожидался uint64", key))
+			mu.Unlock()
+			return true
+		}
+
+		wg.Add(1)
+		go func(dId uint64, respModel *RespModel) {
+			defer wg.Done()
+
+			respModel.mu.RLock()
+			thread := respModel.TreadsGPT[dId]
+			respModel.mu.RUnlock()
+
+			if thread != nil {
+				threadsJSON, err := json.Marshal(thread)
+				if err != nil {
+					mu.Lock()
+					saveErrors = append(saveErrors, fmt.Sprintf("сериализация для dialogId %d: %v", dId, err))
+					mu.Unlock()
+					return
+				}
+
+				err = m.db.SaveContext(dId, threadsJSON)
+				if err != nil {
+					mu.Lock()
+					saveErrors = append(saveErrors, fmt.Sprintf("сохранение для dialogId %d: %v", dId, err))
+					mu.Unlock()
+				} else {
+					logger.Debug("Контекст успешно сохранен для dialogId %d", dId)
+				}
+			}
+		}(dialogId, value.(*RespModel))
+
+		return true
+	})
+
+	// Ждём завершения всех операций сохранения с таймаутом
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		logger.Info("Все контексты успешно сохранены")
+	case <-time.After(15 * time.Second):
+		logger.Warn("Превышен таймаут при сохранении контекстов")
+		saveErrors = append(saveErrors, "превышен таймаут сохранения контекстов (30 сек)")
+	}
+
+	if len(saveErrors) > 0 {
+		return fmt.Errorf("ошибки сохранения: %s", strings.Join(saveErrors, "; "))
+	}
+
+	return nil
+}
+
+// cleanupAllResponders закрывает все каналы и очищает респондеры
+func (m *Models) cleanupAllResponders() {
+	logger.Info("Закрытие всех каналов и очистка респондеров")
+
+	m.responders.Range(func(key, value interface{}) bool {
+		respModel := value.(*RespModel)
+
+		// Отменяем контекст респондера
+		if respModel.Cancel != nil {
+			respModel.Cancel()
+		}
+
+		// Закрываем все каналы
+		respModel.mu.Lock()
+		for respId, ch := range respModel.Chan {
+			safeClose(ch.TxCh)
+			safeClose(ch.RxCh)
+			delete(respModel.Chan, respId)
+			logger.Debug("Каналы закрыты для responderId %d", respId)
+		}
+		respModel.mu.Unlock()
+
+		// Удаляем респондер из кэша
+		m.responders.Delete(key)
+
+		return true
+	})
+}
+
+// cleanupWaitChannels очищает все каналы ожидания
+func (m *Models) cleanupWaitChannels() {
+	logger.Info("Очистка каналов ожидания")
+
+	m.waitChannels.Range(func(key, value interface{}) bool {
+		if ch, ok := value.(chan struct{}); ok {
+			select {
+			case <-ch:
+				// Канал уже закрыт
+			default:
+				close(ch)
+			}
+		}
+		m.waitChannels.Delete(key)
+		return true
+	})
 }
