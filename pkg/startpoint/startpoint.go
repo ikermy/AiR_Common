@@ -62,67 +62,6 @@ func New(mod ModelInterface, end EndpointInterface, bot BotInterface) *Start {
 	}
 }
 
-func (s *Start) OldAsk(modelId string, dialogId uint64, arrAsk []string) (model.AssistResponse, error) {
-	var emptyResponse model.AssistResponse
-	answerCh := make(chan model.AssistResponse, 1) // Канал для ответа
-	errCh := make(chan error, 1)                   // Канал для ошибок
-	defer close(answerCh)
-	defer close(errCh)
-
-	var ask string
-	for _, v := range arrAsk {
-		if v != "" {
-			ask += v + "\n"
-		}
-	}
-
-	if ask == "" {
-		return emptyResponse, fmt.Errorf("ASK EMPTY MESSAGE")
-	}
-
-	if mode.TestAnswer {
-		return model.AssistResponse{
-			Message: "AssistId model " + " resp " + ask,
-		}, nil
-	} // Тестовый ответ
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				// Игнорируем панику от записи в закрытый канал
-				logger.Warn("Восстановлено от паники в горутине Ask: %v", r)
-			}
-		}()
-
-		body, err := s.Mod.Request(modelId, dialogId, &ask)
-		if err != nil {
-			select {
-			case errCh <- fmt.Errorf("ask error making request: %w", err):
-			default:
-				// Канал заполнен или закрыт
-			}
-			return
-		}
-
-		select {
-		case answerCh <- body:
-		default:
-			// Канал заполнен или закрыт
-		}
-	}()
-
-	timeout := time.After(mode.ErrorTimeOutDurationForAssistAnswer * time.Minute)
-
-	select {
-	case body := <-answerCh:
-		return body, nil
-	case err := <-errCh:
-		return emptyResponse, err
-	case <-timeout:
-		return emptyResponse, nil
-	}
-}
-
 func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 	answerCh := make(chan model.AssistResponse, 1)
@@ -458,7 +397,6 @@ func (s *Start) Listener(
 					logger.Warn("Неизвестный тип сообщения: %s", msg.Type, u.Assist.UserId)
 					continue
 				}
-
 				// отправляю вопрос ассистенту
 				question <- quest
 				// Отправляю вопрос клиента в виде сообщения

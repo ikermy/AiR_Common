@@ -42,7 +42,7 @@ type Models struct {
 	actionHandler ActionHandler
 }
 
-// Notifications структура для хранения настроек уведомлений о событиях
+// Notifications структура для хра��ения настроек уведомлений о событиях
 type Notifications struct {
 	Start  bool
 	End    bool
@@ -77,19 +77,12 @@ type RespModel struct {
 	RespName  string
 	Services  Services
 	mu        sync.RWMutex
-	//activeOps sync.WaitGroup // ТЕСТИРОВАТЬ
+	//activeOps sync.WaitGroup // ТЕСТИРОВА��Ь
 }
 
 type Services struct {
 	Listener   bool
 	Respondent bool
-}
-
-// FileUpload представляет файл для отправки для code interpreter
-type FileUpload struct {
-	Name     string    `json:"name"`
-	Content  io.Reader `json:"-"`
-	MimeType string    `json:"mime_type"`
 }
 
 type Action struct {
@@ -127,14 +120,6 @@ type Ch struct {
 	RespName string
 }
 
-type Message struct {
-	Type      string
-	Content   AssistResponse
-	Name      string
-	Timestamp time.Time
-	Files     []FileUpload `json:"files,omitempty"`
-}
-
 // StartCh структура для передачи данных для запуска слушателя
 type StartCh struct {
 	Model   *RespModel
@@ -160,36 +145,119 @@ func New(conf *conf.Conf, d DB, actionHandler ActionHandler) *Models {
 	}
 }
 
-func (m *Models) NewMessage(msgType string, content *AssistResponse, name *string, files ...FileUpload) Message {
-	return Message{
-		Type:      msgType,
-		Content:   *content,
-		Name:      *name,
-		Timestamp: time.Now(),
-		Files:     files,
+// getAssistantVectorStore получает векторное хранилище ассистента
+func (m *Models) getAssistantVectorStore(assistantID string) (*openai.VectorStore, error) {
+	assistant, err := m.client.RetrieveAssistant(m.ctx, assistantID)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось получить ассистента: %w", err)
 	}
+
+	// Проверяем, есть ли привязанные векторные хранилища
+	if assistant.ToolResources != nil &&
+		assistant.ToolResources.FileSearch != nil &&
+		len(assistant.ToolResources.FileSearch.VectorStoreIDs) > 0 {
+
+		vectorStoreID := assistant.ToolResources.FileSearch.VectorStoreIDs[0]
+		vectorStore, err := m.client.RetrieveVectorStore(m.ctx, vectorStoreID)
+		if err != nil {
+			return nil, fmt.Errorf("не удалось получить векторное хранилище: %w", err)
+		}
+
+		return &vectorStore, nil
+	}
+
+	return nil, fmt.Errorf("у ассистента нет привязанного векторного хранилища")
 }
 
-func createMsgWithFiles(text *string, fileIDs []string) openai.MessageRequest {
-	msg := openai.MessageRequest{
-		Role:    "user",
-		Content: *text,
-	}
-
-	if len(fileIDs) > 0 {
-		attachments := make([]openai.ThreadAttachment, 0, len(fileIDs))
-		for _, fileID := range fileIDs {
-			attachments = append(attachments, openai.ThreadAttachment{
-				FileID: fileID,
-				Tools: []openai.ThreadAttachmentTool{
-					{Type: "code_interpreter"},
-				},
-			})
+// addFilesToVectorStore добавляет файлы в векторное хранилище
+func (m *Models) addFilesToVectorStore(vectorStoreID string, fileIDs []string) error {
+	for _, fileID := range fileIDs {
+		_, err := m.client.CreateVectorStoreFile(m.ctx, vectorStoreID, openai.VectorStoreFileRequest{
+			FileID: fileID,
+		})
+		if err != nil {
+			logger.Error("Не удалось добавить файл %s в векторное хранилище: %v", fileID, err)
+			continue
 		}
-		msg.Attachments = attachments
+
+		// Ожидаем завершения обработки файла в векторном хранилище
+		err = m.waitForFileProcessing(vectorStoreID, fileID)
+		if err != nil {
+			logger.Warn("Файл %s не был полностью обработан в векторном хранилище: %v", fileID, err)
+			// Продолжаем работу, даже если файл не обработался
+			// Всё равно все файлы потом удалим по их IDs
+		}
+	}
+	return nil
+}
+
+// waitForFileProcessing ожидает завершения обработки файла в векторном хранилище
+func (m *Models) waitForFileProcessing(vectorStoreID, fileID string) error {
+	maxRetries := 60
+	retryDelay := 1 * time.Second
+
+	for i := 0; i < maxRetries; i++ {
+		// Получае�� статус файла в векторном хранилище
+		vectorStoreFile, err := m.client.RetrieveVectorStoreFile(
+			context.Background(),
+			vectorStoreID,
+			fileID,
+		)
+		if err != nil {
+			logger.Warn("Ошибка получения статуса файла %s: %v", fileID, err)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		//logger.Debug("Статус файла %s в векторном хранилище: %s", fileID, vectorStoreFile.Status)
+
+		switch vectorStoreFile.Status {
+		case "completed":
+			//logger.Debug("Файл %s успешно обработа�� в векторном хранилище %s", fileID, vectorStoreID)
+			return nil
+		case "failed":
+			return fmt.Errorf("обработка файла %s в векторном хранилище завершилась неудачей", fileID)
+		case "cancelled":
+			return fmt.Errorf("обработка файла %s в векторном хранилище была отменена", fileID)
+		case "in_progress":
+			// Продолжаем ожидание
+			time.Sleep(retryDelay)
+			continue
+		default:
+			logger.Warn("Неизвестный статус файла %s: %s", fileID, vectorStoreFile.Status)
+			time.Sleep(retryDelay)
+			continue
+		}
 	}
 
-	return msg
+	return fmt.Errorf("превышено время ожидания обработки файла %s", fileID)
+}
+
+// uploadFilesForAssistant загружает файлы и добавляет их в векторное хранилище ассистента
+func (m *Models) uploadFilesForAssistant(files []FileUpload, vectorStore *openai.VectorStore) ([]string, []string, error) {
+	if len(files) == 0 {
+		return nil, nil, nil
+	}
+
+	// Загружаем файлы в OpenAI
+	fileIDs, err := m.uploadFiles(files)
+	if err != nil {
+		return nil, nil, fmt.Errorf("не удалось загрузить файлы: %w", err)
+	}
+
+	// Извлекаем имена файлов
+	var fileNames []string
+	for _, file := range files {
+		fileNames = append(fileNames, file.Name)
+	}
+
+	// Добавляем файлы в векторное хранилище
+	err = m.addFilesToVectorStore(vectorStore.ID, fileIDs)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Не удалось добавить файлы в векторное хранилище: %v", err)
+	}
+
+	return fileIDs, fileNames, nil
 }
 
 // GetFileAsReader получает файл в виде io.Reader из векторного хранилища или по URL
@@ -330,7 +398,7 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 
 	//fmt.Printf("dialogId %d cached successfully with TTL %v minutes.\n", dialogId, mode.UserModelTTl)
 
-	// Сигнализируем ожидающим горутинам
+	// Сигнализ��руем ожидающим горутинам
 	if waitChIface, exists := m.waitChannels.Load(respId); exists {
 		waitCh := waitChIface.(chan struct{})
 		close(waitCh)
@@ -464,16 +532,6 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 	} else {
 		logger.Error("Контекст не найден для dialogId %d", dialogId, userId)
 	}
-}
-
-// safeClose закрывает канал и обрабатывает панику, если канал уже закрыт
-func safeClose(ch chan Message) {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Error("Паника при закрытии канала: %v", r)
-		}
-	}()
-	close(ch)
 }
 
 // CleanUp Удаление устаревших записей
@@ -661,11 +719,30 @@ func (m *Models) uploadFiles(files []FileUpload) ([]string, error) {
 	return fileIDs, nil
 }
 
-func (m *Models) cleanupFiles(fileIDs []string) {
+func (m *Models) cleanupFiles(fileIDs []string, vectorStoreID ...string) {
 	for _, fileID := range fileIDs {
+		// Сначала удаляем из векторного хранилища, если оно указа��о
+		if len(vectorStoreID) > 0 && vectorStoreID[0] != "" {
+			err := m.client.DeleteVectorStoreFile(m.ctx, vectorStoreID[0], fileID)
+			if err != nil {
+				// Проверяем, является ли ошибка 404 (файл не найден)
+				if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "Not found") {
+					//logger.Debug("Файл %s уже удален из векторного хранилища %s", fileID, vectorStoreID[0])
+				} else {
+					logger.Warn("не удалось удалить файл %s из векторного хранилища %s: %v", fileID, vectorStoreID[0], err)
+				}
+			}
+		}
+
+		// Затем удаляе�� из общего хранилища
 		err := m.client.DeleteFile(m.ctx, fileID)
 		if err != nil {
-			logger.Warn("не удалось удалить файл %s: %v", fileID, err)
+			// Аналогично для общего хранилища
+			if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "Not found") {
+				//logger.Debug("Файл %s уже удален из общего хранилища", fileID)
+			} else {
+				logger.Warn("не удалось удалить файл %s из общего хранилища: %v", fileID, err)
+			}
 		}
 	}
 }

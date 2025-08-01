@@ -3,7 +3,7 @@ package mode
 import "github.com/ikermy/AiR_Common/pkg/common"
 
 const (
-	ErrorTimeOutDurationForAssistAnswer = 1
+	ErrorTimeOutDurationForAssistAnswer = 3 // Если в сообщении есть файлы они могут долго обрабатываться
 	// BatchSize Endpoint
 	BatchSize         = 100
 	TimePeriodicFlush = 60

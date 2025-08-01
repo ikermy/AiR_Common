@@ -15,7 +15,7 @@ type JSONSchemaDefinition struct {
 	Type       string                        `json:"type"`
 	Properties map[string]JSONSchemaProperty `json:"properties"`
 	Required   []string                      `json:"required,omitempty"`
-	Additional *bool                         `json:"additionalProperties,omitempty"` // Изменено на указатель
+	Additional *bool                         `json:"additionalProperties,omitempty"`
 }
 
 type JSONSchemaProperty struct {
@@ -24,21 +24,13 @@ type JSONSchemaProperty struct {
 	Items      *JSONSchemaProperty           `json:"items,omitempty"`
 	Enum       []string                      `json:"enum,omitempty"`
 	Required   []string                      `json:"required,omitempty"`
-	Additional *bool                         `json:"additionalProperties,omitempty"` // Изменено на указатель
+	Additional *bool                         `json:"additionalProperties,omitempty"`
 }
 
 // MarshalJSON реализует интерфейс json.Marshaler
 func (j JSONSchemaDefinition) MarshalJSON() ([]byte, error) {
 	type Alias JSONSchemaDefinition
 	return json.Marshal((Alias)(j))
-}
-
-func createMsg(text *string) openai.MessageRequest {
-	lastMessage := openai.MessageRequest{
-		Role:    "user",
-		Content: *text,
-	}
-	return lastMessage
 }
 
 // handleRequiredAction обрабатывает статус RunStatusRequiresAction
@@ -248,27 +240,37 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 	}
 
 	// Загружаем файлы, если они есть
-	var fileIDs []string
+	var (
+		fileIDs     []string
+		messageReq  openai.MessageRequest
+		vectorStore *openai.VectorStore
+	)
 	if len(files) > 0 {
-		fileIDs, err = m.uploadFiles(files)
+		vectorStore, err = m.getAssistantVectorStore(respModel.Assist.AssistId)
 		if err != nil {
-			return emptyResponse, fmt.Errorf("не удалось загрузить файлы: %w", err)
+			logger.Error("Не удалось получить векторное хранилище: %w", err)
 		}
 	}
 
 	// Создаем сообщение с файлами или без них
-	var messageReq openai.MessageRequest
-	if len(fileIDs) > 0 {
-		messageReq = createMsgWithFiles(text, fileIDs)
+	if vectorStore != nil {
+		var fileNames []string
+		fileIDs, fileNames, err = m.uploadFilesForAssistant(files, vectorStore)
+		if err != nil {
+			logger.Error("Не удалось загрузить файлы: %w", err)
+			messageReq = createMsg(text)
+		} else {
+			messageReq = createMsgWithFiles(text, fileNames)
+		}
 	} else {
 		messageReq = createMsg(text)
 	}
 
-	_, err = m.client.CreateMessage(m.ctx, thead.ID, messageReq)
+	debugMsg, err := m.client.CreateMessage(m.ctx, thead.ID, messageReq)
 	if err != nil {
 		return emptyResponse, fmt.Errorf("не удалось создать сообщение: %w", err)
 	}
-
+	logger.Debug("Создано сообщение: %v", debugMsg)
 	// Создаем схему ответа
 	additionalFalse := false
 	schema := JSONSchemaDefinition{
@@ -333,9 +335,11 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 	response, err := m.extractAssistantResponse(m.ctx, completedRun)
 
 	// Очищаем загруженные файлы после обработки
-	if len(fileIDs) > 0 {
-		go m.cleanupFiles(fileIDs)
-	}
+	defer func() {
+		if len(fileIDs) > 0 {
+			go m.cleanupFiles(fileIDs, vectorStore.ID)
+		}
+	}()
 
 	return response, err
 }
