@@ -20,6 +20,8 @@ var (
 	MailServerPort string
 	CarpinteroPort string
 	CarpinteroHost string
+	RealHost       string
+	RealHostPort   string
 )
 
 func SetTestMode(enabled bool) {
@@ -28,4 +30,9 @@ func SetTestMode(enabled bool) {
 
 func SetAudioMode(enabled bool) {
 	AudioMsg = enabled
+}
+
+func SetRealHost(host, port string) {
+	RealHost = host
+	RealHostPort = port
 }

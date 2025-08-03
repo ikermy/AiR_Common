@@ -69,7 +69,7 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 			}
 			err = SendTelegramNotification(tId, msg.Event, msg.UserName, msg.AssistName, msg.Target)
 			if err != nil {
-				logger.Error("ошибка отправки Telegram уведомления для пользователя %d: %v", msg.UserID, err)
+				logger.Error("Ошибка отправки Telegram уведомления: %v", err, msg.UserID)
 				lastError = err
 				continue
 			}

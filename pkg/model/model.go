@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ikermy/AiR_Common/pkg/conf"
+	"github.com/ikermy/AiR_Common/pkg/handler"
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/sashabaranov/go-openai"
 	"io"
@@ -25,7 +26,7 @@ type Model interface {
 	Request(modelId string, dialogId uint64, text *string, files ...FileUpload) (AssistResponse, error)
 	CleanDialogData(dialogId uint64)
 	TranscribeAudio(audioData []byte, fileName string) (string, error)
-	Shutdown() error
+	Shutdown()
 }
 
 type DB interface {
@@ -137,7 +138,7 @@ type ActionHandler interface {
 	RunAction(functionName, arguments string) string
 }
 
-func New(conf *conf.Conf, d DB, actionHandler ActionHandler) *Models {
+func New(conf *conf.Conf, d DB) *Models {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Models{
 		ctx:           ctx,
@@ -147,7 +148,7 @@ func New(conf *conf.Conf, d DB, actionHandler ActionHandler) *Models {
 		responders:    sync.Map{},
 		waitChannels:  sync.Map{},
 		UserModelTTl:  time.Duration(conf.GLOB.UserModelTTl) * time.Minute,
-		actionHandler: actionHandler,
+		actionHandler: &handler.ActionHandlerOpenAI{},
 	}
 }
 
