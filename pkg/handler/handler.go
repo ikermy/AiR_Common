@@ -37,7 +37,8 @@ func (h *ActionHandlerOpenAI) RunAction(functionName, arguments string) string {
 			result, _ := json.Marshal(map[string]string{"error": "ошибка при чтении ответа"})
 			return string(result)
 		}
-		logger.Debug(string(body), params.UserID)
+
+		logger.Debug("get_s3_files ответ сервера для пользователя %s: %s", params.UserID, string(body))
 
 		// Возвращаем результат
 		result, _ := json.Marshal(map[string]string{"output": string(body)})
@@ -55,11 +56,15 @@ func (h *ActionHandlerOpenAI) RunAction(functionName, arguments string) string {
 			return `{"error": "неверные параметры для create_file"}`
 		}
 
-		// Подготавливаем данные для POST запроса
-		requestData := map[string]string{
-			"user_id":   params.UserID,
-			"content":   params.Content,
-			"file_name": params.FileName,
+		// Подготавливаем данные для POST запроса (структура точно соответствует серверу)
+		requestData := struct {
+			UserID   string `json:"user_id"`
+			Content  string `json:"content"`
+			FileName string `json:"file_name"`
+		}{
+			UserID:   params.UserID,
+			Content:  params.Content,
+			FileName: params.FileName,
 		}
 
 		jsonData, err := json.Marshal(requestData)
@@ -69,7 +74,7 @@ func (h *ActionHandlerOpenAI) RunAction(functionName, arguments string) string {
 
 		// Отправляем POST запрос с user_id в URL параметре
 		resp, err := http.Post(
-			fmt.Sprintf("https://%s:%s/savefilein3?id=%s", mode.RealHost, mode.RealHostPort, params.UserID),
+			fmt.Sprintf("https://%s:%s/savefilein3", mode.RealHost, mode.RealHostPort),
 			"application/json",
 			strings.NewReader(string(jsonData)),
 		)
@@ -85,10 +90,10 @@ func (h *ActionHandlerOpenAI) RunAction(functionName, arguments string) string {
 			return string(result)
 		}
 
-		logger.Debug("create_file ответ сервера: %s", string(body), params.UserID)
+		responseStr := strings.TrimSpace(string(body))
+		logger.Debug("create_file ответ сервера для пользователя %s: %s", params.UserID, responseStr)
 
-		// Возвращаем ответ сервера (URL файла)
-		return string(body)
+		return responseStr
 
 	default:
 		result, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("Функция %s не поддерживается", functionName)})

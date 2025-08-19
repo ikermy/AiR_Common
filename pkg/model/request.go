@@ -142,28 +142,6 @@ func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) 
 		}
 	}
 
-	// Извлекаем созданные файлы
-	generatedFiles, err := m.extractGeneratedFiles(ctx, run)
-	if err != nil {
-		logger.Warn("Не удалось извлечь созданные файлы: %v", err)
-	}
-
-	// ИСПРАВЛЕННАЯ ЛОГИКА ЗАМЕНЫ URL
-	if len(generatedFiles) > 0 && len(validResponses) > 0 {
-		for i := range validResponses {
-			for j := range validResponses[i].Action.SendFiles {
-				originalURL := validResponses[i].Action.SendFiles[j].URL
-
-				// Проверяем точное соответствие placeholder
-				if originalURL == "file_placeholder_will_be_replaced_by_system" && j < len(generatedFiles) {
-					newURL := fmt.Sprintf("openai_file:%s", generatedFiles[j])
-					validResponses[i].Action.SendFiles[j].URL = newURL
-
-				}
-			}
-		}
-	}
-
 	if len(validResponses) == 0 {
 		return emptyResponse, fmt.Errorf("не найдено валидных ответов от ассистента")
 	}

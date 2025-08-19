@@ -8,14 +8,15 @@ import (
 )
 
 type Conf struct {
-	AS   []AssistConfig
-	TG   TgConfig
-	GPT  GPTConfig
-	WEB  WebConfig
-	DB   DBConfig
-	AU   AUTH
-	SMTP SMTP
-	GLOB GLOB
+	AS    []AssistConfig
+	TG    TgConfig
+	GPT   GPTConfig
+	WEB   WebConfig
+	DB    DBConfig
+	AU    AUTH
+	SMTP  SMTP
+	GLOB  GLOB
+	BYBIT BybitConfig
 }
 
 type TgConfig struct {
@@ -62,6 +63,12 @@ type SMTP struct {
 	Port     string `mapstructure:"port"`
 	Email    string `mapstructure:"mail"`
 	Password string `mapstructure:"pass"`
+}
+
+type BybitConfig struct {
+	ApiKey    string `mapstructure:"api_key"`
+	SecretKey string `mapstructure:"secret_key"`
+	Testnet   bool   `mapstructure:"testnet"`
 }
 
 type AssistConfig struct {
@@ -162,6 +169,13 @@ func NewConf() (*Conf, error) {
 		return nil, fmt.Errorf("ошибка разбора секции smtp: %w", err)
 	}
 	conf.SMTP = smtpConfig
+
+	// BYBIT секция
+	var bybitConfig BybitConfig
+	if err := v.UnmarshalKey("bybit", &bybitConfig); err != nil {
+		return nil, fmt.Errorf("ошибка разбора секции bybit: %w", err)
+	}
+	conf.BYBIT = bybitConfig
 
 	// Assist секция
 	var assistRaw AssistRaw

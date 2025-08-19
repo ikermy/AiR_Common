@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.22.11"
-git tag -a v1.22.11 -m "prodAct, devAct"
+git commit -m "v1.23"
+git tag -a v1.23 -m "Bybit cfg"
 git push origin master
-git push origin v1.22.11
+git push origin v1.23
