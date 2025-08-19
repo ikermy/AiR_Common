@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.23"
-git tag -a v1.23 -m "Bybit cfg"
+git commit -m "v1.23.0"
+git tag -a v1.23.0 -m "Bybit cfg"
 git push origin master
-git push origin v1.23
+git push origin v1.23.0
