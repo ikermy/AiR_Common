@@ -39,6 +39,7 @@ type WebConfig struct {
 	TgBot   string `mapstructure:"tgbot"`
 	TgUser  string `mapstructure:"tguser"`
 	Whats   string `mapstructure:"whats"`
+	Pay     string `mapstructure:"pay"`
 }
 
 type DBConfig struct {
