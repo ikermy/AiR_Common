@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 func SendEvent(userId uint32, event, userName, assistName, target string) {
@@ -211,10 +212,122 @@ func SendEmailNotification(email, event, userName, assistName, target string) er
 	return nil
 }
 
-func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string, error) {
-	var msg string
+// Структура для информации о инициации платежа
+type PaymentInfo struct {
+	UserId    int    `json:"userId"`
+	Currency  string `json:"currency"`
+	Amount    int    `json:"amount"`
+	AmountUsd int    `json:"amountUsd"`
+	OrderId   string `json:"orderId"`
+	Network   string `json:"network"`
+	ExpiresAt int64  `json:"expiresAt"`
+}
 
+// Структура для информации о статусе платежа
+type PaymentStatus struct {
+	OrderID        string  `json:"orderId"`
+	UserID         uint32  `json:"userId"`
+	Status         string  `json:"status"`
+	Currency       string  `json:"currency"`
+	Network        string  `json:"network"`
+	Amount         float64 `json:"amount"`
+	AmountUsd      float64 `json:"amountUsd"`
+	ReceivedAmount float64 `json:"receivedAmount"`
+	TxHash         string  `json:"txHash"`
+	Confirmations  int     `json:"confirmations"`
+	CreatedAt      string  `json:"createdAt"`
+	UpdatedAt      string  `json:"updatedAt"`
+	ExpiresAt      string  `json:"expiresAt"`
+}
+
+func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string, error) {
+	var msg, payment string
+
+	if AssistName != "init" && Event == "usdt_pay" {
+		var paritalInfo PaymentStatus
+		err := json.Unmarshal([]byte(Target), &paritalInfo)
+		if err != nil {
+			return "", fmt.Errorf("ошибка парсинга PaymentStatus: %v", err)
+		}
+
+		layout := "2006-01-02 15:04:05"
+		createdAt, err1 := time.Parse(layout, paritalInfo.CreatedAt)
+		updatedAt, err2 := time.Parse(layout, paritalInfo.UpdatedAt)
+		expiresAt, err3 := time.Parse(layout, paritalInfo.ExpiresAt)
+
+		formatOrRaw := func(t time.Time, err error, raw string) string {
+			if err != nil {
+				return raw
+			}
+			return t.Format("02.01.2006 15:04:05")
+		}
+
+		payment = fmt.Sprintf(
+			"	Статус: %s\n	Валюта: %s\n	Сумма: %.2f\n	Сумма в USD: %.2f\n	Поступление: %.2f\n Номер заказа: %s\n	Сеть: %s\n	Хэш транзакции: %s\n	Подтверждения: %d\n	Создано: %s\n	Обновлено: %s\n	Срок действия: %s",
+			paritalInfo.Status,
+			paritalInfo.Currency,
+			paritalInfo.Amount,
+			paritalInfo.AmountUsd,
+			paritalInfo.ReceivedAmount,
+			paritalInfo.OrderID,
+			paritalInfo.Network,
+			paritalInfo.TxHash,
+			paritalInfo.Confirmations,
+			formatOrRaw(createdAt, err1, paritalInfo.CreatedAt),
+			formatOrRaw(updatedAt, err2, paritalInfo.UpdatedAt),
+			formatOrRaw(expiresAt, err3, paritalInfo.ExpiresAt),
+		)
+	}
 	switch Event {
+	// События оплаты подписки
+	case "usdt_pay":
+
+		switch AssistName {
+		case "init":
+			// Для инициализации платежа своя структура
+			var (
+				answer  string
+				payInfo PaymentInfo
+			)
+			err := json.Unmarshal([]byte(Target), &payInfo)
+			if err != nil {
+				logger.Error("Ошибка парсинга PaymentInfo: %v", err)
+			}
+
+			if UserName == "false" {
+				answer = "новый платёж"
+			} else {
+				answer = "активный платёж"
+			}
+
+			expiresAt := int64(1755884144)
+			t := time.Unix(expiresAt, 0)
+
+			pending := fmt.Sprintf(
+				"	Статус: %s\n	Валюта: %s\n	Сумма: %d\n	Сумма в USD: %d\n	Номер заказа: %s\n	Сеть: %s\n	Срок действия: %s",
+				answer,
+				payInfo.Currency,
+				payInfo.Amount,
+				payInfo.AmountUsd,
+				payInfo.OrderId,
+				payInfo.Network,
+				t.Format("02.01.2006 15:04:05"),
+			)
+
+			msg = fmt.Sprintf("Сформированн счёт для оплаты подписки:\n%s", pending)
+		case "pending":
+			msg = fmt.Sprintf("Инициирована оплата подписки:\n%s", payment)
+		case "partial":
+			msg = fmt.Sprintf("Частичная оплата подписки:\n%s", payment)
+		case "confirmed":
+			msg = fmt.Sprintf("Подтверждена оплата подписки:\n%s", payment)
+		case "failed":
+			msg = fmt.Sprintf("Ошибка оплаты подписки:\n%s", payment)
+		default:
+			return "", fmt.Errorf("Неизвестное событие pay:\n%s", AssistName)
+		}
+
+	// События диалога с ассистентом
 	case "start":
 		msg = fmt.Sprintf("Пользователь %s начал диалог с ассистентом %s", UserName, AssistName)
 	case "end":
