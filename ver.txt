@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.23.2"
-git tag -a v1.23.2 -m "Pay notifications"
+git commit -m "v1.23.3"
+git tag -a v1.23.3 -m "Analytics"
 git push origin master
-git push origin v1.23.2
+git push origin v1.23.3

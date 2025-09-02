@@ -33,13 +33,14 @@ type GPTConfig struct {
 }
 
 type WebConfig struct {
-	RealUrl string `mapstructure:"real_url"`
-	Land    string `mapstructure:"land"`
-	Widget  string `mapstructure:"widget"`
-	TgBot   string `mapstructure:"tgbot"`
-	TgUser  string `mapstructure:"tguser"`
-	Whats   string `mapstructure:"whats"`
-	Pay     string `mapstructure:"pay"`
+	RealUrl   string `mapstructure:"real_url"`
+	Land      string `mapstructure:"land"`
+	Widget    string `mapstructure:"widget"`
+	TgBot     string `mapstructure:"tgbot"`
+	TgUser    string `mapstructure:"tguser"`
+	Whats     string `mapstructure:"whats"`
+	Pay       string `mapstructure:"pay"`
+	Analytics string `mapstructure:"analytics"`
 }
 
 type DBConfig struct {
