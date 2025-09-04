@@ -21,7 +21,6 @@ var (
 	CarpinteroPort string
 	CarpinteroHost string
 	RealHost       string
-	RealHostPort   string
 )
 
 func SetTestMode(enabled bool) {
@@ -32,7 +31,6 @@ func SetAudioMode(enabled bool) {
 	AudioMsg = enabled
 }
 
-func SetRealHost(host, port string) {
+func SetRealHost(host string) {
 	RealHost = host
-	RealHostPort = port
 }

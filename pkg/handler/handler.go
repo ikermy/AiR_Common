@@ -25,7 +25,7 @@ func (h *ActionHandlerOpenAI) RunAction(functionName, arguments string) string {
 		}
 
 		// Выполняем HTTP-запрос
-		resp, err := http.Get(fmt.Sprintf("https://%s:%s/gets3?id=%s", mode.RealHost, mode.RealHostPort, params.UserID))
+		resp, err := http.Get(fmt.Sprintf("%s/gets3?id=%s", mode.RealHost, params.UserID))
 		if err != nil {
 			result, _ := json.Marshal(map[string]string{"error": "ошибка при выполнении запроса"})
 			return string(result)
@@ -74,7 +74,7 @@ func (h *ActionHandlerOpenAI) RunAction(functionName, arguments string) string {
 
 		// Отправляем POST запрос с user_id в URL параметре
 		resp, err := http.Post(
-			fmt.Sprintf("https://%s:%s/savefilein3", mode.RealHost, mode.RealHostPort),
+			fmt.Sprintf("%s/savefilein3", mode.RealHost),
 			"application/json",
 			strings.NewReader(string(jsonData)),
 		)
