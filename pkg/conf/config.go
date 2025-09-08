@@ -2,21 +2,21 @@ package conf
 
 import (
 	"fmt"
-	"github.com/spf13/viper"
 	"os"
 	"strconv"
+
+	"github.com/spf13/viper"
 )
 
 type Conf struct {
-	AS    []AssistConfig
-	TG    TgConfig
-	GPT   GPTConfig
-	WEB   WebConfig
-	DB    DBConfig
-	AU    AUTH
-	SMTP  SMTP
-	GLOB  GLOB
-	BYBIT BybitConfig
+	DemoAS DemoAssist
+	TG     TgConfig
+	GPT    GPTConfig
+	WEB    WebConfig
+	DB     DBConfig
+	AU     AUTH
+	SMTP   SMTP
+	GLOB   GLOB
 }
 
 type TgConfig struct {
@@ -33,14 +33,13 @@ type GPTConfig struct {
 }
 
 type WebConfig struct {
-	RealUrl   string `mapstructure:"real_url"`
-	Land      string `mapstructure:"land"`
-	Widget    string `mapstructure:"widget"`
-	TgBot     string `mapstructure:"tgbot"`
-	TgUser    string `mapstructure:"tguser"`
-	Whats     string `mapstructure:"whats"`
-	Pay       string `mapstructure:"pay"`
-	Analytics string `mapstructure:"analytics"`
+	RealUrl string `mapstructure:"real_url"`
+	Land    string `mapstructure:"land"`
+	Demo    string `mapstructure:"demo"`
+	Widget  string `mapstructure:"widget"`
+	TgBot   string `mapstructure:"tgbot"`
+	TgUser  string `mapstructure:"tguser"`
+	Whats   string `mapstructure:"whats"`
 }
 
 type DBConfig struct {
@@ -67,18 +66,9 @@ type SMTP struct {
 	Password string `mapstructure:"pass"`
 }
 
-type BybitConfig struct {
-	ApiKey    string `mapstructure:"api_key"`
-	SecretKey string `mapstructure:"secret_key"`
-	Testnet   bool   `mapstructure:"testnet"`
-}
-
-type AssistConfig struct {
-	Name string
-	Key  string
-}
-
-type AssistRaw struct {
+type DemoAssist struct {
+	URL    string `mapstructure:"demo_assist_url"`
+	Key    string `mapstructure:"demo_assist_key"`
 	Psycho string `mapstructure:"psycho"`
 	Lawyer string `mapstructure:"lawyer"`
 	Tech   string `mapstructure:"tech"`
@@ -172,30 +162,12 @@ func NewConf() (*Conf, error) {
 	}
 	conf.SMTP = smtpConfig
 
-	// BYBIT секция
-	var bybitConfig BybitConfig
-	if err := v.UnmarshalKey("bybit", &bybitConfig); err != nil {
-		return nil, fmt.Errorf("ошибка разбора секции bybit: %w", err)
-	}
-	conf.BYBIT = bybitConfig
-
 	// Assist секция
-	var assistRaw AssistRaw
-	if err := v.UnmarshalKey("assist", &assistRaw); err != nil {
-		return nil, fmt.Errorf("ошибка разбора секции assist: %w", err)
+	var demoAssist DemoAssist
+	if err := v.UnmarshalKey("demoassist", &demoAssist); err != nil {
+		return nil, fmt.Errorf("ошибка разбора секции demoassist: %w", err)
 	}
-
-	// Преобразуем AssistRaw в массив AssistConfig
-	conf.AS = make([]AssistConfig, 0, 3)
-	if assistRaw.Psycho != "" {
-		conf.AS = append(conf.AS, AssistConfig{Name: "psycho", Key: assistRaw.Psycho})
-	}
-	if assistRaw.Lawyer != "" {
-		conf.AS = append(conf.AS, AssistConfig{Name: "lawyer", Key: assistRaw.Lawyer})
-	}
-	if assistRaw.Tech != "" {
-		conf.AS = append(conf.AS, AssistConfig{Name: "tech", Key: assistRaw.Tech})
-	}
+	conf.DemoAS = demoAssist
 
 	return conf, nil
 }
