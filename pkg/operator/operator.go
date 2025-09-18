@@ -145,8 +145,19 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 			logger.Debug("Sending message via SSE: %+v", msg)
 			// Отправляем сообщение два раза с интервалом в 1 секунду
 			go func(message model.Message) {
+				operMsg := model.Message{
+					Operator: true,
+					Type:     message.Type,
+					Content: model.AssistResponse{
+						Message: message.Content.Message + " (отправлено оператором)",
+						Action:  message.Content.Action,
+						Meta:    message.Content.Meta,
+					},
+					Name:      message.Name,
+					Timestamp: time.Now(),
+				}
 				for i := 1; i <= 2; i++ {
-					if err := o.sendMessage(url, message); err != nil {
+					if err := o.sendMessage(url, operMsg); err != nil {
 						logger.Error("Failed to send message (attempt %d): %v", i, err)
 					} else {
 						logger.Debug("Message sent successfully (attempt %d)", i)

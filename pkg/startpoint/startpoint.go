@@ -23,6 +23,7 @@ type Question struct {
 type Answer struct {
 	Answer        model.AssistResponse
 	VoiceQuestion bool // Флаг, указывающий, что вопрос был задан голосом
+	SetOperator   bool // Если true — сработало событие переключения на оператора
 }
 
 // BotInterface - интерфейс для различных реализаций ботов
@@ -176,6 +177,8 @@ func (s *Start) Respondent(
 					if strings.Contains(userQuestion, trigger) {
 						// Если триггер найден, то уведомляю пользователя в CarpinteroCh
 						s.End.Meta(u.Assist.UserId, treadId, "trigger", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
+						// Также помечаю сообщение как операторское
+						currentQuest.Operator = true
 					}
 				}
 			}
@@ -271,8 +274,9 @@ func (s *Start) Respondent(
 		}
 
 		var (
-			answer model.AssistResponse
-			err    error
+			answer           model.AssistResponse
+			err              error
+			operatorAnswered bool
 		)
 
 		if currentQuest.Operator {
@@ -290,12 +294,15 @@ func (s *Start) Respondent(
 			// Если получили ошибку от оператора или пустой ответ — делаем фолбэк в OpenAI
 			if err != nil || (respMsg.Content.Message == "" && len(respMsg.Content.Action.SendFiles) == 0) {
 				answer, err = s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+				operatorAnswered = false
 			} else {
 				answer = respMsg.Content
+				operatorAnswered = true
 			}
 		} else {
 			// Отправляю запрос в OpenAI
 			answer, err = s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+			operatorAnswered = false
 		}
 
 		// Oyente
@@ -319,7 +326,8 @@ func (s *Start) Respondent(
 
 		// Отправляем ответ вызывающей функции
 		answ := Answer{
-			Answer: answer,
+			Answer:      answer,
+			SetOperator: operatorAnswered,
 		}
 		//Проверяю что канал answerCh не закрыт
 		select {
@@ -407,20 +415,30 @@ func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, trea
 			if msg.Type != "assist" {
 				// Создаю вопрос
 				var quest Question
+				// Определяю, должен ли вопрос быть операторским
+				opFlag := msg.Operator
+				if len(u.Assist.Metas.Triggers) > 0 {
+					for _, trigger := range u.Assist.Metas.Triggers {
+						if strings.Contains(msg.Content.Message, trigger) {
+							opFlag = true
+							break
+						}
+					}
+				}
 				switch msg.Type {
 				case "user":
 					quest = Question{
 						Question: strings.Split(msg.Content.Message, "\n"),
-						Voice:    false,        // Сообщение от пользователя не голосовое
-						Files:    msg.Files,    // Файлы, прикрепленные к вопросу
-						Operator: msg.Operator, // Если true — вопрос должен быть отправлен оператору, а не модели
+						Voice:    false,     // Сообщение от пользователя не голосовое
+						Files:    msg.Files, // Файлы, прикрепленные к вопросу
+						Operator: opFlag,    // Помечаем оператором при триггере или если уже отмечено
 					}
 				case "user_voice":
 					quest = Question{
 						Question: strings.Split(msg.Content.Message, "\n"),
-						Voice:    true,         // Сообщение от пользователя голосовое
-						Files:    msg.Files,    // Файлы, прикрепленные к вопросу
-						Operator: msg.Operator, // Если true — вопрос должен быть отправлен оператору, а не модели
+						Voice:    true,      // Сообщение от пользователя голосовое
+						Files:    msg.Files, // Файлы, прикрепленные к вопросу
+						Operator: opFlag,    // Помечаем оператором при триггере или если уже отмечено
 					}
 				default:
 					// Неизвестный тип сообщения, пропускаю
@@ -431,8 +449,8 @@ func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, trea
 				question <- quest
 				// Отправляю вопрос клиента в виде сообщения
 				select {
-				// Operator = false - мне здесь не важно кто отправил сообщение, это важно в сообщении от пользователя
-				case usrCh.TxCh <- s.Mod.NewMessage(false, "user", &msg.Content, &msg.Name):
+				// Operator верно берется из вопроса, чтобы знать кому адресовать сообщение
+				case usrCh.TxCh <- s.Mod.NewMessage(opFlag, "user", &msg.Content, &msg.Name):
 				default:
 					return fmt.Errorf("'Listener' канал TxCh закрыт или переполнен")
 				}
@@ -440,6 +458,7 @@ func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, trea
 		case quest := <-fullQuestCh: // Пришёл полный вопрос пользователя
 			switch quest.VoiceQuestion {
 			case false: // Вопрос задан текстом
+				// TODO добавить статус ответе от оператора а не только от модели
 				// Нужно создать отдельный канал слушателя для сохранения диалога для использования асинхронного сохранения
 				s.End.SaveDialog(comdb.User, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			case true: // Вопрос задан голосом
@@ -447,8 +466,8 @@ func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, trea
 			}
 		case resp := <-answerCh: // Пришёл ответ ассистента/оператора
 			select {
-			// Operator = false - мне здесь не важно кто отправил сообщение, это важно в сообщении от пользователя
-			case usrCh.TxCh <- s.Mod.NewMessage(false, "assist", &resp.Answer, &u.Assist.AssistName): // Имя ассистента из настроек модели
+			// Operator верно берется из ответа, чтобы знать кто фактически ответил
+			case usrCh.TxCh <- s.Mod.NewMessage(resp.SetOperator, "assist", &resp.Answer, &u.Assist.AssistName): // Имя ассистента из настроек модели
 				s.End.SaveDialog(comdb.AI, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			default:
 				return fmt.Errorf("'Listener' канал TxCh закрыт или переполнен")
