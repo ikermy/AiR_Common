@@ -2,15 +2,17 @@ package model
 
 import (
 	"fmt"
-	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/sashabaranov/go-openai"
 	"io"
 	"strings"
 	"time"
+
+	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/sashabaranov/go-openai"
 )
 
 // Message представляет сообщение в системе
 type Message struct {
+	Operator  bool // true, если сообщение для оператора, false - для ассистента
 	Type      string
 	Content   AssistResponse
 	Name      string
@@ -26,8 +28,9 @@ type FileUpload struct {
 }
 
 // NewMessage создает новое сообщение
-func (m *Models) NewMessage(msgType string, content *AssistResponse, name *string, files ...FileUpload) Message {
+func (m *Models) NewMessage(operator bool, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message {
 	return Message{
+		Operator:  operator,
 		Type:      msgType,
 		Content:   *content,
 		Name:      *name,

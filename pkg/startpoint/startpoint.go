@@ -2,12 +2,13 @@ package startpoint
 
 import (
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
-	"strings"
-	"time"
 )
 
 // Question структура для хранения вопросов пользователя
@@ -15,6 +16,7 @@ type Question struct {
 	Question []string           `json:"question"`        // Вопрос пользователя, может состоять из нескольких вопросов
 	Voice    bool               `json:"voice"`           // Флаг, указывающий, что вопрос был задан голосом
 	Files    []model.FileUpload `json:"files,omitempty"` // Файлы, прикрепленные к вопросу
+	Operator bool               `json:"operator"`        // Если true — вопрос должен быть отправлен оператору, а не модели
 }
 
 // Answer структура для хранения ответов пользователя
@@ -40,25 +42,32 @@ type EndpointInterface interface {
 
 // ModelInterface - интерфейс для моделей
 type ModelInterface interface {
-	NewMessage(msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message
+	NewMessage(operator bool, msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message
 	Request(modelId string, dialogId uint64, ask *string, files ...model.FileUpload) (model.AssistResponse, error)
 	GetCh(respId uint64) (model.Ch, error)
 	CleanUp()
 }
 
+// OperatorInterface - интерфейс для отправки сообщений от и для операторов
+type OperatorInterface interface {
+	AskOperator(userID uint32, dialogID uint64, question model.Message) (model.Message, error)
+}
+
 // Start структура с интерфейсами вместо конкретных типов
 type Start struct {
-	Mod ModelInterface
-	End EndpointInterface
-	Bot BotInterface
+	Mod  ModelInterface
+	End  EndpointInterface
+	Bot  BotInterface
+	Oper OperatorInterface
 }
 
 // New создаёт новый экземпляр Start (бывший startpoint.New)
-func New(mod ModelInterface, end EndpointInterface, bot BotInterface) *Start {
+func New(mod ModelInterface, end EndpointInterface, bot BotInterface, operator OperatorInterface) *Start {
 	return &Start{
-		Mod: mod,
-		End: end,
-		Bot: bot,
+		Mod:  mod,
+		End:  end,
+		Bot:  bot,
+		Oper: operator,
 	}
 }
 
@@ -236,7 +245,7 @@ func (s *Start) Respondent(
 			}
 		}
 
-		// Отправляем запрос в OpenAI
+		// Отправляем запрос в OpenAI или оператору
 		userAsk := s.End.GetUserAsk(treadId, respId)
 		if strings.TrimSpace(strings.Join(userAsk, "\n")) == "" {
 			// Пустой запрос, пропускаем
@@ -244,7 +253,6 @@ func (s *Start) Respondent(
 		}
 		// Сохраняю запрос пользователя для сохранения диалога
 		fullAsk := Answer{
-			//Answer:        strings.Join(userAsk, "\n"),
 			Answer: model.AssistResponse{
 				Message: strings.Join(userAsk, "\n"),
 			},
@@ -254,7 +262,6 @@ func (s *Start) Respondent(
 		// Проверяю что канал fullQuestCh не закрыт
 		select {
 		case fullQuestCh <- fullAsk:
-		// отправляю вопрос в End.SaveDialog
 		default:
 			select {
 			case errCh <- fmt.Errorf("'respondent' канал fullQuestCh закрыт или переполнен"):
@@ -263,25 +270,49 @@ func (s *Start) Respondent(
 			}
 		}
 
-		// Отправляю запрос в OpenAI
-		answer, err := s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+		var (
+			answer model.AssistResponse
+			err    error
+		)
+
+		if currentQuest.Operator {
+			// Формируем сообщение для оператора и запрашиваем ответ
+			msgType := "user"
+			if VoiceQuestion {
+				msgType = "user_voice"
+			}
+			content := model.AssistResponse{Message: strings.Join(userAsk, "\n")}
+			name := u.Assist.AssistName
+			opMsg := s.Mod.NewMessage(true, msgType, &content, &name, currentQuest.Files...)
+
+			var respMsg model.Message
+			respMsg, err = s.Oper.AskOperator(u.Assist.UserId, treadId, opMsg)
+			// Если получили ошибку от оператора или пустой ответ — делаем фолбэк в OpenAI
+			if err != nil || (respMsg.Content.Message == "" && len(respMsg.Content.Action.SendFiles) == 0) {
+				answer, err = s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+			} else {
+				answer = respMsg.Content
+			}
+		} else {
+			// Отправляю запрос в OpenAI
+			answer, err = s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+		}
+
 		// Oyente
 		deaf = false
 
 		if err != nil {
-			logger.Error("Ошибка запроса к модели: %v", err, u.Assist.UserId)
+			logger.Error("Ошибка запроса к модели/оператору: %v", err, u.Assist.UserId)
 			continue
 		}
-		// Если пустой ответ от OpenAI
-		//if answer == "" {
+		// Если пустой ответ
 		if answer.Message == "" && len(answer.Action.SendFiles) == 0 {
 			continue
 		}
 
 		// Проверяю на содержание в ответе цели из u.Assist.Metas.MetaAction
-		if u.Assist.Metas.MetaAction != "" { // Убрать вообще MetaAction из настроек модели!?
-			//if strings.Contains(answer.Message, u.Assist.Metas.MetaAction) {
-			if answer.Meta { // Ассистент пометил ответ как достигший цели
+		if u.Assist.Metas.MetaAction != "" {
+			if answer.Meta { // Ассистент/оператор пометил ответ как достигший цели
 				s.End.Meta(u.Assist.UserId, treadId, "target", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
 			}
 		}
@@ -334,6 +365,7 @@ func (s *Start) StarterRespondent(
 	}
 }
 
+// StarterListener запускает Listener для пользователя, если он ещё не запущен
 func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
 	if !start.Model.Services.Listener {
 		start.Model.Services.Listener = true
@@ -346,12 +378,8 @@ func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
 	}
 }
 
-func (s *Start) Listener(
-	u *model.RespModel,
-	usrCh model.Ch,
-	respId uint64,
-	treadId uint64,
-) error {
+// Listener слушает канал от пользователя и обрабатывает сообщения
+func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, treadId uint64) error {
 	question := make(chan Question, 1)
 	fullQuestCh := make(chan Answer, 1)
 	answerCh := make(chan Answer, 1)
@@ -383,26 +411,28 @@ func (s *Start) Listener(
 				case "user":
 					quest = Question{
 						Question: strings.Split(msg.Content.Message, "\n"),
-						Voice:    false,     // Сообщение от пользователя не голосовое
-						Files:    msg.Files, // Файлы, прикрепленные к вопросу
+						Voice:    false,        // Сообщение от пользователя не голосовое
+						Files:    msg.Files,    // Файлы, прикрепленные к вопросу
+						Operator: msg.Operator, // Если true — вопрос должен быть отправлен оператору, а не модели
 					}
 				case "user_voice":
 					quest = Question{
 						Question: strings.Split(msg.Content.Message, "\n"),
-						Voice:    true,      // Сообщение от пользователя голосовое
-						Files:    msg.Files, // Файлы, прикрепленные к вопросу
+						Voice:    true,         // Сообщение от пользователя голосовое
+						Files:    msg.Files,    // Файлы, прикрепленные к вопросу
+						Operator: msg.Operator, // Если true — вопрос должен быть отправлен оператору, а не модели
 					}
 				default:
 					// Неизвестный тип сообщения, пропускаю
 					logger.Warn("Неизвестный тип сообщения: %s", msg.Type, u.Assist.UserId)
 					continue
 				}
-				// отправляю вопрос ассистенту
+				// отправляю вопрос ассистенту/оператору
 				question <- quest
 				// Отправляю вопрос клиента в виде сообщения
 				select {
-				//case usrCh.TxCh <- s.Mod.NewMessage("user", &msg.Content, &msg.UserName):
-				case usrCh.TxCh <- s.Mod.NewMessage("user", &msg.Content, &msg.Name):
+				// Operator = false - мне здесь не важно кто отправил сообщение, это важно в сообщении от пользователя
+				case usrCh.TxCh <- s.Mod.NewMessage(false, "user", &msg.Content, &msg.Name):
 				default:
 					return fmt.Errorf("'Listener' канал TxCh закрыт или переполнен")
 				}
@@ -415,9 +445,10 @@ func (s *Start) Listener(
 			case true: // Вопрос задан голосом
 				s.End.SaveDialog(comdb.UserVoice, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			}
-		case resp := <-answerCh: // Пришёл ответ ассистента
+		case resp := <-answerCh: // Пришёл ответ ассистента/оператора
 			select {
-			case usrCh.TxCh <- s.Mod.NewMessage("assist", &resp.Answer, &u.RespName):
+			// Operator = false - мне здесь не важно кто отправил сообщение, это важно в сообщении от пользователя
+			case usrCh.TxCh <- s.Mod.NewMessage(false, "assist", &resp.Answer, &u.Assist.AssistName): // Имя ассистента из настроек модели
 				s.End.SaveDialog(comdb.AI, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			default:
 				return fmt.Errorf("'Listener' канал TxCh закрыт или переполнен")

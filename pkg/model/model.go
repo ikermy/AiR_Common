@@ -5,20 +5,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/ikermy/AiR_Common/pkg/conf"
-	"github.com/ikermy/AiR_Common/pkg/handler"
-	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/sashabaranov/go-openai"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ikermy/AiR_Common/pkg/conf"
+	"github.com/ikermy/AiR_Common/pkg/handler"
+	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/sashabaranov/go-openai"
 )
 
 // Model интерфейс для работы с моделями Assistant
 type Model interface {
-	NewMessage(msgType string, content *AssistResponse, name *string, files ...FileUpload) Message
+	NewMessage(operator bool, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message
 	GetFileAsReader(url string) (io.Reader, error)
 	GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error)
 	GetCh(respId uint64) (Ch, error)
@@ -85,6 +86,7 @@ type RespModel struct {
 	//activeOps sync.WaitGroup // ТЕСТИРОВАТЬ
 }
 
+// Фактически не используется!?
 type Services struct {
 	Listener   bool
 	Respondent bool
@@ -349,7 +351,6 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 		respModel.mu.Lock()
 		respModel.TTL = time.Now().Add(m.UserModelTTl) // Обновляем TTL
 		respModel.mu.Unlock()
-		logger.Info("dialogId %d found in cache, TTL updated", dialogId, assist.UserId)
 		return respModel, nil
 	}
 	// Если пользователь не найден в кэше, создаем новую запись

@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.23.5"
-git tag -a v1.23.5 -m "DemoAssists"
+git commit -m "v1.24.0"
+git tag -a v1.24.0 -m "OperatorTest"
 git push origin master
-git push origin v1.23.5
+git push origin v1.24.0
