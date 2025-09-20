@@ -122,6 +122,7 @@ func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string, files ...m
 		}
 	}()
 
+	// Жду либо ответа, либо ошибки, либо таймаута
 	timeout := time.After(mode.ErrorTimeOutDurationForAssistAnswer * time.Minute)
 
 	select {
@@ -293,7 +294,12 @@ func (s *Start) Respondent(
 			respMsg, err = s.Oper.AskOperator(u.Assist.UserId, treadId, opMsg)
 			// Если получили ошибку от оператора или пустой ответ — делаем фолбэк в OpenAI
 			if err != nil || (respMsg.Content.Message == "" && len(respMsg.Content.Action.SendFiles) == 0) {
+				logger.Error("Ошибка запроса к оператору или пустой ответ, фолбэк в OpenAI: %v", err, u.Assist.UserId)
+				// Отправляю запрос в OpenAI
 				answer, err = s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+				if err != nil {
+					logger.Error("Ошибка запроса к модели: %v", err, u.Assist.UserId)
+				}
 				operatorAnswered = false
 			} else {
 				answer = respMsg.Content
@@ -302,8 +308,35 @@ func (s *Start) Respondent(
 		} else {
 			// Отправляю запрос в OpenAI
 			answer, err = s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+			if err != nil {
+				logger.Error("Ошибка запроса к модели: %v", err, u.Assist.UserId)
+			}
 			operatorAnswered = false
 		}
+		// TODO удалить закомментированный код ниже, когда убедимся что всё работает. Не забыть раскомментировать в model.go и request.go
+		// Если модель просит ответа оператора, что бы не возвращать ответ модели, сразу спрашиваем у оператора
+		//if answer.Operator {
+		//	// Формируем сообщение для оператора и запрашиваем ответ
+		//	msgType := "user"
+		//	if VoiceQuestion {
+		//		msgType = "user_voice"
+		//	}
+		//	content := model.AssistResponse{Message: strings.Join(userAsk, "\n")}
+		//	name := u.Assist.AssistName
+		//	opMsg := s.Mod.NewMessage(true, msgType, &content, &name, currentQuest.Files...)
+		//
+		//	var respMsg model.Message
+		//	respMsg, err = s.Oper.AskOperator(u.Assist.UserId, treadId, opMsg)
+		//	// Если получили ошибку от оператора или пустой ответ — оставляем ответ модели
+		//	if err != nil || (respMsg.Content.Message == "" && len(respMsg.Content.Action.SendFiles) == 0) {
+		//		logger.Error("Ошибка запроса к оператору или пустой ответ, оставляем ответ модели: %v", err, u.Assist.UserId)
+		//		operatorAnswered = true // Всё равно помечаю сообщение как операторское, в таком случае в бот переключится на режим оператора
+		//		// Но оставляю ответ модели
+		//	} else {
+		//		answer = respMsg.Content // Заменяю ответ модели на ответ оператора
+		//		operatorAnswered = true // Помечаю что ответил оператор
+		//	}
+		//}
 
 		// Oyente
 		deaf = false

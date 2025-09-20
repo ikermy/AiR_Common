@@ -117,6 +117,7 @@ type AssistResponse struct {
 	Message string `json:"message,omitempty"` // Текстовое сообщение ответа может быть пустым если есть Action
 	Action  Action `json:"action,omitempty"`  // Действия для выполнения может быть пустым если есть Message
 	Meta    bool   `json:"target,omitempty"`  // Флаг, что ответ содержит достижение цели по мнению ассистента
+	//Operator bool   `json:"operator,omitempty"` // Флаг, что модель считает что нужно вызвать оператора
 }
 
 type Ch struct {

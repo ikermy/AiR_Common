@@ -1,8 +1,12 @@
 package mode
 
-import "github.com/ikermy/AiR_Common/pkg/common"
+import (
+	"github.com/ikermy/AiR_Common/pkg/common"
+)
 
 const (
+	IdleDuration                        = 5 // длительность простоя для закрытия SSE
+	IdleOperator                        = 5 // длительность простоя для закрытия оператора
 	ErrorTimeOutDurationForAssistAnswer = 3 // Если в сообщении есть файлы они могут долго обрабатываться
 	// BatchSize Endpoint
 	BatchSize         = 100

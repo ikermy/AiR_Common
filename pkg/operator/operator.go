@@ -1,14 +1,17 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/r3labs/sse/v2"
 )
@@ -33,11 +36,6 @@ type opKey struct {
 	dialogID uint64
 }
 
-const (
-	idleDuration = 30 * time.Minute // длительность простоя для закрытия SSE
-	idleOperator = 5 * time.Minute  // длительность простоя для закрытия оператора
-)
-
 // session хранит состояние каналов и таймер простоя
 type session struct {
 	ch         OperatorCh
@@ -46,6 +44,10 @@ type session struct {
 	idleTimer  *time.Timer
 	mu         sync.Mutex
 	lastActive time.Time
+	// session id, получаем из init-события SSE
+	sid      int64
+	sidReady chan struct{}
+	sidOnce  sync.Once
 }
 
 func New(cfg *conf.Conf) *Operator {
@@ -82,8 +84,10 @@ func (o *Operator) getOrCreateSession(userID uint32, dialogID uint64) (*session,
 		ch:         ch,
 		ctx:        ctx,
 		cancel:     cancel,
-		idleTimer:  time.NewTimer(idleDuration),
+		idleTimer:  time.NewTimer(mode.IdleDuration * time.Minute),
 		lastActive: time.Now(),
+		// init sid
+		sidReady: make(chan struct{}),
 	}
 
 	o.operatorChMap.Store(key, s)
@@ -101,18 +105,45 @@ func (s *session) touch() {
 		default:
 		}
 	}
-	s.idleTimer.Reset(idleDuration)
+	s.idleTimer.Reset(mode.IdleDuration * time.Minute)
+}
+
+// setSID сохраняет sid и сигнализирует готовность
+func (s *session) setSID(id int64) {
+	s.mu.Lock()
+	s.sid = id
+	s.mu.Unlock()
+	s.sidOnce.Do(func() { close(s.sidReady) })
+}
+
+// waitSID блокируется до получения sid или таймаута
+func (s *session) waitSID(timeout time.Duration) (int64, error) {
+	select {
+	case <-s.sidReady:
+		s.mu.Lock()
+		id := s.sid
+		s.mu.Unlock()
+		return id, nil
+	case <-s.ctx.Done():
+		return 0, fmt.Errorf("session cancelled while waiting for sid")
+	case <-time.After(timeout):
+		return 0, fmt.Errorf("timeout while waiting for sid")
+	}
 }
 
 // listenerSession — основной слушатель с учётом простоя
 func (o *Operator) listenerSession(key opKey, s *session) {
-	// Создаем SSE клиент
-	url := fmt.Sprintf("http://%s:8093/op", o.url)
-	client := sse.NewClient(url)
+	logger.Debug("Starting listener session (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
 
-	// Подписываемся на события
+	// РЕАЛЬНЫЙ SSE клиент
+	base := fmt.Sprintf("http://%s:8093/op", o.url)
+	logger.Debug(base)
+	sseURL := fmt.Sprintf("%s?user_id=%d&dialog_id=%d", base, s.ch.UserId, s.ch.DialogId)
+	client := sse.NewClient(sseURL)
+
+	// Подписываемся на события базового потока
 	events := make(chan *sse.Event)
-	err := client.SubscribeChan("messages", events)
+	err := client.SubscribeChan("", events)
 	if err != nil {
 		logger.Error("Failed to subscribe to SSE: %v", err)
 		// Ошибка подписки — очищаем сессию
@@ -122,11 +153,11 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 		s.cancel()
 		return
 	}
-	logger.Info("SSE connection established to %s (user=%d, dialog=%d)", url, s.ch.UserId, s.ch.DialogId)
+	logger.Info("SSE connection established to %s (user=%d, dialog=%d)", sseURL, s.ch.UserId, s.ch.DialogId)
 
 	// cleanup при выходе
 	defer func() {
-		client.Unsubscribe(events)
+		//client.Unsubscribe(events)
 		o.operatorChMap.Delete(key)
 		close(s.ch.RxCh)
 		close(s.ch.TxCh)
@@ -142,29 +173,11 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 				return
 			}
 			s.touch()
-			logger.Debug("Sending message via SSE: %+v", msg)
-			// Отправляем сообщение два раза с интервалом в 1 секунду
+			logger.Debug("Sending message via HTTP POST: %+v", msg)
+			// Отправляем сообщение (ждём sid при необходимости)
 			go func(message model.Message) {
-				operMsg := model.Message{
-					Operator: true,
-					Type:     message.Type,
-					Content: model.AssistResponse{
-						Message: message.Content.Message + " (отправлено оператором)",
-						Action:  message.Content.Action,
-						Meta:    message.Content.Meta,
-					},
-					Name:      message.Name,
-					Timestamp: time.Now(),
-				}
-				for i := 1; i <= 2; i++ {
-					if err := o.sendMessage(url, operMsg); err != nil {
-						logger.Error("Failed to send message (attempt %d): %v", i, err)
-					} else {
-						logger.Debug("Message sent successfully (attempt %d)", i)
-					}
-					if i < 2 {
-						time.Sleep(1 * time.Second)
-					}
+				if err := o.sendMessage(base, s, message); err != nil {
+					logger.Error("Failed to send message: %v", err)
 				}
 			}(msg)
 
@@ -175,9 +188,26 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 				return
 			}
 			s.touch()
-			logger.Debug("Received SSE event: %s", string(event.Data))
+			// Обработка типов событий: init (sid) и сообщения
+			etype := string(event.Event)
+			edata := event.Data
+			logger.Debug("Received SSE event '%s': %s", etype, string(edata))
+			if etype == "init" {
+				var initPayload struct {
+					SID int64 `json:"sid"`
+				}
+				if err := json.Unmarshal(edata, &initPayload); err != nil {
+					logger.Error("Failed to unmarshal init event: %v", err)
+					continue
+				}
+				s.setSID(initPayload.SID)
+				logger.Info("sid initialized: %d (user=%d, dialog=%d)", initPayload.SID, s.ch.UserId, s.ch.DialogId)
+				continue
+			}
+
+			// Остальные события считаем сообщениями
 			var receivedMsg model.Message
-			if err := json.Unmarshal(event.Data, &receivedMsg); err != nil {
+			if err := json.Unmarshal(edata, &receivedMsg); err != nil {
 				logger.Error("Failed to unmarshal received message: %v", err)
 				continue
 			}
@@ -202,28 +232,56 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 	}
 }
 
-// sendMessage отправляет сообщение на сервер (эмуляция отправки через SSE)
-func (o *Operator) sendMessage(baseURL string, msg model.Message) error {
-	// Эмуляция отправки сообщения через HTTP POST
-	jsonData, err := json.Marshal(msg)
+// sendMessage отправляет сообщение на сервер через HTTP POST с sid
+func (o *Operator) sendMessage(baseURL string, s *session, msg model.Message) error {
+	logger.Debug("Preparing to send message: %+v", msg)
+	// Ждём sid из init события
+	sid, err := s.waitSID(mode.IdleOperator * time.Minute)
 	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
+		return err
 	}
 
-	// В реальной реализации это был бы POST запрос к серверу
-	// Для тестирования просто логируем
-	logger.Debug("Would send POST to %s/send with data: %s", baseURL, string(jsonData))
+	// Формируем конверт
+	type envelope struct {
+		UserID   uint32         `json:"user_id"`
+		DialogID uint64         `json:"dialog_id"`
+		SID      int64          `json:"sid"`
+		Msg      *model.Message `json:"msg,omitempty"`
+	}
+	env := envelope{
+		UserID:   s.ch.UserId,
+		DialogID: s.ch.DialogId,
+		SID:      sid,
+		Msg:      &msg,
+	}
+	jsonData, err := json.Marshal(env)
+	if err != nil {
+		return fmt.Errorf("failed to marshal envelope: %w", err)
+	}
 
-	// Эмуляция задержки сети
-	time.Sleep(100 * time.Millisecond)
+	req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, baseURL, bytes.NewReader(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to POST message: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("unexpected status from POST /op: %s", resp.Status)
+	}
 
 	return nil
 }
 
 // StartTestSSEEmulation запускает тестовую эмуляцию SSE сервера
 func (o *Operator) StartTestSSEEmulation(ch OperatorCh) {
+	logger.Debug("Starting SSE emulation")
 	go func() {
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
 
 		counter := 1
@@ -278,7 +336,7 @@ func (o *Operator) AskOperator(userID uint32, dialogID uint64, question model.Me
 		logger.Debug("Question sent to operator: %+v", question)
 	case <-s.ctx.Done():
 		return model.Message{}, fmt.Errorf("operator session context cancelled while sending question")
-	case <-time.After(10 * idleOperator):
+	case <-time.After(mode.IdleOperator * time.Minute):
 		return model.Message{}, fmt.Errorf("timeout while sending question to operator")
 	}
 
@@ -289,7 +347,7 @@ func (o *Operator) AskOperator(userID uint32, dialogID uint64, question model.Me
 		return response, nil
 	case <-s.ctx.Done():
 		return model.Message{}, fmt.Errorf("operator session context cancelled while waiting for response")
-	case <-time.After(30 * idleOperator):
+	case <-time.After(mode.IdleDuration * time.Minute):
 		return model.Message{}, fmt.Errorf("timeout while waiting for operator response")
 	}
 }

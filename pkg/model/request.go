@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/sashabaranov/go-openai"
 	"strings"
 	"time"
+
+	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/sashabaranov/go-openai"
 )
 
 // JSONSchemaDefinition представляет JSON схему для ответа ассистента
@@ -281,8 +282,11 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 			"target": {
 				Type: "boolean",
 			},
+			//"operator": {
+			//	Type: "boolean", ////// добавить в Landing create model	!!!!!
+			//},
 		},
-		Required:   []string{"message", "action", "target"},
+		Required:   []string{"message", "action", "target"}, // нужно ли требовать "operator" ???
 		Additional: &additionalFalse,
 	}
 
