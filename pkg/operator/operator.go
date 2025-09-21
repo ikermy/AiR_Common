@@ -277,46 +277,6 @@ func (o *Operator) sendMessage(baseURL string, s *session, msg model.Message) er
 	return nil
 }
 
-// StartTestSSEEmulation запускает тестовую эмуляцию SSE сервера
-func (o *Operator) StartTestSSEEmulation(ch OperatorCh) {
-	logger.Debug("Starting SSE emulation")
-	go func() {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-
-		counter := 1
-		for {
-			select {
-			case <-ticker.C:
-				// Эмулируем получение сообщения от сервера
-				testMsg := model.Message{
-					Operator: false,
-					Type:     "test_response",
-					Content: model.AssistResponse{
-						Message: fmt.Sprintf("Test message #%d from SSE server", counter),
-					},
-					Name:      "SSE_Server",
-					Timestamp: time.Now(),
-				}
-
-				// Отправляем тестовое сообщение в RxCh
-				select {
-				case ch.RxCh <- testMsg:
-					logger.Debug("Test SSE message sent: %+v", testMsg)
-					counter++
-				case <-o.ctx.Done():
-					logger.Info("Test SSE emulation stopped")
-					return
-				}
-
-			case <-o.ctx.Done():
-				logger.Info("Test SSE emulation context done")
-				return
-			}
-		}
-	}()
-}
-
 // AskOperator отправляет вопрос оператору и ожидает ответ, удерживая SSE-сессию активной
 func (o *Operator) AskOperator(userID uint32, dialogID uint64, question model.Message) (model.Message, error) {
 	// Получаем или создаём долгоживущую сессию
@@ -350,4 +310,43 @@ func (o *Operator) AskOperator(userID uint32, dialogID uint64, question model.Me
 	case <-time.After(mode.IdleDuration * time.Minute):
 		return model.Message{}, fmt.Errorf("timeout while waiting for operator response")
 	}
+}
+
+// SendToOperator отправляет сообщение оператору без ожидания ответа
+func (o *Operator) SendToOperator(userID uint32, dialogID uint64, question model.Message) error {
+	s, _, created, err := o.getOrCreateSession(userID, dialogID)
+	if err != nil {
+		return fmt.Errorf("failed to create/get operator session: %w", err)
+	}
+
+	if created {
+		go o.listenerSession(opKey{userID: userID, dialogID: dialogID}, s)
+	}
+
+	select {
+	case s.ch.TxCh <- question:
+		logger.Debug("Question sent to operator: %+v", question)
+		return nil
+	case <-s.ctx.Done():
+		return fmt.Errorf("operator session context cancelled")
+	case <-time.After(5 * time.Second): // Короткий таймаут
+		return fmt.Errorf("timeout while sending question to operator")
+	}
+}
+
+// ReceiveFromOperator возвращает канал для получения ответов от оператора
+func (o *Operator) ReceiveFromOperator(userID uint32, dialogID uint64) <-chan model.Message {
+	s, _, created, err := o.getOrCreateSession(userID, dialogID)
+	if err != nil {
+		// Возвращаем закрытый канал в случае ошибки
+		ch := make(chan model.Message)
+		close(ch)
+		return ch
+	}
+
+	if created {
+		go o.listenerSession(opKey{userID: userID, dialogID: dialogID}, s)
+	}
+
+	return s.ch.RxCh
 }

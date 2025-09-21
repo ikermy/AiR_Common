@@ -5,9 +5,10 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"github.com/ikermy/AiR_Common/pkg/model"
 	"io"
 	"time"
+
+	"github.com/ikermy/AiR_Common/pkg/model"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
 )
@@ -29,6 +30,7 @@ const (
 	AI        CreatorType = 1
 	User      CreatorType = 2
 	UserVoice CreatorType = 3
+	Operator  CreatorType = 4
 )
 
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction

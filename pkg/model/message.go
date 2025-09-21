@@ -10,9 +10,14 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
+type Operator struct {
+	SetOperator bool // В вопросе от модели если нужен оператор
+	Operator    bool // true, если ответ от оператора, false - от модели
+}
+
 // Message представляет сообщение в системе
 type Message struct {
-	Operator  bool // true, если сообщение для оператора, false - для ассистента
+	Operator  Operator
 	Type      string
 	Content   AssistResponse
 	Name      string
@@ -28,7 +33,7 @@ type FileUpload struct {
 }
 
 // NewMessage создает новое сообщение
-func (m *Models) NewMessage(operator bool, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message {
+func (m *Models) NewMessage(operator Operator, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message {
 	return Message{
 		Operator:  operator,
 		Type:      msgType,
