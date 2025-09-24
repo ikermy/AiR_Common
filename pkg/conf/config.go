@@ -20,9 +20,10 @@ type Conf struct {
 }
 
 type TgConfig struct {
-	Name  string `mapstructure:"bot"`
-	Token string `mapstructure:"token"`
-	Id    int64  `mapstructure:"id"`
+	Name     string `mapstructure:"bot"`
+	Token    string `mapstructure:"token"`
+	Id       int64  `mapstructure:"id"`
+	Operator string `mapstructure:"operator"`
 }
 
 type GPTConfig struct {
@@ -40,6 +41,7 @@ type WebConfig struct {
 	TgBot   string `mapstructure:"tgbot"`
 	TgUser  string `mapstructure:"tguser"`
 	Whats   string `mapstructure:"whats"`
+	Oper    string `mapstructure:"oper"`
 }
 
 type DBConfig struct {

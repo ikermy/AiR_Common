@@ -27,10 +27,10 @@ type Espero struct {
 }
 
 const (
-	AI        CreatorType = 1
-	User      CreatorType = 2
-	UserVoice CreatorType = 3
-	Operator  CreatorType = 4
+	AI        CreatorType = 1 // Право
+	User      CreatorType = 2 // Лево
+	UserVoice CreatorType = 3 // Лево
+	Operator  CreatorType = 4 // Прав
 )
 
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction

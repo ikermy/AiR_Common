@@ -16,18 +16,24 @@ import (
 	"github.com/r3labs/sse/v2"
 )
 
+//type CallBack interface {
+//	DisableOperatorMode(userId uint32, dialogId uint64) error
+//}
+
 type OperatorCh struct {
-	TxCh     chan model.Message
-	RxCh     chan model.Message
-	UserId   uint32
-	DialogId uint64
+	Respondent any
+	TxCh       chan model.Message
+	RxCh       chan model.Message
+	DialogId   uint64
+	UserId     uint32
 }
 
 type Operator struct {
+	port          string
 	ctx           context.Context
 	cancel        context.CancelFunc
 	operatorChMap sync.Map
-	url           string
+	//cb            CallBack
 }
 
 // ключ для сессии оператора
@@ -48,16 +54,25 @@ type session struct {
 	sid      int64
 	sidReady chan struct{}
 	sidOnce  sync.Once
+	// канал для сигнализации об ошибках HTTP POST
+	httpErrorCh chan error
+	// Гарантирует однократное выполнение очистки
+	cleanupOnce sync.Once
 }
 
-func New(cfg *conf.Conf) *Operator {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &Operator{
+// func New(cfg *conf.Conf, cb CallBack) *Operator {
+func New(parent context.Context, cfg *conf.Conf) *Operator {
+	ctx, cancel := context.WithCancel(parent)
+
+	o := &Operator{
 		ctx:           ctx,
 		cancel:        cancel,
 		operatorChMap: sync.Map{},
-		url:           cfg.WEB.RealUrl,
+		port:          cfg.WEB.Oper,
+		//cb:            cb,
 	}
+
+	return o
 }
 
 func (o *Operator) Close() {
@@ -65,12 +80,14 @@ func (o *Operator) Close() {
 }
 
 // внутренняя функция: получить/создать сессию с таймером простоя
-func (o *Operator) getOrCreateSession(userID uint32, dialogID uint64) (*session, opKey, bool, error) {
+func (o *Operator) getOrCreateSession(userID uint32, dialogID uint64) (*session, error) {
 	key := opKey{userID: userID, dialogID: dialogID}
 	if val, ok := o.operatorChMap.Load(key); ok {
-		return val.(*session), key, false, nil
+		logger.Debug("Найдена существующая сессия (user=%d, dialog=%d)", userID, dialogID)
+		return val.(*session), nil
 	}
 
+	logger.Debug("Создаётся новая сессия (user=%d, dialog=%d)", userID, dialogID)
 	// Создаём каналы напрямую (OperatorChannels удалён)
 	ch := OperatorCh{
 		TxCh:     make(chan model.Message, 1),
@@ -86,13 +103,65 @@ func (o *Operator) getOrCreateSession(userID uint32, dialogID uint64) (*session,
 		cancel:     cancel,
 		idleTimer:  time.NewTimer(mode.IdleDuration * time.Minute),
 		lastActive: time.Now(),
-		// init sid
+		// Канал дла ожидания получения sid
 		sidReady: make(chan struct{}),
+		// канал для сигнализации об ошибках HTTP POST
+		httpErrorCh: make(chan error, 1),
 	}
 
 	o.operatorChMap.Store(key, s)
-	return s, key, true, nil
+
+	// Запускаю слущателя
+	go o.listenerSession(key, s)
+
+	return s, nil
 }
+
+//func (o *Operator) createSession(userID uint32, dialogID uint64) (*session,  error) {
+//	logger.Warn("Getting or creating operator session (user=%d, dialog=%d)", userID, dialogID)
+//	key := opKey{userID: userID, dialogID: dialogID}
+//	if val, ok := o.operatorChMap.Load(key); ok {
+//		return val.(*session), nil
+//	}
+//
+//	// Создаём каналы напрямую (OperatorChannels удалён)
+//	ch := OperatorCh{
+//		TxCh:     make(chan model.Message, 1),
+//		RxCh:     make(chan model.Message, 1),
+//		UserId:   userID,
+//		DialogId: dialogID,
+//	}
+//
+//	ctx, cancel := context.WithCancel(o.ctx)
+//	s := &session{
+//		ch:         ch,
+//		ctx:        ctx,
+//		cancel:     cancel,
+//		idleTimer:  time.NewTimer(mode.IdleDuration * time.Minute),
+//		lastActive: time.Now(),
+//		// init sid
+//		sidReady: make(chan struct{}),
+//		// канал для сигнализации об ошибках HTTP POST
+//		httpErrorCh: make(chan error, 1),
+//	}
+//
+//	o.operatorChMap.Store(key, s)
+//
+//	// Запускаю слущателя
+//	go o.listenerSession(key, s)
+//
+//	return s, nil
+//}
+//
+//func (o *Operator) getSession(userID uint32, dialogID uint64) (*session,  error) {
+//	logger.Warn("Getting or creating operator session (user=%d, dialog=%d)", userID, dialogID)
+//	key := opKey{userID: userID, dialogID: dialogID}
+//	if val, ok := o.operatorChMap.Load(key); ok {
+//		return val.(*session), nil
+//	} else {
+//		return nil, fmt.Errorf("session not found for user=%d dialog=%d", userID, dialogID)
+//	}
+//}
 
 // touch продлевает TTL сессии и сбрасывает таймер простоя
 func (s *session) touch() {
@@ -131,67 +200,107 @@ func (s *session) waitSID(timeout time.Duration) (int64, error) {
 	}
 }
 
+// cleanup выполняет очистку сессии ровно один раз.
+func (o *Operator) cleanup(key opKey, s *session) {
+	s.cleanupOnce.Do(func() {
+		// Уведомляем сервер о закрытии сессии
+		//if s.sid > 0 {
+		//	if err := o.notifyServerSessionClose(key.userID, key.dialogID, s.sid); err != nil {
+		//		logger.Error("Failed to notify server about session close: %v", err)
+		//	}
+		//}
+
+		// Отменяем контекст сессии, чтобы остановить все связанные горутины
+		s.cancel()
+
+		// Удаляем сессию из карты
+		o.operatorChMap.Delete(key)
+
+		logger.Debug("Session cleanup complete (user=%d, dialog=%d)", key.userID, key.dialogID)
+	})
+}
+
 // listenerSession — основной слушатель с учётом простоя
 func (o *Operator) listenerSession(key opKey, s *session) {
 	logger.Debug("Starting listener session (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
 
-	// РЕАЛЬНЫЙ SSE клиент
-	base := fmt.Sprintf("http://%s:8093/op", o.url)
-	logger.Debug(base)
+	base := fmt.Sprintf("http://localhost:%s/op", o.port)
 	sseURL := fmt.Sprintf("%s?user_id=%d&dialog_id=%d", base, s.ch.UserId, s.ch.DialogId)
 	client := sse.NewClient(sseURL)
 
-	// Подписываемся на события базового потока
+	client.Connection.Transport = &http.Transport{
+		IdleConnTimeout: 30 * time.Second,
+	}
+
 	events := make(chan *sse.Event)
 	err := client.SubscribeChan("", events)
 	if err != nil {
 		logger.Error("Failed to subscribe to SSE: %v", err)
-		// Ошибка подписки — очищаем сессию
+		// Не закрываем каналы здесь — просто отменяем сессию и удаляем её
 		o.operatorChMap.Delete(key)
-		close(s.ch.RxCh)
-		close(s.ch.TxCh)
 		s.cancel()
 		return
 	}
-	logger.Info("SSE connection established to %s (user=%d, dialog=%d)", sseURL, s.ch.UserId, s.ch.DialogId)
 
-	// cleanup при выходе
-	defer func() {
-		//client.Unsubscribe(events)
-		o.operatorChMap.Delete(key)
-		close(s.ch.RxCh)
-		close(s.ch.TxCh)
-		logger.Info("SSE connection closed (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
+	//defer func() {
+	//	// И в любом случае выключаю операторский режим
+	//	if err := o.cb.DisableOperatorMode(s.ch.UserId, s.ch.DialogId); err != nil {
+	//		logger.Error("Failed to disable operator mode: %v", err)
+	//	}
+	//}()
+
+	go func() {
+		for {
+			<-s.ctx.Done()
+			logger.Debug("Closing operator session context cancelled")
+			o.cleanup(key, s)
+			return
+		}
 	}()
 
 	for {
 		select {
 		case msg, ok := <-s.ch.TxCh:
 			if !ok {
-				logger.Warn("TxCh channel closed (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
-				s.cancel()
+				logger.Info("TxCh channel closed (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
+				o.cleanup(key, s)
 				return
 			}
 			s.touch()
 			logger.Debug("Sending message via HTTP POST: %+v", msg)
-			// Отправляем сообщение (ждём sid при необходимости)
 			go func(message model.Message) {
 				if err := o.sendMessage(base, s, message); err != nil {
 					logger.Error("Failed to send message: %v", err)
+					// Отправляем ошибку в канал для обработки
+					select {
+					case s.httpErrorCh <- err:
+					case <-s.ctx.Done():
+					}
 				}
 			}(msg)
 
+		case httpErr := <-s.httpErrorCh:
+			// Обработка ошибок HTTP POST - если сервер недоступен, закрываем сессию
+			logger.Warn("HTTP POST error detected, closing session (user=%d, dialog=%d): %v", s.ch.UserId, s.ch.DialogId, httpErr)
+			o.cleanup(key, s)
+			return
+
 		case event := <-events:
-			if event == nil {
-				logger.Warn("SSE connection closed by server (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
-				s.cancel()
-				return
-			}
+			//if !ok {
+			//	// Похоже это никогда не происходит
+			//	// Канал events был закрыт (SSE соединение разорвано)
+			//	if err := o.cb.DisableOperatorMode(s.ch.UserId, s.ch.DialogId); err != nil {
+			//		logger.Error("Failed to disable operator mode: %v", err)
+			//	}
+			//	logger.Warn("SSE connection closed by server (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
+			//	return
+			//}
+
 			s.touch()
-			// Обработка типов событий: init (sid) и сообщения
 			etype := string(event.Event)
 			edata := event.Data
 			logger.Debug("Received SSE event '%s': %s", etype, string(edata))
+
 			if etype == "init" {
 				var initPayload struct {
 					SID int64 `json:"sid"`
@@ -201,17 +310,19 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 					continue
 				}
 				s.setSID(initPayload.SID)
-				logger.Info("sid initialized: %d (user=%d, dialog=%d)", initPayload.SID, s.ch.UserId, s.ch.DialogId)
 				continue
 			}
 
-			// Остальные события считаем сообщениями
 			var receivedMsg model.Message
+			if len(edata) == 0 {
+				// пустой пакет от сервера — игнорируем
+				continue
+			}
 			if err := json.Unmarshal(edata, &receivedMsg); err != nil {
 				logger.Error("Failed to unmarshal received message: %v", err)
 				continue
 			}
-			// Отправляем полученное сообщение в RxCh
+
 			select {
 			case s.ch.RxCh <- receivedMsg:
 				logger.Debug("Message sent to RxCh: %+v", receivedMsg)
@@ -220,17 +331,39 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 			}
 
 		case <-s.idleTimer.C:
-			// Таймаут простоя — закрываем сессию
 			logger.Info("Operator session idle timeout (30m). Closing (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
-			s.cancel()
+			//s.cancel()
 			return
 
 		case <-s.ctx.Done():
-			logger.Info("Listener session context done (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
+			logger.Debug("Listener session context done (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
 			return
 		}
 	}
 }
+
+// notifyServerSessionClose уведомляет сервер о закрытии сессии оператора
+//func (o *Operator) notifyServerSessionClose(userID uint32, dialogID uint64, sid int64) error {
+//	closeURL := fmt.Sprintf("http://localhost:%s/close?user_id=%d&dialog_id=%d&sid=%d",
+//		o.port, userID, dialogID, sid)
+//
+//	req, err := http.NewRequest("POST", closeURL, nil)
+//	if err != nil {
+//		return err
+//	}
+//
+//	resp, err := http.DefaultClient.Do(req)
+//	if err != nil {
+//		return err
+//	}
+//	defer resp.Body.Close()
+//
+//	if resp.StatusCode != http.StatusOK {
+//		return fmt.Errorf("server returned status %d", resp.StatusCode)
+//	}
+//
+//	return nil
+//}
 
 // sendMessage отправляет сообщение на сервер через HTTP POST с sid
 func (o *Operator) sendMessage(baseURL string, s *session, msg model.Message) error {
@@ -278,22 +411,20 @@ func (o *Operator) sendMessage(baseURL string, s *session, msg model.Message) er
 }
 
 // AskOperator отправляет вопрос оператору и ожидает ответ, удерживая SSE-сессию активной
-func (o *Operator) AskOperator(userID uint32, dialogID uint64, question model.Message) (model.Message, error) {
+func (o *Operator) AskOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) (model.Message, error) {
+	logger.Warn("Asking operator (user=%d, dialog=%d): %+v", userID, dialogID, question)
 	// Получаем или создаём долгоживущую сессию
-	s, key, created, err := o.getOrCreateSession(userID, dialogID)
+	s, err := o.getOrCreateSession(userID, dialogID)
 	if err != nil {
 		return model.Message{}, fmt.Errorf("failed to create/get operator session: %w", err)
-	}
-
-	// Если новая — запускаем listenerSession
-	if created {
-		go o.listenerSession(key, s)
 	}
 
 	// Отправляем вопрос оператору
 	select {
 	case s.ch.TxCh <- question:
 		logger.Debug("Question sent to operator: %+v", question)
+	case <-ctx.Done():
+		return model.Message{}, ctx.Err()
 	case <-s.ctx.Done():
 		return model.Message{}, fmt.Errorf("operator session context cancelled while sending question")
 	case <-time.After(mode.IdleOperator * time.Minute):
@@ -305,6 +436,8 @@ func (o *Operator) AskOperator(userID uint32, dialogID uint64, question model.Me
 	case response := <-s.ch.RxCh:
 		logger.Debug("Received response from operator: %+v", response)
 		return response, nil
+	case <-ctx.Done():
+		return model.Message{}, ctx.Err()
 	case <-s.ctx.Done():
 		return model.Message{}, fmt.Errorf("operator session context cancelled while waiting for response")
 	case <-time.After(mode.IdleDuration * time.Minute):
@@ -313,20 +446,18 @@ func (o *Operator) AskOperator(userID uint32, dialogID uint64, question model.Me
 }
 
 // SendToOperator отправляет сообщение оператору без ожидания ответа
-func (o *Operator) SendToOperator(userID uint32, dialogID uint64, question model.Message) error {
-	s, _, created, err := o.getOrCreateSession(userID, dialogID)
+func (o *Operator) SendToOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) error {
+	s, err := o.getOrCreateSession(userID, dialogID)
 	if err != nil {
 		return fmt.Errorf("failed to create/get operator session: %w", err)
-	}
-
-	if created {
-		go o.listenerSession(opKey{userID: userID, dialogID: dialogID}, s)
 	}
 
 	select {
 	case s.ch.TxCh <- question:
 		logger.Debug("Question sent to operator: %+v", question)
 		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	case <-s.ctx.Done():
 		return fmt.Errorf("operator session context cancelled")
 	case <-time.After(5 * time.Second): // Короткий таймаут
@@ -335,8 +466,8 @@ func (o *Operator) SendToOperator(userID uint32, dialogID uint64, question model
 }
 
 // ReceiveFromOperator возвращает канал для получения ответов от оператора
-func (o *Operator) ReceiveFromOperator(userID uint32, dialogID uint64) <-chan model.Message {
-	s, _, created, err := o.getOrCreateSession(userID, dialogID)
+func (o *Operator) ReceiveFromOperator(ctx context.Context, userID uint32, dialogID uint64) <-chan model.Message {
+	s, err := o.getOrCreateSession(userID, dialogID)
 	if err != nil {
 		// Возвращаем закрытый канал в случае ошибки
 		ch := make(chan model.Message)
@@ -344,9 +475,30 @@ func (o *Operator) ReceiveFromOperator(userID uint32, dialogID uint64) <-chan mo
 		return ch
 	}
 
-	if created {
-		go o.listenerSession(opKey{userID: userID, dialogID: dialogID}, s)
-	}
-
+	// Если внешний контекст завершится раньше, можно запустить горутину для закрытия сессии (опционально)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-s.ctx.Done():
+		}
+	}()
 	return s.ch.RxCh
+}
+
+// CloseOperatorSSE закрывает SSE-сессию оператора после получения сообщения что оператор отключился
+func (o *Operator) CloseOperatorSSE(ctx context.Context, userID uint32, dialogID uint64) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	key := opKey{userID: userID, dialogID: dialogID}
+	val, ok := o.operatorChMap.Load(key)
+	if !ok {
+		return fmt.Errorf("session not found for user=%d dialog=%d", userID, dialogID)
+	}
+	s := val.(*session)
+	o.cleanup(key, s) // Централизованная функция очистки
+
+	return nil
 }

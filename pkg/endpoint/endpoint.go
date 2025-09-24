@@ -1,16 +1,18 @@
 package endpoint
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/ikermy/AiR_Common/pkg/mode"
-	"github.com/ikermy/AiR_Common/pkg/model"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/ikermy/AiR_Common/pkg/comdb"
+	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/ikermy/AiR_Common/pkg/mode"
+	"github.com/ikermy/AiR_Common/pkg/model"
 )
 
 type DB interface {
@@ -20,6 +22,9 @@ type DB interface {
 }
 
 type Endpoint struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	Db           DB
 	arrMsg       map[uint64]map[uint64][]string
 	messageBatch map[uint64][]comdb.Message // Буфер сообщений для каждого треда
@@ -27,8 +32,12 @@ type Endpoint struct {
 	mu           sync.Mutex                 // Мьютекс для защиты буфера
 }
 
-func New(d DB) *Endpoint {
+func New(parent context.Context, d DB) *Endpoint {
+	ctx, cancel := context.WithCancel(parent)
 	e := &Endpoint{
+		ctx:    ctx,
+		cancel: cancel,
+
 		Db:           d,
 		messageBatch: make(map[uint64][]comdb.Message),
 		batchSize:    mode.BatchSize, // Размер батча по умолчанию
@@ -40,24 +49,51 @@ func New(d DB) *Endpoint {
 	// ТОЛЬКО ДЛЯ КАНАЛОВ С ДОПУСКАЮЩИМ ОТСЛЕЖИВАНИЕМ ЗАВЕРШЕНИЯ ДИАЛОГА !!!!!
 	// Добавляем обработку событий для немедленного сохранения диалога
 	go func() {
-		for threadId := range mode.Event {
-			logger.Info("Endpoint: получен сигнал сохранения диалога %d", threadId)
-			e.mu.Lock()
-			e.flushThreadBatch(threadId)
-			e.mu.Unlock()
+		for {
+			select {
+			case threadId, ok := <-mode.Event:
+				if !ok {
+					logger.Error("НЕВОЗМОЖНОЕСООБЩЕНИЕ: канал Event был закрыт, сохранение диалогов по событиям остановлено")
+					return
+				}
+				logger.Info("Endpoint: получен сигнал сохранения диалога %d", threadId)
+				e.mu.Lock()
+				e.flushThreadBatch(threadId)
+				e.mu.Unlock()
+			case <-e.ctx.Done():
+				logger.Info("Endpoint: остановка слушателя событий по контексту")
+				return
+			}
 		}
-		logger.Error("НЕВОЗМОЖНОЕСООБЩЕНИЕ: канал Event был закрыт, сохранение диалогов по событиям остановлено")
 	}()
 
 	return e
+}
+
+// Shutdown останавливает фоновые задачи и принудительно сохраняет буферы
+func (e *Endpoint) Shutdown() {
+	// Отменяем контекст, чтобы остановить горутины
+	if e.cancel != nil {
+		e.cancel()
+	}
+	// Небольшая пауза для корректной остановки горутин
+	time.Sleep(100 * time.Millisecond)
+	// Финальный flush
+	e.FlushAllBatches()
 }
 
 func (e *Endpoint) periodicFlush() {
 	ticker := time.NewTicker(mode.TimePeriodicFlush * time.Second)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		e.FlushAllBatches()
+	for {
+		select {
+		case <-ticker.C:
+			e.FlushAllBatches()
+		case <-e.ctx.Done():
+			logger.Info("Endpoint: periodicFlush остановлен по контексту")
+			return
+		}
 	}
 }
 

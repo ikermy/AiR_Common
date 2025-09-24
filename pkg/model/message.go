@@ -11,8 +11,9 @@ import (
 )
 
 type Operator struct {
-	SetOperator bool // В вопросе от модели если нужен оператор
-	Operator    bool // true, если ответ от оператора, false - от модели
+	SenderName  string // Имя отправителя
+	SetOperator bool   // В вопросе от модели если нужен оператор
+	Operator    bool   // true, если ответ от оператора, false - от модели
 }
 
 // Message представляет сообщение в системе

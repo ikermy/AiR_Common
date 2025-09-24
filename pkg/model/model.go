@@ -19,10 +19,11 @@ import (
 
 // Model интерфейс для работы с моделями Assistant
 type Model interface {
-	NewMessage(operator bool, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message
+	NewMessage(operator Operator, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message
 	GetFileAsReader(url string) (io.Reader, error)
 	GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error)
 	GetCh(respId uint64) (Ch, error)
+	GetRespIdByDialogId(dialogId uint64) (uint64, error)
 	SaveAllContextDuringExit()
 	Request(modelId string, dialogId uint64, text *string, files ...FileUpload) (AssistResponse, error)
 	CleanDialogData(dialogId uint64)
@@ -44,8 +45,7 @@ type Models struct {
 	waitChannels  sync.Map // Хранит каналы для синхронизации горутин
 	UserModelTTl  time.Duration
 	actionHandler ActionHandler
-	shutdownOnce  sync.Once    // Гарантирует однократное выполнение shutdown
-	shutdownMu    sync.RWMutex // Мьютекс для безопасного доступа к флагу
+	shutdownOnce  sync.Once // Гарантирует однократное выполнение shutdown
 }
 
 // Notifications структура для хранения настроек уведомлений о событиях
@@ -141,8 +141,8 @@ type ActionHandler interface {
 	RunAction(functionName, arguments string) string
 }
 
-func New(conf *conf.Conf, d DB) *Models {
-	ctx, cancel := context.WithCancel(context.Background())
+func New(parent context.Context, conf *conf.Conf, d DB) *Models {
+	ctx, cancel := context.WithCancel(parent)
 	return &Models{
 		ctx:           ctx,
 		cancel:        cancel,
@@ -207,9 +207,16 @@ func (m *Models) waitForFileProcessing(vectorStoreID, fileID string) error {
 	retryDelay := 1 * time.Second
 
 	for i := 0; i < maxRetries; i++ {
+		// Позволяем отменить ожидание через контекст
+		select {
+		case <-m.ctx.Done():
+			return fmt.Errorf("отменено контекстом ожидание обработки файла %s", fileID)
+		default:
+		}
+
 		// Получает статус файла в векторном хранилище
 		vectorStoreFile, err := m.client.RetrieveVectorStoreFile(
-			context.Background(),
+			m.ctx,
 			vectorStoreID,
 			fileID,
 		)
@@ -249,10 +256,24 @@ func (m *Models) uploadFilesForAssistant(files []FileUpload, vectorStore *openai
 		return nil, nil, nil
 	}
 
+	// Проверка отмены перед началом длительных операций
+	select {
+	case <-m.ctx.Done():
+		return nil, nil, fmt.Errorf("отменено контекстом перед загрузкой файлов")
+	default:
+	}
+
 	// Загружаем файлы в OpenAI
 	fileIDs, err := m.uploadFiles(files)
 	if err != nil {
 		return nil, nil, fmt.Errorf("не удалось загрузить файлы: %w", err)
+	}
+
+	// Промежуточная проверка отмены
+	select {
+	case <-m.ctx.Done():
+		return nil, nil, fmt.Errorf("отменено контекстом после загрузки файлов")
+	default:
 	}
 
 	// Извлекаем имена файлов
@@ -262,9 +283,15 @@ func (m *Models) uploadFilesForAssistant(files []FileUpload, vectorStore *openai
 	}
 
 	// Добавляем файлы в векторное хранилище
-	err = m.addFilesToVectorStore(vectorStore.ID, fileIDs)
-	if err != nil {
-		return nil, nil, fmt.Errorf("Не удалось добавить файлы в векторное хранилище: %v", err)
+	if err = m.addFilesToVectorStore(vectorStore.ID, fileIDs); err != nil {
+		return nil, nil, fmt.Errorf("не удалось добавить файлы в векторное хранилище: %v", err)
+	}
+
+	// Финальная проверка отмены
+	select {
+	case <-m.ctx.Done():
+		return nil, nil, fmt.Errorf("отменено контекстом после индексирования файлов")
+	default:
 	}
 
 	return fileIDs, fileNames, nil
@@ -287,8 +314,12 @@ func (m *Models) GetFileAsReader(url string) (io.Reader, error) {
 		return bytes.NewReader(content), nil
 	}
 
-	// Обычная загрузка по HTTP
-	resp, err := http.Get(url)
+	// Обычная загрузка по HTTP с привязкой к контексту
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка подготовки запроса загрузки файла: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка загрузки файла по URL: %w", err)
 	}
@@ -355,13 +386,13 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 		return respModel, nil
 	}
 	// Если пользователь не найден в кэше, создаем новую запись
-	userCtx, cancel := context.WithCancel(context.Background())
+	userCtx, cancel := context.WithCancel(m.ctx)
 
 	// Создаем новый RespModel и добавляем в кэш
 	user := &RespModel{
 		Assist:   assist,
 		RespName: respName,
-		TTL:      time.Now().Add(m.UserModelTTl * time.Minute), // Устанавливаем TTL
+		TTL:      time.Now().Add(m.UserModelTTl), // * time.Minute, ПРОВЕРИТЬ!!!
 		Chan:     make(map[uint64]Ch),
 		Services: Services{Listener: false, Respondent: false},
 		Ctx:      userCtx,
@@ -436,11 +467,13 @@ func (m *Models) GetCh(respId uint64) (Ch, error) {
 		return userCh, nil
 	}
 
-	// Если канала нет, ждем сигнала с таймаутом
+	// Если канала нет, ждем сигнала с таймаутом или отменой контекста
 	select {
 	case <-waitCh:
 		// Сигнал получен, пробуем снова
 		return m.getTryCh(respId)
+	case <-m.ctx.Done():
+		return Ch{}, fmt.Errorf("отменено контекстом ожидание канала для responderId %d", respId)
 	case <-time.After(1 * time.Second):
 		return Ch{}, fmt.Errorf("тайм-аут при ожидании канала для responderId %d", respId)
 	}
@@ -576,6 +609,8 @@ func (m *Models) CleanUp() {
 				}
 				return true
 			})
+		case <-m.ctx.Done():
+			return
 		}
 	}
 }
@@ -799,6 +834,35 @@ func (m *Models) downloadFileFromOpenAI(fileID string) ([]byte, error) {
 	}
 
 	return content, nil
+}
+
+// GetRespIdByDialogId получает ID респондента по ID диалога.
+func (m *Models) GetRespIdByDialogId(dialogId uint64) (uint64, error) {
+	// Загружаем модель пользователя из sync.Map
+	val, ok := m.responders.Load(dialogId)
+	if !ok {
+		return 0, fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
+	}
+
+	// Приведение типа к указателю на RespModel
+	respModel := val.(*RespModel)
+
+	// Блокируем для чтения
+	respModel.mu.RLock()
+	defer respModel.mu.RUnlock()
+
+	// Проверяем, есть ли каналы
+	if len(respModel.Chan) == 0 {
+		return 0, fmt.Errorf("для dialogId %d не найдено ни одного respId", dialogId)
+	}
+
+	// Возвращаем первый попавшийся respId
+	for respId := range respModel.Chan {
+		return respId, nil
+	}
+
+	// Этого не может быть, но на всякий случай
+	return 0, fmt.Errorf("непредвиденная ошибка: не удалось получить respId для dialogId %d", dialogId)
 }
 
 // Shutdown корректно завершает работу модуля, отменяет все операции и сохраняет контексты

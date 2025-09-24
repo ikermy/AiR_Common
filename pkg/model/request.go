@@ -224,6 +224,12 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 		messageReq  openai.MessageRequest
 		vectorStore *openai.VectorStore
 	)
+	// Гарантируем, что в createMsg/WithFiles не попадет nil
+	t := text
+	if t == nil {
+		empty := ""
+		t = &empty
+	}
 	if len(files) > 0 {
 		vectorStore, err = m.getAssistantVectorStore(respModel.Assist.AssistId)
 		if err != nil {
@@ -237,12 +243,12 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 		fileIDs, fileNames, err = m.uploadFilesForAssistant(files, vectorStore)
 		if err != nil {
 			logger.Error("Не удалось загрузить файлы: %w", err)
-			messageReq = createMsg(text)
+			messageReq = createMsg(t)
 		} else {
-			messageReq = createMsgWithFiles(text, fileNames)
+			messageReq = createMsgWithFiles(t, fileNames)
 		}
 	} else {
-		messageReq = createMsg(text)
+		messageReq = createMsg(t)
 	}
 
 	_, err = m.client.CreateMessage(m.ctx, thead.ID, messageReq)
@@ -286,7 +292,7 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 			//	Type: "boolean", ////// добавить в Landing create model	!!!!!
 			//},
 		},
-		Required:   []string{"message", "action", "target"}, // нужно ли требовать "operator" ???
+		Required:   []string{"message", "action", "target"}, // нужно ли требовать "operator" ??? - уес!
 		Additional: &additionalFalse,
 	}
 
