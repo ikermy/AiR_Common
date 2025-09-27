@@ -241,6 +241,38 @@ func (s *Start) Respondent(
 
 			currentQuest = quest
 
+			// Если уже активен операторский режим — шлём сообщение оператору неблокирующе и не идём в AI
+			if operatorMode {
+				if askTimer != nil {
+					if !askTimer.Stop() {
+						select {
+						case <-askTimer.C:
+						default:
+						}
+					}
+				}
+				msgType := "user"
+				if quest.Voice {
+					msgType = "user_voice"
+				}
+				content := model.AssistResponse{Message: strings.Join(quest.Question, "\n")}
+				name := u.Assist.AssistName
+				opMsg := s.Mod.NewMessage(
+					model.Operator{SetOperator: false, Operator: false, SenderName: quest.Operator.SenderName},
+					msgType, &content, &name, quest.Files...,
+				)
+				if err := s.Oper.SendToOperator(s.ctx, u.Assist.UserId, treadId, opMsg); err != nil {
+					logger.Error("Ошибка отправки сообщения оператору: %v", err, u.Assist.UserId)
+				}
+				// Сохраняем полный вопрос
+				select {
+				case fullQuestCh <- Answer{Answer: content, VoiceQuestion: quest.Voice}:
+				default:
+					logger.Warn("Канал fullQuestCh закрыт или переполнен", u.Assist.UserId)
+				}
+				continue
+			}
+
 			// Обработка SetOperator режима
 			if quest.Operator.SetOperator {
 				// Инициализация канала оператора при первом включении режима
@@ -287,15 +319,15 @@ func (s *Start) Respondent(
 				for _, trigger := range u.Assist.Metas.Triggers {
 					if strings.Contains(userQuestion, trigger) {
 						s.End.Meta(u.Assist.UserId, treadId, "trigger", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
-						currentQuest.Operator.Operator = true
 
+						//currentQuest.Operator.Operator = true
 						// Активация операторского режима при триггере
-						if !operatorMode {
-							operatorMode = true
-							operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserId, treadId)
-							logger.Debug("Операторский режим активирован по триггеру для пользователя %d", u.Assist.UserId)
-						}
-						logger.Debug("'Respondent' триггер найден в вопросе пользователя, запрашиваю операторский режим", u.Assist.UserId)
+						//if !operatorMode {
+						//	operatorMode = true
+						//	operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserId, treadId)
+						//	logger.Debug("Операторский режим активирован по триггеру для пользователя %d", u.Assist.UserId)
+						//}
+						//logger.Debug("'Respondent' триггер найден в вопросе пользователя, запрашиваю операторский режим", u.Assist.UserId)
 					}
 				}
 			}
@@ -374,7 +406,7 @@ func (s *Start) Respondent(
 			}
 		}
 
-		// Отправляем запрос в OpenAI или оператору
+		// Собираем batched вопрос
 		userAsk := s.End.GetUserAsk(treadId, respId)
 		if strings.TrimSpace(strings.Join(userAsk, "\n")) == "" {
 			// Пустой запрос, пропускаем
@@ -402,7 +434,7 @@ func (s *Start) Respondent(
 			setOperatorMode  bool
 		)
 
-		// Обработка операторских сообщений и запросов к AI
+		// Операторский запрос (явный), без SetOperator — сначала пробуем синхронно спросить оператора
 		if currentQuest.Operator.Operator {
 			// Если вопрос помечен как операторский но операторский режим ещё не включён,
 			// значит это первоначальный запрос на операторский режим, пробую связаться с оператором
@@ -428,22 +460,22 @@ func (s *Start) Respondent(
 			} else {
 				answer = respMsg.Content
 				operatorAnswered = true
-				// Если оператор ответил то устанавливаю флаг операторского режима
+				// Если оператор ответил, то устанавливаю флаг операторского режима
 				setOperatorMode = true
+
+				// Включаем постоянный режим после успешного ответа оператора
+				if !operatorMode {
+					operatorMode = true
+					operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserId, treadId)
+					logger.Debug("Операторский режим активирован после ответа оператора для пользователя %d", u.Assist.UserId)
+				}
 			}
 
 		} else {
 			// Отправляю запрос в OpenAI
 			answer, err = s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
-			// Это проверенный работающий код
-			//  раскомментировать для возврата к старой логике
 
-			//if err != nil {
-			//	logger.Error("Ошибка запроса к модели: %v", err, u.Assist.UserId)
-			//}
-			//operatorAnswered = false
-
-			// Новый не проверенный код !!!!!
+			// Пришёл ответ от модели, проверяю на флаг запроса операторского режима
 			if err == nil && answer.Operator {
 				// Модель запросила эскалацию к оператору
 				if !operatorMode {
@@ -454,7 +486,6 @@ func (s *Start) Respondent(
 				}
 
 				setOperatorMode = true // Передадим наружу, чтобы фронт включил режим
-
 				// Неблокирующе отправим оператору исходный вопрос (как при SetOperator)
 				msgType := "user"
 				if VoiceQuestion {
@@ -473,7 +504,6 @@ func (s *Start) Respondent(
 				if errSend := s.Oper.SendToOperator(s.ctx, u.Assist.UserId, treadId, opMsg); errSend != nil {
 					logger.Error("Ошибка отправки эскалации оператору: %v", errSend, u.Assist.UserId)
 				}
-				// конец нового говнокода !!!!!
 			}
 		}
 

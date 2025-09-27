@@ -134,7 +134,6 @@ func (e *Endpoint) FlushAllBatches() {
 			e.flushThreadBatch(threadId)
 		}
 	}
-	logger.Info("Endpoint: все сообщения сохранены")
 }
 
 func (e *Endpoint) GetUserAsk(dialogId uint64, respId uint64) []string {

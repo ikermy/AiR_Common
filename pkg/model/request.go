@@ -292,7 +292,7 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 				Type: "boolean", ////// добавить в Landing create model	!!!!!
 			},
 		},
-		Required:   []string{"message", "action"}, // нужно ли требовать "operator" ??? - проверим! тестово убрал "target"
+		Required:   []string{"message", "action", "target", "operator"}, // все поля обязательны иначе ошибка!
 		Additional: &additionalFalse,
 	}
 

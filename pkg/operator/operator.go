@@ -249,6 +249,7 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 	//	}
 	//}()
 
+	// Ожидаем отмены контекста сессии и выполняем единоразовую очистку
 	go func() {
 		for {
 			<-s.ctx.Done()
@@ -285,16 +286,13 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 			o.cleanup(key, s)
 			return
 
-		case event := <-events:
-			//if !ok {
-			//	// Похоже это никогда не происходит
-			//	// Канал events был закрыт (SSE соединение разорвано)
-			//	if err := o.cb.DisableOperatorMode(s.ch.UserId, s.ch.DialogId); err != nil {
-			//		logger.Error("Failed to disable operator mode: %v", err)
-			//	}
-			//	logger.Warn("SSE connection closed by server (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
-			//	return
-			//}
+		case event, ok := <-events:
+			// Корректно завершаем при закрытии канала событий SSE
+			if !ok {
+				logger.Warn("SSE events channel closed by server (user=%d, dialog=%d)", s.ch.UserId, s.ch.DialogId)
+				o.cleanup(key, s)
+				return
+			}
 
 			s.touch()
 			etype := string(event.Event)
