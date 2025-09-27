@@ -15,9 +15,6 @@ type ActionHandlerOpenAI struct{}
 
 func (h *ActionHandlerOpenAI) RunAction(functionName, arguments string) string {
 	switch functionName {
-	case "operator":
-		logger.Debug("ActionHandlerOpenAI.RunAction: вызов функции operator")
-		return "operator"
 
 	case "get_s3_files":
 		logger.Debug("ActionHandlerOpenAI.RunAction: вызов функции get_s3_files с аргументами: %s", arguments)

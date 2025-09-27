@@ -5,16 +5,17 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/ikermy/AiR_Common/pkg/common"
-	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/ikermy/AiR_Common/pkg/mode"
 	"io"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/ikermy/AiR_Common/pkg/common"
+	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
-func SendEvent(userId uint32, event, userName, assistName, target string) {
+func (e *Endpoint) SendEvent(userId uint32, event, userName, assistName, target string) {
 	msg := common.CarpCh{
 		UserID:     userId,
 		Event:      event,
@@ -112,6 +113,7 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 }
 
 func SendTelegramNotification(tId int64, event, userName, assistName, target string) error {
+	// Добавить userID для возможности смены языка уведомлений
 	var url string
 	var client *http.Client
 
@@ -161,6 +163,7 @@ func SendTelegramNotification(tId int64, event, userName, assistName, target str
 }
 
 func SendEmailNotification(email, event, userName, assistName, target string) error {
+	// Добавить userID для возможности смены языка уведомлений
 	// Формируем URL для webhook
 	url := fmt.Sprintf("https://%s:%s/notification", mode.CarpinteroHost, mode.MailServerPort)
 
@@ -240,7 +243,9 @@ type PaymentStatus struct {
 	ExpiresAt      string  `json:"expiresAt"`
 }
 
+// CreateMessageFromEvent создает сообщение на основе события
 func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string, error) {
+	// Добавить userID для возможности смены языка уведомлений
 	var msg, payment string
 
 	if AssistName != "init" && Event == "usdt_pay" {
@@ -338,6 +343,8 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 		msg = fmt.Sprintf("Ассистент %s сработал на триггер '%s' в диалоге с пользователем %s", AssistName, Target, UserName)
 	case "reauth":
 		msg = fmt.Sprintf("Канал %s отключен, требуется повторная авторизация", Target)
+	case "model-operator":
+		msg = fmt.Sprintf("Ассистент %s запросил переключение на оператора в диалоге с пользователем %s", AssistName, UserName)
 	case "subscription":
 		errMsg := map[common.ErrorCode]string{
 			common.ErrNoSubscription:       "У вас нет подписки. Пожалуйста, оформите подписку.",

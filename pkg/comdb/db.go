@@ -62,7 +62,7 @@ func DecompressAndExtractMetadata(compressedData []byte) (string, []string, *Esp
 	// Извлекаем поля MetaAction
 	var metaAction string
 	var triggers []string
-	var espero *Espero = &Espero{}
+	var espero = &Espero{}
 
 	if ma, ok := modelData["mact"].(string); ok {
 		metaAction = ma

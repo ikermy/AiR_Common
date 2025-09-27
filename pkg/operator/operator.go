@@ -412,7 +412,6 @@ func (o *Operator) sendMessage(baseURL string, s *session, msg model.Message) er
 
 // AskOperator отправляет вопрос оператору и ожидает ответ, удерживая SSE-сессию активной
 func (o *Operator) AskOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) (model.Message, error) {
-	logger.Warn("Asking operator (user=%d, dialog=%d): %+v", userID, dialogID, question)
 	// Получаем или создаём долгоживущую сессию
 	s, err := o.getOrCreateSession(userID, dialogID)
 	if err != nil {

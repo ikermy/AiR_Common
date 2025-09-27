@@ -288,11 +288,11 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 			"target": {
 				Type: "boolean",
 			},
-			//"operator": {
-			//	Type: "boolean", ////// добавить в Landing create model	!!!!!
-			//},
+			"operator": {
+				Type: "boolean", ////// добавить в Landing create model	!!!!!
+			},
 		},
-		Required:   []string{"message", "action", "target"}, // нужно ли требовать "operator" ??? - уес!
+		Required:   []string{"message", "action"}, // нужно ли требовать "operator" ??? - проверим! тестово убрал "target"
 		Additional: &additionalFalse,
 	}
 

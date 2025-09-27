@@ -114,10 +114,10 @@ type File struct {
 
 // AssistResponse представляет ответ от AI-ассистента
 type AssistResponse struct {
-	Message string `json:"message,omitempty"` // Текстовое сообщение ответа может быть пустым если есть Action
-	Action  Action `json:"action,omitempty"`  // Действия для выполнения может быть пустым если есть Message
-	Meta    bool   `json:"target,omitempty"`  // Флаг, что ответ содержит достижение цели по мнению ассистента
-	//Operator bool   `json:"operator,omitempty"` // Флаг, что модель считает что нужно вызвать оператора
+	Message  string `json:"message,omitempty"`  // Текстовое сообщение ответа может быть пустым если есть Action
+	Action   Action `json:"action,omitempty"`   // Действия для выполнения может быть пустым если есть Message
+	Meta     bool   `json:"target,omitempty"`   // Флаг, что ответ содержит достижение цели по мнению ассистента
+	Operator bool   `json:"operator,omitempty"` // Флаг, что модель считает что нужно вызвать оператора
 }
 
 type Ch struct {
@@ -976,7 +976,7 @@ func (m *Models) saveAllContextsGracefully() error {
 					saveErrors = append(saveErrors, fmt.Sprintf("сохранение для dialogId %d: %v", dId, err))
 					mu.Unlock()
 				} else {
-					logger.Debug("Контекст успешно сохранен для dialogId %d", dId)
+					//logger.Debug("Контекст успешно сохранен для dialogId %d", dId)
 				}
 			}
 		}(dialogId, value.(*RespModel))
@@ -1024,7 +1024,7 @@ func (m *Models) cleanupAllResponders() {
 			safeClose(ch.TxCh)
 			safeClose(ch.RxCh)
 			delete(respModel.Chan, respId)
-			logger.Debug("Каналы закрыты для responderId %d", respId)
+			//logger.Debug("Каналы закрыты для responderId %d", respId)
 		}
 		respModel.mu.Unlock()
 

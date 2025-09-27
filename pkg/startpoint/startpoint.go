@@ -40,7 +40,7 @@ type EndpointInterface interface {
 	SetUserAsk(dialogId uint64, respId uint64, ask string, askLimit uint32) bool
 	SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse)
 	Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string)
-	FlushAllBatches()
+	SendEvent(userId uint32, event, userName, assistName, target string)
 }
 
 // ModelInterface - интерфейс для моделей
@@ -435,10 +435,46 @@ func (s *Start) Respondent(
 		} else {
 			// Отправляю запрос в OpenAI
 			answer, err = s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
-			if err != nil {
-				logger.Error("Ошибка запроса к модели: %v", err, u.Assist.UserId)
+			// Это проверенный работающий код
+			//  раскомментировать для возврата к старой логике
+
+			//if err != nil {
+			//	logger.Error("Ошибка запроса к модели: %v", err, u.Assist.UserId)
+			//}
+			//operatorAnswered = false
+
+			// Новый не проверенный код !!!!!
+			if err == nil && answer.Operator {
+				// Модель запросила эскалацию к оператору
+				if !operatorMode {
+					operatorMode = true
+					operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserId, treadId)
+					s.End.SendEvent(u.Assist.UserId, "model-operator", u.RespName, u.Assist.AssistName, "")
+					logger.Debug("Операторский режим активирован по флагу ответа модели для пользователя %d", u.Assist.UserId)
+				}
+
+				setOperatorMode = true // Передадим наружу, чтобы фронт включил режим
+
+				// Неблокирующе отправим оператору исходный вопрос (как при SetOperator)
+				msgType := "user"
+				if VoiceQuestion {
+					msgType = "user_voice"
+				}
+				// Можно отправить именно пользовательский вопрос, а не ответ модели
+				contentToOp := model.AssistResponse{Message: strings.Join(userAsk, "\n")}
+				name := u.Assist.AssistName
+				opMsg := s.Mod.NewMessage(
+					model.Operator{Operator: true, SenderName: currentQuest.Operator.SenderName},
+					msgType,
+					&contentToOp,
+					&name,
+					currentQuest.Files...,
+				)
+				if errSend := s.Oper.SendToOperator(s.ctx, u.Assist.UserId, treadId, opMsg); errSend != nil {
+					logger.Error("Ошибка отправки эскалации оператору: %v", errSend, u.Assist.UserId)
+				}
+				// конец нового говнокода !!!!!
 			}
-			operatorAnswered = false
 		}
 
 		if currentQuest.Operator.SetOperator {
@@ -474,7 +510,7 @@ func (s *Start) Respondent(
 
 		// Проверяю на содержание в ответе цели из u.Assist.Metas.MetaAction
 		if u.Assist.Metas.MetaAction != "" {
-			if answer.Meta { // Ассистент/оператор пометил ответ как достигший цели
+			if answer.Meta { // Ассистент пометил ответ как достигший цели
 				s.End.Meta(u.Assist.UserId, treadId, "target", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
 			}
 		}
@@ -568,8 +604,8 @@ func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, trea
 		case <-u.Ctx.Done():
 			logger.Debug("Context.Done Listener %s", u.RespName, u.Assist.UserId)
 			return nil
-		case msg, clos := <-usrCh.RxCh:
-			if !clos {
+		case msg, ok := <-usrCh.RxCh:
+			if !ok {
 				logger.Debug("Канал RxCh закрыт %s", u.RespName, u.Assist.UserId)
 				return nil
 			}

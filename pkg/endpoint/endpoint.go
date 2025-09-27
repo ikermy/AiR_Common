@@ -134,6 +134,7 @@ func (e *Endpoint) FlushAllBatches() {
 			e.flushThreadBatch(threadId)
 		}
 	}
+	logger.Info("Endpoint: все сообщения сохранены")
 }
 
 func (e *Endpoint) GetUserAsk(dialogId uint64, respId uint64) []string {
@@ -213,5 +214,5 @@ func (e *Endpoint) Meta(userId uint32, dialogId uint64, meta string, respName st
 	if err != nil {
 		logger.Error("ошибка обновления метаданных для диалога %d: %v", dialogId, err)
 	}
-	SendEvent(userId, meta, respName, assistName, metaAction)
+	e.SendEvent(userId, meta, respName, assistName, metaAction)
 }
