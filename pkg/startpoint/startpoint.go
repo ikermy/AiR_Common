@@ -236,7 +236,8 @@ func (s *Start) Respondent(
 		case quest, open := <-questionCh:
 			if !open {
 				logger.Error("Канал questionCh закрыт", u.Assist.UserId)
-				continue
+				//continue
+				return // Тут только выходить
 			}
 
 			currentQuest = quest
@@ -617,10 +618,14 @@ func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, trea
 	fullQuestCh := make(chan Answer, 1)
 	answerCh := make(chan Answer, 1)
 	errCh := make(chan error, 1)
-	defer close(question)
-	defer close(fullQuestCh)
-	defer close(answerCh)
-	defer close(errCh)
+
+	defer func() {
+		logger.Debug("Закрытие каналов в Listener", u.Assist.UserId)
+		close(question)
+		close(fullQuestCh)
+		close(answerCh)
+		close(errCh)
+	}()
 
 	go s.StarterRespondent(u, question, answerCh, fullQuestCh, respId, treadId)
 

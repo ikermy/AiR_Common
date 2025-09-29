@@ -46,7 +46,7 @@ func (m *Models) handleRequiredAction(ctx context.Context, run *openai.Run) (*op
 		var output openai.ToolOutput
 
 		if m.actionHandler != nil {
-			result := m.actionHandler.RunAction(toolCall.Function.Name, toolCall.Function.Arguments)
+			result := m.actionHandler.RunAction(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
 			output = openai.ToolOutput{
 				ToolCallID: toolCall.ID,
 				Output:     result,

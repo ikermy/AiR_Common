@@ -138,7 +138,7 @@ type StartCh struct {
 
 // ActionHandler интерфейс для обработки функций OpenAI ассистента
 type ActionHandler interface {
-	RunAction(functionName, arguments string) string
+	RunAction(ctx context.Context, functionName, arguments string) string
 }
 
 func New(parent context.Context, conf *conf.Conf, d DB) *Models {

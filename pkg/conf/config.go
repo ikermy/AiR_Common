@@ -17,13 +17,13 @@ type Conf struct {
 	AU     AUTH
 	SMTP   SMTP
 	GLOB   GLOB
+	OPER   OPER
 }
 
 type TgConfig struct {
-	Name     string `mapstructure:"bot"`
-	Token    string `mapstructure:"token"`
-	Id       int64  `mapstructure:"id"`
-	Operator string `mapstructure:"operator"`
+	Name  string `mapstructure:"bot"`
+	Token string `mapstructure:"token"`
+	Id    int64  `mapstructure:"id"`
 }
 
 type GPTConfig struct {
@@ -74,6 +74,11 @@ type DemoAssist struct {
 	Psycho string `mapstructure:"psycho"`
 	Lawyer string `mapstructure:"lawyer"`
 	Tech   string `mapstructure:"tech"`
+}
+
+type OPER struct {
+	Token string `mapstructure:"oper_token"`
+	Id    int64  `mapstructure:"oper_id"`
 }
 
 func NewConf() (*Conf, error) {
@@ -170,6 +175,26 @@ func NewConf() (*Conf, error) {
 		return nil, fmt.Errorf("ошибка разбора секции demoassist: %w", err)
 	}
 	conf.DemoAS = demoAssist
+
+	// OPER секция
+	var operConfig OPER
+	if err := v.UnmarshalKey("oper", &operConfig); err != nil {
+		return nil, fmt.Errorf("ошибка разбора секции oper: %w", err)
+	}
+
+	// Отдельно обрабатываем id, так как может потребоваться преобразование из строки
+	if v.IsSet("oper.oper_id") {
+		operIdStr := v.GetString("oper.oper_id")
+		operId, err := strconv.ParseInt(operIdStr, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("некорректное значение oper.oper_id: %w", err)
+		}
+		operConfig.Id = operId
+	} else {
+		return nil, fmt.Errorf("не найден параметр oper.oper_id")
+	}
+
+	conf.OPER = operConfig
 
 	return conf, nil
 }

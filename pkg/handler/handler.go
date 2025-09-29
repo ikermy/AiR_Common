@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,7 @@ import (
 
 type ActionHandlerOpenAI struct{}
 
-func (h *ActionHandlerOpenAI) RunAction(functionName, arguments string) string {
+func (h *ActionHandlerOpenAI) RunAction(ctx context.Context, functionName, arguments string) string {
 	switch functionName {
 
 	case "get_s3_files":
@@ -27,13 +28,27 @@ func (h *ActionHandlerOpenAI) RunAction(functionName, arguments string) string {
 		}
 
 		// Выполняем HTTP-запрос
-		resp, err := http.Get(fmt.Sprintf("%s/gets3?id=%s", mode.RealHost, params.UserID))
+		//resp, err := http.Get(fmt.Sprintf("%s/gets3?id=%s", mode.RealHost, params.UserID))
+		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/gets3?id=%s", mode.RealHost, params.UserID), nil)
 		if err != nil {
+			result, _ := json.Marshal(map[string]string{"error": "ошибка при выполнении запроса"})
+			return string(result)
+		}
+		// Выполняем запрос
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			// Проверяем отмену по контексту
+			if ctx.Err() != nil {
+				result, _ := json.Marshal(map[string]string{"error": "запрос отменён по таймауту"})
+				return string(result)
+			}
 			result, _ := json.Marshal(map[string]string{"error": "ошибка при выполнении запроса"})
 			return string(result)
 		}
 		defer resp.Body.Close()
 
+		// Читаем ответ только для отладки!
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			result, _ := json.Marshal(map[string]string{"error": "ошибка при чтении ответа"})
@@ -75,20 +90,35 @@ func (h *ActionHandlerOpenAI) RunAction(functionName, arguments string) string {
 		}
 
 		// Отправляем POST запрос с user_id в URL параметре
-		resp, err := http.Post(
-			fmt.Sprintf("%s/savefilein3", mode.RealHost),
-			"application/json",
-			strings.NewReader(string(jsonData)),
-		)
+		//resp, err := http.NewRequestWithContext(
+		//	fmt.Sprintf("%s/savefilein3", mode.RealHost),
+		//	"application/json",
+		//	strings.NewReader(string(jsonData)),
+		//)
+		req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/savefilein3", mode.RealHost), strings.NewReader(string(jsonData)))
 		if err != nil {
+			result, _ := json.Marshal(map[string]string{"error": "ошибка при сохранении файла"})
+			return string(result)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		// Выполняем запрос
+		client := &http.Client{}
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				result, _ := json.Marshal(map[string]string{"error": "запрос отменён по таймауту"})
+				return string(result)
+			}
 			result, _ := json.Marshal(map[string]string{"error": "ошибка при сохранении файла"})
 			return string(result)
 		}
 		defer resp.Body.Close()
 
+		// Читаем ответ только для отладки!
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			result, _ := json.Marshal(map[string]string{"error": "ошибка при чтении ответа сервера"})
+			result, _ := json.Marshal(map[string]string{"error": "ошибка при чтении ответа"})
 			return string(result)
 		}
 
