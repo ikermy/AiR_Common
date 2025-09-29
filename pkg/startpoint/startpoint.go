@@ -56,6 +56,7 @@ type OperatorInterface interface {
 	AskOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) (model.Message, error)
 	SendToOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) error // Новый неблокирующий метод
 	ReceiveFromOperator(ctx context.Context, userID uint32, dialogID uint64) <-chan model.Message     // Канал для получения ответов
+	DeleteSession(userID uint32, dialogID uint64) error
 }
 
 // Start структура с интерфейсами вместо конкретных типов
@@ -212,8 +213,14 @@ func (s *Start) Respondent(
 				logger.Debug("Получено системное сообщение о выключении режима оператора", u.Assist.UserId)
 				operatorMode = false
 
+				// Удаляем сессию оператора
+				err := s.Oper.DeleteSession(u.Assist.UserId, treadId)
+				if err != nil {
+					errCh <- fmt.Errorf("ошибка при удалении текущей сессии оператора: %v", err)
+				}
+
 				// Вызываем колбэк для корректного завершения сессии оператора
-				err := s.Bot.DisableOperatorMode(u.Assist.UserId, treadId)
+				err = s.Bot.DisableOperatorMode(u.Assist.UserId, treadId)
 				if err != nil {
 					errCh <- fmt.Errorf("ошибка при отключении режима оператора: %w", err)
 				}

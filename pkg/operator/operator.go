@@ -79,6 +79,21 @@ func (o *Operator) Close() {
 	o.cancel()
 }
 
+// DeleteSession удаляет сессию оператора для заданного пользователя и диалога
+func (o *Operator) DeleteSession(userID uint32, dialogID uint64) error {
+	key := opKey{userID: userID, dialogID: dialogID}
+	val, ok := o.operatorChMap.Load(key)
+	if !ok {
+		return fmt.Errorf("session not found for user=%d dialog=%d", userID, dialogID)
+	}
+
+	s := val.(*session)
+	o.cleanup(key, s)
+	logger.Debug("Session deleted for user=%d dialog=%d", userID, dialogID)
+
+	return nil
+}
+
 // внутренняя функция: получить/создать сессию с таймером простоя
 func (o *Operator) getOrCreateSession(userID uint32, dialogID uint64) (*session, error) {
 	key := opKey{userID: userID, dialogID: dialogID}
