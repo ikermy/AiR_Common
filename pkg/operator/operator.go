@@ -58,6 +58,8 @@ type session struct {
 	httpErrorCh chan error
 	// Гарантирует однократное выполнение очистки
 	cleanupOnce sync.Once
+	// Канал для ошибок от операторского бэкенда
+	connectionErrorCh chan string
 }
 
 // func New(cfg *conf.Conf, cb CallBack) *Operator {
@@ -121,7 +123,8 @@ func (o *Operator) getOrCreateSession(userID uint32, dialogID uint64) (*session,
 		// Канал дла ожидания получения sid
 		sidReady: make(chan struct{}),
 		// канал для сигнализации об ошибках HTTP POST
-		httpErrorCh: make(chan error, 1),
+		httpErrorCh:       make(chan error, 1),
+		connectionErrorCh: make(chan string, 1),
 	}
 
 	o.operatorChMap.Store(key, s)
@@ -132,51 +135,16 @@ func (o *Operator) getOrCreateSession(userID uint32, dialogID uint64) (*session,
 	return s, nil
 }
 
-//func (o *Operator) createSession(userID uint32, dialogID uint64) (*session,  error) {
-//	logger.Warn("Getting or creating operator session (user=%d, dialog=%d)", userID, dialogID)
-//	key := opKey{userID: userID, dialogID: dialogID}
-//	if val, ok := o.operatorChMap.Load(key); ok {
-//		return val.(*session), nil
-//	}
-//
-//	// Создаём каналы напрямую (OperatorChannels удалён)
-//	ch := OperatorCh{
-//		TxCh:     make(chan model.Message, 1),
-//		RxCh:     make(chan model.Message, 1),
-//		UserId:   userID,
-//		DialogId: dialogID,
-//	}
-//
-//	ctx, cancel := context.WithCancel(o.ctx)
-//	s := &session{
-//		ch:         ch,
-//		ctx:        ctx,
-//		cancel:     cancel,
-//		idleTimer:  time.NewTimer(mode.IdleDuration * time.Minute),
-//		lastActive: time.Now(),
-//		// init sid
-//		sidReady: make(chan struct{}),
-//		// канал для сигнализации об ошибках HTTP POST
-//		httpErrorCh: make(chan error, 1),
-//	}
-//
-//	o.operatorChMap.Store(key, s)
-//
-//	// Запускаю слущателя
-//	go o.listenerSession(key, s)
-//
-//	return s, nil
-//}
-//
-//func (o *Operator) getSession(userID uint32, dialogID uint64) (*session,  error) {
-//	logger.Warn("Getting or creating operator session (user=%d, dialog=%d)", userID, dialogID)
-//	key := opKey{userID: userID, dialogID: dialogID}
-//	if val, ok := o.operatorChMap.Load(key); ok {
-//		return val.(*session), nil
-//	} else {
-//		return nil, fmt.Errorf("session not found for user=%d dialog=%d", userID, dialogID)
-//	}
-//}
+// GetConnectionErrors возвращает канал для получения ошибок подключения
+func (o *Operator) GetConnectionErrors(ctx context.Context, userID uint32, dialogID uint64) <-chan string {
+	s, err := o.getOrCreateSession(userID, dialogID)
+	if err != nil {
+		ch := make(chan string)
+		close(ch)
+		return ch
+	}
+	return s.connectionErrorCh
+}
 
 // touch продлевает TTL сессии и сбрасывает таймер простоя
 func (s *session) touch() {
@@ -284,6 +252,7 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 			}
 			s.touch()
 			logger.Debug("Sending message via HTTP POST: %+v", msg)
+
 			go func(message model.Message) {
 				if err := o.sendMessage(base, s, message); err != nil {
 					logger.Error("Failed to send message: %v", err)
@@ -313,6 +282,21 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 			etype := string(event.Event)
 			edata := event.Data
 			logger.Debug("Received SSE event '%s': %s", etype, string(edata))
+
+			// Обработка ошибок
+			if etype == "error" {
+				logger.Error("Received error event: %s", string(edata))
+
+				// Пока всего один тип обрабатываемой ошибки, поэтому сразу шлю её
+				select {
+				case s.connectionErrorCh <- "no_tg_id":
+				case <-s.ctx.Done():
+					return
+				default:
+				}
+				o.cleanup(key, s)
+				return
+			}
 
 			if etype == "init" {
 				var initPayload struct {

@@ -31,7 +31,7 @@ type Answer struct {
 type BotInterface interface {
 	StartBots() error
 	StopBot()
-	DisableOperatorMode(userId uint32, dialogId uint64) error
+	DisableOperatorMode(userId uint32, dialogId uint64, silent ...bool) error
 }
 
 // EndpointInterface - интерфейс для работы с диалогами
@@ -54,9 +54,10 @@ type ModelInterface interface {
 // OperatorInterface - интерфейс для отправки сообщений от и для операторов
 type OperatorInterface interface {
 	AskOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) (model.Message, error)
-	SendToOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) error // Новый неблокирующий метод
-	ReceiveFromOperator(ctx context.Context, userID uint32, dialogID uint64) <-chan model.Message     // Канал для получения ответов
+	SendToOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) error
+	ReceiveFromOperator(ctx context.Context, userID uint32, dialogID uint64) <-chan model.Message // Канал для получения ответов
 	DeleteSession(userID uint32, dialogID uint64) error
+	GetConnectionErrors(ctx context.Context, userID uint32, dialogID uint64) <-chan string
 }
 
 // Start структура с интерфейсами вместо конкретных типов
@@ -177,14 +178,18 @@ func (s *Start) Respondent(
 	errCh chan error,
 ) {
 	var (
-		deaf          bool   // Не слушать ввод пользователя до момента получения ответа
-		ask           string // Вопрос пользователя
-		askTimer      *time.Timer
-		VoiceQuestion bool                 // Флаг, указывающий, что вопрос был задан голосом
-		currentQuest  Question             // Текущий вопрос пользователя, который обрабатывается
-		operatorMode  bool                 // Флаг включенного операторского режима
-		operatorRxCh  <-chan model.Message // Канал для получения сообщений от оператора
+		deaf            bool   // Не слушать ввод пользователя до момента получения ответа
+		ask             string // Вопрос пользователя
+		askTimer        *time.Timer
+		VoiceQuestion   bool                 // Флаг, указывающий, что вопрос был задан голосом
+		currentQuest    Question             // Текущий вопрос пользователя, который обрабатывается
+		operatorMode    bool                 // Флаг включенного операторского режима
+		operatorRxCh    <-chan model.Message // Канал для получения сообщений от оператора
+		operatorErrorCh <-chan string        // Канал для получения ошибок от операторского бэка
 	)
+
+	// Получаем канал ошибок сразу при запуске Respondent
+	operatorErrorCh = s.Oper.GetConnectionErrors(s.ctx, u.Assist.UserId, treadId)
 
 	for {
 		select {
@@ -194,6 +199,38 @@ func (s *Start) Respondent(
 		case <-u.Ctx.Done():
 			logger.Debug("Context.Done Respondent %s", u.RespName, u.Assist.UserId)
 			return
+
+		// Обработка ошибок подключения к оператору
+		case errorType := <-operatorErrorCh:
+			if errorType == "no_tg_id" {
+				logger.Warn("Нет tg_id для пользователя %d, отключаем операторский режим", u.Assist.UserId)
+				operatorMode = false
+				operatorRxCh = nil
+
+				// Вызываю тихое отключение режима оператор для пользовательского бота
+				err := s.Bot.DisableOperatorMode(u.Assist.UserId, treadId, true)
+				if err != nil {
+					errCh <- fmt.Errorf("ошибка при отключении режима оператора: %w", err)
+				}
+
+				// Отправляем информационное сообщение пользователю
+				systemMsg := model.AssistResponse{
+					Message: "🚫👨‍💻 Нет доступных операторов \n Продолжаю работу в режиме AI-агента 🧠",
+				}
+				select {
+				case answerCh <- Answer{
+					Answer:   systemMsg,
+					Operator: model.Operator{SetOperator: false, Operator: false},
+				}:
+				default:
+					errCh <- fmt.Errorf("канал answerCh закрыт при отправке сообщения об ошибке tg_id")
+					return
+				}
+
+				// Получаем новый канал ошибок для следующих попыток
+				operatorErrorCh = s.Oper.GetConnectionErrors(s.ctx, u.Assist.UserId, treadId)
+				continue
+			}
 
 		// Обработка сообщений от оператора (только если канал инициализирован)
 		case operatorMsg := <-func() <-chan model.Message {
@@ -496,7 +533,7 @@ func (s *Start) Respondent(
 					operatorMode = true
 					operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserId, treadId)
 					s.End.SendEvent(u.Assist.UserId, "model-operator", u.RespName, u.Assist.AssistName, "")
-					logger.Debug("Операторский режим активирован по флагу ответа модели для пользователя %d", u.Assist.UserId)
+					logger.Debug("Операторский режим активирован по флагу ответа модели", u.Assist.UserId)
 				}
 
 				setOperatorMode = true // Передадим наружу, чтобы фронт включил режим
