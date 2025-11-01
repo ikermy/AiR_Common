@@ -130,6 +130,7 @@ type Ch struct {
 
 // StartCh структура для передачи данных для запуска слушателя
 type StartCh struct {
+	Ctx     context.Context
 	Model   *RespModel
 	Chanel  Ch
 	TreadId uint64

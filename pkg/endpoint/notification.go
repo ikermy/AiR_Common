@@ -49,6 +49,15 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 
 	for _, ch := range channels {
 		switch ch["channel_type"] {
+		case "instant":
+			err := SendInstantNotification(msg.UserID, msg.Event, msg.UserName, msg.AssistName, msg.Target)
+			if err != nil {
+				logger.Error("Ошибка отправки Instant уведомления: %v", err, msg.UserID)
+				lastError = err
+				continue
+			}
+			successCount++
+
 		case "telegram":
 			// Проверяю что Telegram не null
 			if ch["channel_value"] == "null" {
@@ -170,6 +179,59 @@ func SendEmailNotification(email, event, userName, assistName, target string) er
 	// Создаем данные для отправки
 	payload := map[string]interface{}{
 		"email":  email,
+		"event":  event,
+		"user":   userName,
+		"assist": assistName,
+		"target": target,
+	}
+
+	// Преобразуем данные в JSON
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("ошибка при преобразовании данных в JSON: %w", err)
+	}
+
+	// Создаем HTTP-запрос
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("ошибка при создании HTTP-запроса: %w", err)
+	}
+
+	// Устанавливаем заголовки
+	req.Header.Set("Content-Type", "application/json")
+
+	// Создаем HTTP-клиент с отключенной проверкой сертификата
+	// нужно брать сертификаты из /etc/ssl/custom/..
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	// Отправляем запрос
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ошибка при отправке HTTP-запроса: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Проверяем статус ответа
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("неожиданный статус ответа: %d, тело: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
+func SendInstantNotification(uid uint32, event, userName, assistName, target string) error {
+	// Добавить userID для возможности смены языка уведомлений
+	// Формируем URL для webhook
+	url := fmt.Sprintf("https://%s:%s/instant", mode.CarpinteroHost, mode.MailServerPort)
+
+	// Создаем данные для отправки
+	payload := map[string]interface{}{
+		"uid":    uid,
 		"event":  event,
 		"user":   userName,
 		"assist": assistName,
@@ -345,6 +407,7 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 		msg = fmt.Sprintf("Канал %s отключен, требуется повторная авторизация", Target)
 	case "model-operator":
 		msg = fmt.Sprintf("Ассистент %s запросил переключение на оператора в диалоге с пользователем %s", AssistName, UserName)
+	// События подписки
 	case "subscription":
 		errMsg := map[common.ErrorCode]string{
 			common.ErrNoSubscription:       "У вас нет подписки. Пожалуйста, оформите подписку.",
@@ -354,6 +417,9 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 		}
 		errorCode, _ := strconv.Atoi(Target)
 		msg = errMsg[common.ErrorCode(errorCode)]
+		// Разбан ботов для service lead generation
+	case "botunban":
+		msg = fmt.Sprintf("Боты:\n%s\nразблокированны по таймеру, попробуйте их снова использовать", Target)
 	default:
 		return "", fmt.Errorf("неизвестное событие: %s", Event)
 	}

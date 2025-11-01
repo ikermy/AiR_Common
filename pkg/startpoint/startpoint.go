@@ -37,7 +37,7 @@ type BotInterface interface {
 // EndpointInterface - интерфейс для работы с диалогами
 type EndpointInterface interface {
 	GetUserAsk(dialogId uint64, respId uint64) []string
-	SetUserAsk(dialogId uint64, respId uint64, ask string, askLimit uint32) bool
+	SetUserAsk(dialogId, respId uint64, ask string, askLimit ...uint32) bool
 	SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse)
 	Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string)
 	SendEvent(userId uint32, event, userName, assistName, target string)
@@ -646,6 +646,9 @@ func (s *Start) StarterRespondent(
 
 // StarterListener запускает Listener для пользователя, если он ещё не запущен
 func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
+	// Заменяю на контекст бота
+	s.ctx = start.Ctx
+
 	if !start.Model.Services.Listener {
 		start.Model.Services.Listener = true
 		go func() {

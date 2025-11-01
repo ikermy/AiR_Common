@@ -6,6 +6,12 @@ import (
 	"time"
 )
 
+// InstMsg - структура для передачи мгновенных сообщений в панель управления
+type InstMsg struct {
+	UID uint32
+	Msg string
+}
+
 // CarpCh - канал для передачи уведомлений
 type CarpCh struct {
 	Event      string

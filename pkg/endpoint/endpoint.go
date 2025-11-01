@@ -152,7 +152,13 @@ func (e *Endpoint) GetUserAsk(dialogId uint64, respId uint64) []string {
 	return nil
 }
 
-func (e *Endpoint) SetUserAsk(dialogId uint64, respId uint64, ask string, askLimit uint32) bool {
+func (e *Endpoint) SetUserAsk(dialogId, respId uint64, ask string, askLimit ...uint32) bool {
+	// По умолчанию askLimit максимальный для uint32
+	var limit uint32 = 4294967295
+	if len(askLimit) > 0 {
+		limit = askLimit[0]
+	}
+
 	ask = strings.TrimSpace(ask)
 	if ask == "" || ask == "[]" { // Этого не может быть?! Но на всякий случай
 		return true
@@ -174,7 +180,7 @@ func (e *Endpoint) SetUserAsk(dialogId uint64, respId uint64, ask string, askLim
 		totalChars += utf8.RuneCountInString(msg)
 	}
 	askChars := utf8.RuneCountInString(ask)
-	if totalChars+askChars > int(askLimit) {
+	if totalChars+askChars > int(limit) {
 		fmt.Println("Превышен лимит символов", totalChars, askChars, askLimit)
 		return false
 	}
