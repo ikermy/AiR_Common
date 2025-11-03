@@ -418,8 +418,12 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 		errorCode, _ := strconv.Atoi(Target)
 		msg = errMsg[common.ErrorCode(errorCode)]
 		// Разбан ботов для service lead generation
-	case "botunban":
+	case "lead-botunban":
 		msg = fmt.Sprintf("Боты:\n%s\nразблокированны по таймеру, попробуйте их снова использовать", Target)
+	case "lead-start":
+		msg = fmt.Sprintf("Поиск лидов запущен:\n-всего контактов для обработки %s", Target)
+	case "lead-stop":
+		msg = fmt.Sprintf("Поиск лидов завершён:\n-всего контактов %s\n-обработанно %s", Target, AssistName)
 	default:
 		return "", fmt.Errorf("неизвестное событие: %s", Event)
 	}
