@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.25"
-git tag -a v1.25 -m "fedora "fix"
+git commit -m "v1.25.0"
+git tag -a v1.25.0 -m "fedora "fix"
 git push origin master
-git push origin v1.25
+git push origin v1.25.0
