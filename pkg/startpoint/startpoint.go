@@ -71,7 +71,7 @@ type Start struct {
 	Oper OperatorInterface
 }
 
-// New создаёт новый экземпляр Start (бывший startpoint.New)
+// New создаёт новый экземпляр Start
 func New(parent context.Context, mod ModelInterface, end EndpointInterface, bot BotInterface, operator OperatorInterface) *Start {
 	ctx, cancel := context.WithCancel(parent)
 	return &Start{

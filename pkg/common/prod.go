@@ -1,13 +1,18 @@
 package common
 
-import "runtime"
+import (
+	"os"
+	"runtime"
+)
 
 // SetProductionMode устанавливает режим продакшн, если приложение запущено на Linux.
 func SetProductionMode(prodAct, devAct func()) {
 	// Проверка на Linux
-	if runtime.GOOS == "linux" {
+	hostname, _ := os.Hostname()
+	if runtime.GOOS == "linux" && hostname != "fedora" {
 		prodAct()
-	} else {
-		devAct()
+		return
 	}
+
+	devAct()
 }
