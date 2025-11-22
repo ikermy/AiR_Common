@@ -42,6 +42,7 @@ type WebConfig struct {
 	TgUser  string `mapstructure:"tguser"`
 	Whats   string `mapstructure:"whats"`
 	Oper    string `mapstructure:"oper"`
+	CRM     string `mapstructure:"crm"`
 }
 
 type DBConfig struct {

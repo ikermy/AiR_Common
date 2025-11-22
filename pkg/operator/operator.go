@@ -62,7 +62,6 @@ type session struct {
 	connectionErrorCh chan string
 }
 
-// func New(cfg *conf.Conf, cb CallBack) *Operator {
 func New(parent context.Context, cfg *conf.Conf) *Operator {
 	ctx, cancel := context.WithCancel(parent)
 
@@ -71,7 +70,6 @@ func New(parent context.Context, cfg *conf.Conf) *Operator {
 		cancel:        cancel,
 		operatorChMap: sync.Map{},
 		port:          cfg.WEB.Oper,
-		//cb:            cb,
 	}
 
 	return o

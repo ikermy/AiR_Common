@@ -90,11 +90,6 @@ func (h *ActionHandlerOpenAI) RunAction(ctx context.Context, functionName, argum
 		}
 
 		// Отправляем POST запрос с user_id в URL параметре
-		//resp, err := http.NewRequestWithContext(
-		//	fmt.Sprintf("%s/savefilein3", mode.RealHost),
-		//	"application/json",
-		//	strings.NewReader(string(jsonData)),
-		//)
 		req, err := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/savefilein3", mode.RealHost), strings.NewReader(string(jsonData)))
 		if err != nil {
 			result, _ := json.Marshal(map[string]string{"error": "ошибка при сохранении файла"})
