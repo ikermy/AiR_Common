@@ -293,7 +293,7 @@ func (c *CRM) Init(userID uint32) (*User, error) {
 	return u, nil
 }
 
-func (c *CRM) Stop() {
+func (c *CRM) Shutdown() {
 	c.cancel() // Отменяем контекст
 
 	// Завершаем всех пользователей

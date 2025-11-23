@@ -85,8 +85,8 @@ func New(parent context.Context, mod ModelInterface, end EndpointInterface, bot 
 	}
 }
 
-// Stop останавливает внутренний контекст Start и даёт возможность корректно завершить фоновые операции
-func (s *Start) Stop() {
+// Shutdown останавливает внутренний контекст Start и даёт возможность корректно завершить фоновые операции
+func (s *Start) Shutdown() {
 	if s.cancel != nil {
 		s.cancel()
 	}
