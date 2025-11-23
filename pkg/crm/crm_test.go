@@ -30,13 +30,13 @@ func getConfig() *conf.Conf {
 }
 
 // testGetCacheStats возвращает статистику использования кэша
-func (c *CRM) testGetCacheStats() (contactCount, leadCount int) {
-	c.contactCache.Range(func(key, val interface{}) bool {
+func (u *User) testGetCacheStats() (contactCount, leadCount int) {
+	u.contactCache.Range(func(key, val interface{}) bool {
 		contactCount++
 		return true
 	})
 
-	c.leadCache.Range(func(key, val interface{}) bool {
+	u.leadCache.Range(func(key, val interface{}) bool {
 		leadCount++
 		return true
 	})
@@ -45,18 +45,22 @@ func (c *CRM) testGetCacheStats() (contactCount, leadCount int) {
 }
 
 // testClearCache очищает весь кэш
-func (c *CRM) testClearCache() {
-	c.contactCache.Range(func(key, val interface{}) bool {
-		c.contactCache.Delete(key)
+func (u *User) testClearCache() {
+	u.contactCache.Range(func(key, val interface{}) bool {
+		u.contactCache.Delete(key)
 		return true
 	})
 
-	c.leadCache.Range(func(key, val interface{}) bool {
-		c.leadCache.Delete(key)
+	u.leadCache.Range(func(key, val interface{}) bool {
+		u.leadCache.Delete(key)
 		return true
 	})
 
-	logger.Info("Кэш CRM полностью очищен", c.conf.UserID)
+	if u.conf != nil {
+		logger.Info("Кэш User полностью очищен", u.conf.UserID)
+	} else {
+		logger.Info("Кэш неинициализированного User очищен")
+	}
 }
 
 func TestCRM(t *testing.T) {
@@ -72,22 +76,24 @@ func TestCRM(t *testing.T) {
 	// Создаём экземпляр CRM
 	crm := New(ctx, cfg)
 
-	if err := crm.Init(23); err != nil {
-		t.Fatalf("Failed to initialize CRM: %v", err)
+	// Инициализируем пользователя
+	c, err := crm.Init(23)
+	if err != nil {
+		t.Fatalf("Failed to initialize User: %v", err)
 	}
 
-	msg := crm.MSG("user", "+54111234567", "Leo Gilligan", "Тестовое сообщение").
+	msg := c.MSG("c", "+54111234567", "Leo Gilligan", "Тестовое сообщение").
 		//WithFiles("audio.mp3", "video.mp4").
 		//NewDialog(true).
 		WithVoice(true)
 	//SetMeta(true)
 
 	// Существующий контакт
-	//msg := crm.MSG("user", "+79991234567", "Иван Иванов", "Тестовое сообщение")
+	//msg := c.MSG("c", "+79991234567", "Иван Иванов", "Тестовое сообщение")
 
 	time.Sleep(10 * time.Millisecond)
 
-	if err := crm.SendMessage(msg); err != nil {
+	if err := c.SendMessage(msg); err != nil {
 		t.Fatalf("Failed to send message: %v", err)
 	}
 
@@ -105,16 +111,18 @@ func TestCRM_Init(t *testing.T) {
 	ctx := context.Background()
 
 	// Создаём экземпляр CRM
-	crmInstance := New(ctx, cfg)
+	crm := New(ctx, cfg)
 
-	if err := crmInstance.Init(23); err != nil {
-		t.Fatalf("Failed to initialize CRM: %v", err)
+	// Инициализируем пользователя
+	user, err := crm.Init(23)
+	if err != nil {
+		t.Fatalf("Failed to initialize User: %v", err)
 	}
 
-	logger.Infoln(crmInstance.conf)
+	logger.Infoln(user.conf)
 
 	// Проверяем статистику кэша
-	contactCount, leadCount := crmInstance.testGetCacheStats()
+	contactCount, leadCount := user.testGetCacheStats()
 	logger.Infoln("Cache stats - Contacts:", contactCount, "Leads:", leadCount)
 }
 
@@ -125,36 +133,38 @@ func TestCRM_Cache(t *testing.T) {
 	cfg.WEB.CRM = "8092"
 
 	ctx := context.Background()
-	crmInstance := New(ctx, cfg)
+	crm := New(ctx, cfg)
 
-	if err := crmInstance.Init(23); err != nil {
-		t.Fatalf("Failed to initialize CRM: %v", err)
+	// Инициализируем пользователя
+	user, err := crm.Init(23)
+	if err != nil {
+		t.Fatalf("Failed to initialize User: %v", err)
 	}
 
 	// Создаём тестовые сообщения
-	msg1 := crmInstance.MSG("user", "+54111234567", "Leo Gilligan", "Первое сообщение").
+	msg1 := user.MSG("user", "+54111234567", "Leo Gilligan", "Первое сообщение").
 		NewDialog(true)
-	msg2 := crmInstance.MSG("assist", "+54111234567", "Leo Gilligan", "Второе сообщение").
+	msg2 := user.MSG("assist", "+54111234567", "Leo Gilligan", "Второе сообщение").
 		SetMeta(true)
-	msg3 := crmInstance.MSG("user", "+79991234567", "John Smith", "Другой пользователь").
+	msg3 := user.MSG("user", "+79991234567", "John Smith", "Другой пользователь").
 		WithVoice(true)
 
 	// Отправляем первое сообщение (должно создать записи в кэше)
-	if err := crmInstance.SendMessage(msg1); err != nil {
+	if err := user.SendMessage(msg1); err != nil {
 		t.Errorf("Failed to send message 1: %v", err)
 	}
 
 	// Проверяем статистику после первого сообщения
-	contactCount, leadCount := crmInstance.testGetCacheStats()
+	contactCount, leadCount := user.testGetCacheStats()
 	t.Logf("After msg1 - Contacts in cache: %d, Leads in cache: %d", contactCount, leadCount)
 
 	// Отправляем второе сообщение (должно использовать кэш)
-	if err := crmInstance.SendMessage(msg2); err != nil {
+	if err := user.SendMessage(msg2); err != nil {
 		t.Errorf("Failed to send message 2: %v", err)
 	}
 
 	// Проверяем, что количество записей не изменилось
-	contactCount2, leadCount2 := crmInstance.testGetCacheStats()
+	contactCount2, leadCount2 := user.testGetCacheStats()
 	t.Logf("After msg2 - Contacts in cache: %d, Leads in cache: %d", contactCount2, leadCount2)
 
 	if contactCount2 != contactCount {
@@ -162,12 +172,12 @@ func TestCRM_Cache(t *testing.T) {
 	}
 
 	// Отправляем сообщение от другого пользователя
-	if err := crmInstance.SendMessage(msg3); err != nil {
+	if err := user.SendMessage(msg3); err != nil {
 		t.Errorf("Failed to send message 3: %v", err)
 	}
 
 	// Проверяем, что добавилась новая запись
-	contactCount3, leadCount3 := crmInstance.testGetCacheStats()
+	contactCount3, leadCount3 := user.testGetCacheStats()
 	t.Logf("After msg3 - Contacts in cache: %d, Leads in cache: %d", contactCount3, leadCount3)
 
 	if contactCount3 <= contactCount2 {
@@ -175,10 +185,10 @@ func TestCRM_Cache(t *testing.T) {
 	}
 
 	// Очищаем кэш
-	crmInstance.testClearCache()
+	user.testClearCache()
 
 	// Проверяем, что кэш пуст
-	contactCount4, leadCount4 := crmInstance.testGetCacheStats()
+	contactCount4, leadCount4 := user.testGetCacheStats()
 	t.Logf("After testClearCache - Contacts in cache: %d, Leads in cache: %d", contactCount4, leadCount4)
 
 	if contactCount4 != 0 || leadCount4 != 0 {
@@ -186,4 +196,66 @@ func TestCRM_Cache(t *testing.T) {
 	}
 
 	time.Sleep(10 * time.Second)
+}
+
+// TestUninitializedUser проверяет безопасность работы с неинициализированным User
+func TestUninitializedUser(t *testing.T) {
+	cfg := getConfig()
+	cfg.WEB.CRM = "8092"
+
+	ctx := context.Background()
+	crm := New(ctx, cfg)
+
+	// Инициализируем с несуществующим userID (должна вернуться ошибка)
+	user, err := crm.Init(99999)
+	if err == nil {
+		t.Log("Ожидалась ошибка инициализации, но получили nil")
+	}
+
+	// Проверяем, что user не nil (даже при ошибке)
+	if user == nil {
+		t.Fatal("User не должен быть nil даже при ошибке инициализации")
+	}
+
+	// Проверяем безопасность вызова методов на неинициализированном user
+	msg := user.MSG("assist", "+1234567890", "Test User", "Тестовое сообщение").
+		WithFiles("file1.pdf").
+		SetMeta(true)
+
+	// Отправка должна пройти без паники, просто вернуть nil а не err
+	err = user.SendMessage(msg)
+	if err != nil {
+		t.Fatalf("SendMessage вернул ошибку (значит что то не так, не должен возвращать ошибку для неинициализированного User): %v", err)
+	}
+
+	t.Log("Тест безопасности неинициализированного User пройден успешно")
+}
+
+// TestCRM_Options демонстрирует использование опциональных параметров
+func TestCRM_Options(t *testing.T) {
+	t.Skip("Example test - demonstrates usage of optional parameters")
+
+	cfg := getConfig()
+	cfg.WEB.CRM = "8092"
+	ctx := context.Background()
+
+	// Пример 1: Все опции вместе
+	crm1 := New(ctx, cfg,
+		WithRespTimeout(20*time.Second),
+		WithCacheTTL(1*time.Hour),
+		WithNumWorkers(20),
+	)
+	t.Logf("CRM создан с кастомными параметрами: %+v", crm1)
+
+	// Пример 2: Только таймаут
+	crm2 := New(ctx, cfg, WithRespTimeout(15*time.Second))
+	t.Logf("CRM создан с кастомным таймаутом: %+v", crm2)
+
+	// Пример 3: Только кэш TTL
+	crm3 := New(ctx, cfg, WithCacheTTL(45*time.Minute))
+	t.Logf("CRM создан с кастомным TTL кэша: %+v", crm3)
+
+	// Пример 4: Только количество воркеров
+	crm4 := New(ctx, cfg, WithNumWorkers(5))
+	t.Logf("CRM создан с 5 воркерами: %+v", crm4)
 }

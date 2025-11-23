@@ -10,7 +10,7 @@ type Message struct {
 	Files []string // Файлы сообщения
 	Type  string   //  Тип сообщения (user / assist)
 	Phone string   // Идентификатор контакта
-	Name  string   // Имя контакта (в одну строку разберётся в CRM)
+	Name  string   // Имя контакта (в одну строку разберётся в User)
 	Text  string   // Текст сообщения
 	New   bool     // True - если новый диалог (пользователь не известен)
 	Voice bool     // True - если голосовое сообщение
@@ -19,7 +19,11 @@ type Message struct {
 
 // MSG создает новый Message с обязательными полями type, contact и message
 // Используйте методы WithFiles, NewDialog, WithVoice для настройки опциональных полей
-func (c *CRM) MSG(tip, contact, name, text string) *Message {
+// Работает даже если User не инициализирован (для удобства цепочки вызовов)
+func (u *User) MSG(tip, contact, name, text string) *Message {
+	if u == nil {
+		return &Message{} // Возвращаем пустое сообщение, которое будет проигнорировано в SendMessage
+	}
 	return &Message{
 		Type:  tip,
 		Phone: contact,
@@ -52,22 +56,26 @@ func (m *Message) WithVoice(voice bool) *Message {
 	return m
 }
 
-// SendMessage безопасно отправляет сообщение в канал CRM
+// SendMessage безопасно отправляет сообщение в канал User
 // Возвращает ошибку, если контекст отменён или канал закрыт
-func (c *CRM) SendMessage(msg *Message) error {
+func (u *User) SendMessage(msg *Message) error {
+	// User не инициализирован - молча выходим
+	if u == nil || u.conf == nil {
+		return nil
+	}
+
 	if msg == nil {
 		return fmt.Errorf("сообщение не может быть nil")
 	}
 
-	if c.conf == nil {
-		return fmt.Errorf("CRM не инициализирован, вызовите Init() перед отправкой")
-	}
-
 	select {
-	case c.msg <- msg:
-		logger.Debug("Сообщение отправлено в CRM канал для контакта %s", msg.Phone)
+	case u.msg <- msg:
+		logger.Debug("Сообщение отправлено в User канал для контакта %s", msg.Phone, u.conf.UserID)
 		return nil
-	case <-c.ctx.Done():
-		return fmt.Errorf("отправка отменена: %w", c.ctx.Err())
+	case <-u.ctx.Done():
+		return fmt.Errorf("отправка отменена: %w", u.ctx.Err())
+	default:
+		// очередь u.msg переполнена например модуль вообще не запущен
+		return nil
 	}
 }

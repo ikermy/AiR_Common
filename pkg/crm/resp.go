@@ -3,7 +3,6 @@ package crm
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -103,7 +102,7 @@ type UpdateLeadStateResponse struct {
 	Success bool   `json:"success"`
 }
 
-func (c *CRM) sendRESP(method, url string, userID uint32, data ...[]byte) (*http.Response, error) {
+func (u *User) sendRESP(method, url string, userID uint32, data ...[]byte) (*http.Response, error) {
 	var bodyData io.Reader
 	if len(data) > 0 {
 		bodyData = bytes.NewBuffer(data[0])
@@ -111,7 +110,7 @@ func (c *CRM) sendRESP(method, url string, userID uint32, data ...[]byte) (*http
 		bodyData = nil
 	}
 
-	reqCtx, cancel := context.WithTimeout(c.ctx, c.respTimeOut)
+	reqCtx, cancel := context.WithTimeout(u.ctx, u.respTimeOut)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, method, url, bodyData)
@@ -122,12 +121,12 @@ func (c *CRM) sendRESP(method, url string, userID uint32, data ...[]byte) (*http
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", fmt.Sprintf("%d", userID))
 
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	// Проверка на инициализированный HTTP клиент
+	if u.httpClient == nil {
+		return nil, fmt.Errorf("HTTP клиент не инициализирован")
 	}
-	client := &http.Client{Transport: tr}
 
-	resp, err := client.Do(req)
+	resp, err := u.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка при выполнении HTTP-запроса: %v", err)
 	}
@@ -136,14 +135,14 @@ func (c *CRM) sendRESP(method, url string, userID uint32, data ...[]byte) (*http
 }
 
 // ChannelsSettings Получение настроек каналов пользователя
-func (c *CRM) ChannelsSettings(userID uint32) (*ChannelsSettings, error) {
+func (u *User) ChannelsSettings(userID uint32) (*ChannelsSettings, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("userID не может быть 0")
 	}
 
-	url := fmt.Sprintf("http://localhost:%s/configs/%s/channels", c.port, CrmType)
+	url := fmt.Sprintf("http://localhost:%s/configs/%s/channels", u.port, Type)
 
-	resp, err := c.sendRESP(http.MethodGet, url, userID, nil)
+	resp, err := u.sendRESP(http.MethodGet, url, userID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения настроек каналов: %v", err)
 	}
@@ -181,10 +180,10 @@ func (c *CRM) ChannelsSettings(userID uint32) (*ChannelsSettings, error) {
 }
 
 // ContactID ищет контакт по номеру телефона и возвращает его
-func (c *CRM) ContactID(contact string) (Contact, error) {
-	url := fmt.Sprintf("http://localhost:%s/contacts/%s/search?phone=%s", c.port, CrmType, contact)
+func (u *User) ContactID(contact string) (Contact, error) {
+	url := fmt.Sprintf("http://localhost:%s/contacts/%s/search?phone=%s", u.port, Type, contact)
 
-	resp, err := c.sendRESP(http.MethodGet, url, c.conf.UserID, nil)
+	resp, err := u.sendRESP(http.MethodGet, url, u.conf.UserID, nil)
 	if err != nil {
 		return Contact{}, fmt.Errorf("ошибка получения id контакта: %v", err)
 	}
@@ -213,19 +212,19 @@ func (c *CRM) ContactID(contact string) (Contact, error) {
 }
 
 // CreateContact создает новый контакт
-func (c *CRM) CreateContact(contact *CreateContact) (Contact, error) {
+func (u *User) CreateContact(contact *CreateContact) (Contact, error) {
 	if contact.Name == "" {
 		return Contact{}, fmt.Errorf("имя контакта не может быть пустым")
 	}
 
-	url := fmt.Sprintf("http://localhost:%s/contacts/%s", c.port, CrmType)
+	url := fmt.Sprintf("http://localhost:%s/contacts/%s", u.port, Type)
 
 	jsonData, err := json.Marshal(contact)
 	if err != nil {
 		return Contact{}, fmt.Errorf("ошибка кодирования JSON: %v", err)
 	}
 
-	resp, err := c.sendRESP(http.MethodPost, url, c.conf.UserID, jsonData)
+	resp, err := u.sendRESP(http.MethodPost, url, u.conf.UserID, jsonData)
 	if err != nil {
 		return Contact{}, fmt.Errorf("ошибка создания контакта: %v", err)
 	}
@@ -253,14 +252,14 @@ func (c *CRM) CreateContact(contact *CreateContact) (Contact, error) {
 }
 
 // FindLeadByContactID ищет лиды по ID контакта
-func (c *CRM) FindLeadByContactID(contactID string) ([]Lead, error) {
+func (u *User) FindLeadByContactID(contactID string) ([]Lead, error) {
 	if contactID == "" {
 		return nil, fmt.Errorf("contactID не может быть пустым")
 	}
 
-	url := fmt.Sprintf("http://localhost:%s/leads/%s/by-contact/%s", c.port, CrmType, contactID)
+	url := fmt.Sprintf("http://localhost:%s/leads/%s/by-contact/%s", u.port, Type, contactID)
 
-	resp, err := c.sendRESP(http.MethodGet, url, c.conf.UserID, nil)
+	resp, err := u.sendRESP(http.MethodGet, url, u.conf.UserID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения лидов для контакта %s: %v", contactID, err)
 	}
@@ -286,7 +285,7 @@ func (c *CRM) FindLeadByContactID(contactID string) ([]Lead, error) {
 	}
 
 	if len(leadResp.Leads) == 0 {
-		logger.Debug("Лиды не найдены для контакта %s", contactID, c.conf.UserID)
+		logger.Debug("Лиды не найдены для контакта %s", contactID, u.conf.UserID)
 		return []Lead{}, nil
 	}
 
@@ -294,15 +293,15 @@ func (c *CRM) FindLeadByContactID(contactID string) ([]Lead, error) {
 }
 
 // NewLead создает новый лид в AmoCRM
-func (c *CRM) NewLead(lead *CreateLead) (Lead, error) {
-	url := fmt.Sprintf("http://localhost:%s/leads/%s/ai-dialog/%s", c.port, CrmType, lead.ContactID)
+func (u *User) NewLead(lead *CreateLead) (Lead, error) {
+	url := fmt.Sprintf("http://localhost:%s/leads/%s/ai-dialog/%s", u.port, Type, lead.ContactID)
 
 	jsonData, err := json.Marshal(lead)
 	if err != nil {
 		return Lead{}, fmt.Errorf("ошибка кодирования JSON: %v", err)
 	}
 
-	resp, err := c.sendRESP(http.MethodPost, url, c.conf.UserID, jsonData)
+	resp, err := u.sendRESP(http.MethodPost, url, u.conf.UserID, jsonData)
 	if err != nil {
 		return Lead{}, fmt.Errorf("ошибка создания лида: %v", err)
 	}
@@ -327,13 +326,13 @@ func (c *CRM) NewLead(lead *CreateLead) (Lead, error) {
 	}
 
 	logger.Info("Лид успешно создан: ID=%s, Name=%s, ContactID=%s",
-		createResp.Lead.ID, createResp.Lead.Name, createResp.Lead.ContactID, c.conf.UserID)
+		createResp.Lead.ID, createResp.Lead.Name, createResp.Lead.ContactID, u.conf.UserID)
 
 	return createResp.Lead, nil
 }
 
 // AddNote добавляет заметку к лиду
-func (c *CRM) AddNote(note AddNote) error {
+func (u *User) AddNote(note AddNote) error {
 	if note.LeadID == "" {
 		return fmt.Errorf("leadID не может быть пустым")
 	}
@@ -341,14 +340,14 @@ func (c *CRM) AddNote(note AddNote) error {
 		return fmt.Errorf("текст заметки не может быть пустым")
 	}
 
-	url := fmt.Sprintf("http://localhost:%s/leads/%s/%s/notes", c.port, CrmType, note.LeadID)
+	url := fmt.Sprintf("http://localhost:%s/leads/%s/%s/notes", u.port, Type, note.LeadID)
 
 	jsonData, err := json.Marshal(note)
 	if err != nil {
 		return fmt.Errorf("ошибка кодирования JSON: %v", err)
 	}
 
-	resp, err := c.sendRESP(http.MethodPost, url, c.conf.UserID, jsonData)
+	resp, err := u.sendRESP(http.MethodPost, url, u.conf.UserID, jsonData)
 	if err != nil {
 		return fmt.Errorf("ошибка добавления заметки: %v", err)
 	}
@@ -376,14 +375,14 @@ func (c *CRM) AddNote(note AddNote) error {
 }
 
 // UpdateLeadState обновляет лид (перемещает в другой pipeline/status согласно настройкам БД)
-func (c *CRM) UpdateLeadState(leadID string) error {
+func (u *User) UpdateLeadState(leadID string) error {
 	if leadID == "" {
 		return fmt.Errorf("leadID не может быть пустым")
 	}
 
-	url := fmt.Sprintf("http://localhost:%s/leads/%s/%s", c.port, CrmType, leadID)
+	url := fmt.Sprintf("http://localhost:%s/leads/%s/%s", u.port, Type, leadID)
 
-	resp, err := c.sendRESP(http.MethodPatch, url, c.conf.UserID)
+	resp, err := u.sendRESP(http.MethodPatch, url, u.conf.UserID)
 	if err != nil {
 		return fmt.Errorf("ошибка обновления лида: %v", err)
 	}
@@ -414,7 +413,7 @@ func (c *CRM) UpdateLeadState(leadID string) error {
 		return fmt.Errorf("сервер вернул ошибку при обновлении лида: %s", updateResp.Message)
 	}
 
-	logger.Info("Лид успешно обновлён: LeadID=%s", leadID, c.conf.UserID)
+	logger.Info("Лид успешно обновлён: LeadID=%s", leadID, u.conf.UserID)
 
 	return nil
 }

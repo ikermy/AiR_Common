@@ -22,7 +22,7 @@ func BenchmarkWriteString(b *testing.B) {
 		sb.WriteString("Meta")
 		sb.WriteString("] ")
 		sb.WriteString("Text ")
-		sb.WriteString(strconv.Itoa(i)) // вместо fmt.Sprint(i)
+		sb.WriteString(strconv.Itoa(i))
 		_ = sb.String()
 	}
 }

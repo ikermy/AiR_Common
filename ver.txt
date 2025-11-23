@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.25.0"
-git tag -a v1.25.0 -m "Module CRM"
+git commit -m "v1.25.2"
+git tag -a v1.25.2 -m "Module CRM multiuser"
 git push origin master
-git push origin v1.25.0
+git push origin v1.25.2
