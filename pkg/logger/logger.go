@@ -60,19 +60,10 @@ func Fatalf(format string, args ...interface{}) {
 }
 
 // --- внутренние функции ---
-func callerInfo(skip int) string {
-	_, file, line, ok := runtime.Caller(skip)
-	if !ok {
-		return ""
-	}
-	parts := strings.Split(file, "/")
-	return fmt.Sprintf("%s:%d:", parts[len(parts)-1], line)
-}
-
 func logMessagef(format, level string, skip int, args ...interface{}) {
 	userID, args := extractUserID(args)
 	message := fmt.Sprintf(format, args...)
-	writeLog(level, skip, message, userID)
+	writeLog(level, skip+1, message, userID)
 }
 
 func logMessage(level string, skip int, args ...interface{}) {
@@ -103,7 +94,7 @@ func logMessage(level string, skip int, args ...interface{}) {
 		}
 	}
 
-	writeLog(level, skip, sb.String(), userID)
+	writeLog(level, skip+1, sb.String(), userID)
 }
 
 func extractUserID(args []interface{}) (*uint32, []interface{}) {
@@ -124,7 +115,15 @@ func writeLog(level string, skip int, message string, userID *uint32) {
 
 	now := time.Now().Format("2006/01/02 15:04:05")
 	color := levelColors[level]
-	caller := callerInfo(skip)
+
+	_, file, line, ok := runtime.Caller(skip)
+	if !ok {
+		file = "???"
+		line = 0
+	} else {
+		parts := strings.Split(file, "/")
+		file = parts[len(parts)-1]
+	}
 
 	var sb strings.Builder
 	sb.Grow(len(message) + 64) // предвыделение
@@ -132,8 +131,10 @@ func writeLog(level string, skip int, message string, userID *uint32) {
 	sb.WriteString(color)
 	sb.WriteString(now)
 	sb.WriteByte(' ')
-	sb.WriteString(caller)
-	sb.WriteByte(' ')
+	sb.WriteString(file)
+	sb.WriteByte(':')
+	sb.WriteString(strconv.Itoa(line))
+	sb.WriteString(": ")
 	sb.WriteString(level)
 	sb.WriteByte(' ')
 	if userID != nil {

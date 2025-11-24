@@ -34,10 +34,16 @@ type ContactResponse struct {
 
 // CreateContact структура запроса для создания контакта
 type CreateContact struct {
-	Name  string   `json:"name"`
-	Phone string   `json:"phone,omitempty"`
-	Email string   `json:"email,omitempty"`
-	Tags  []string `json:"tags,omitempty"`
+	Name         string        `json:"name"`
+	Phone        string        `json:"phone,omitempty"`
+	Email        string        `json:"email,omitempty"`
+	AltContact   string        `json:"alt_contact,omitempty"`
+	Tags         []string      `json:"tags,omitempty"`
+	CustomFields []CustomField `json:"custom_fields,omitempty"`
+}
+
+type CustomField struct {
+	ID int64 `json:"id,omitempty"`
 }
 
 // CreateContactResponse структура ответа при создании контакта
@@ -186,6 +192,38 @@ func (u *User) ContactID(contact string) (Contact, error) {
 	resp, err := u.sendRESP(http.MethodGet, url, u.conf.UserID, nil)
 	if err != nil {
 		return Contact{}, fmt.Errorf("ошибка получения id контакта: %v", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.Error("ошибка закрытия тела ответа: %v", closeErr)
+		}
+	}()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Contact{}, fmt.Errorf("ошибка чтения ответа: %v", err)
+	}
+
+	var contactResp ContactResponse
+	if err := json.Unmarshal(body, &contactResp); err != nil {
+		return Contact{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
+	}
+
+	// контакт не найден возвращаем пустой контакт
+	if !contactResp.Success {
+		return Contact{}, nil
+	}
+
+	return contactResp.Contact, nil
+}
+
+// FindContactByAltContact ищет контакт по альтернативному имени (например, @telegram_username)
+func (u *User) FindContactByAltContact(altContact string) (Contact, error) {
+	url := fmt.Sprintf("http://localhost:%s/contacts/%s/search-by-alt?alt_contact=%s", u.port, Type, altContact)
+
+	resp, err := u.sendRESP(http.MethodGet, url, u.conf.UserID, nil)
+	if err != nil {
+		return Contact{}, fmt.Errorf("ошибка поиска контакта по альтернативному имени: %v", err)
 	}
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {

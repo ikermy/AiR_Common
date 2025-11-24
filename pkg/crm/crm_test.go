@@ -30,9 +30,14 @@ func getConfig() *conf.Conf {
 }
 
 // testGetCacheStats возвращает статистику использования кэша
-func (u *User) testGetCacheStats() (contactCount, leadCount int) {
+func (u *User) testGetCacheStats() (contactCount, altContactCount, leadCount int) {
 	u.contactCache.Range(func(key, val interface{}) bool {
 		contactCount++
+		return true
+	})
+
+	u.altContactCache.Range(func(key, val interface{}) bool {
+		altContactCount++
 		return true
 	})
 
@@ -41,13 +46,18 @@ func (u *User) testGetCacheStats() (contactCount, leadCount int) {
 		return true
 	})
 
-	return contactCount, leadCount
+	return contactCount, altContactCount, leadCount
 }
 
 // testClearCache очищает весь кэш
 func (u *User) testClearCache() {
 	u.contactCache.Range(func(key, val interface{}) bool {
 		u.contactCache.Delete(key)
+		return true
+	})
+
+	u.altContactCache.Range(func(key, val interface{}) bool {
+		u.altContactCache.Delete(key)
 		return true
 	})
 
@@ -82,14 +92,15 @@ func TestCRM(t *testing.T) {
 		t.Fatalf("Failed to initialize User: %v", err)
 	}
 
-	msg := c.MSG("c", "+54111234567", "Leo Gilligan", "Тестовое сообщение").
+	msg := c.MSG("c", "Leo Gilligan", "Тестовое сообщение").
+		WithPhone("+54111234567").
 		//WithFiles("audio.mp3", "video.mp4").
 		//NewDialog(true).
 		WithVoice(true)
 	//SetMeta(true)
 
 	// Существующий контакт
-	//msg := c.MSG("c", "+79991234567", "Иван Иванов", "Тестовое сообщение")
+	//msg := c.MSG("c", "Иван Иванов", "Тестовое сообщение").WithPhone("+79991234567")
 
 	time.Sleep(10 * time.Millisecond)
 
@@ -122,8 +133,8 @@ func TestCRM_Init(t *testing.T) {
 	logger.Infoln(user.conf)
 
 	// Проверяем статистику кэша
-	contactCount, leadCount := user.testGetCacheStats()
-	logger.Infoln("Cache stats - Contacts:", contactCount, "Leads:", leadCount)
+	contactCount, altContactCount, leadCount := user.testGetCacheStats()
+	logger.Infoln("Cache stats - Contacts:", contactCount, "AltContacts:", altContactCount, "Leads:", leadCount)
 }
 
 func TestCRM_Cache(t *testing.T) {
@@ -142,11 +153,14 @@ func TestCRM_Cache(t *testing.T) {
 	}
 
 	// Создаём тестовые сообщения
-	msg1 := user.MSG("user", "+54111234567", "Leo Gilligan", "Первое сообщение").
+	msg1 := user.MSG("user", "Leo Gilligan", "Первое сообщение").
+		WithPhone("+54111234567").
 		NewDialog(true)
-	msg2 := user.MSG("assist", "+54111234567", "Leo Gilligan", "Второе сообщение").
+	msg2 := user.MSG("assist", "Leo Gilligan", "Второе сообщение").
+		WithPhone("+54111234567").
 		SetMeta(true)
-	msg3 := user.MSG("user", "+79991234567", "John Smith", "Другой пользователь").
+	msg3 := user.MSG("user", "John Smith", "Другой пользователь").
+		WithPhone("+79991234567").
 		WithVoice(true)
 
 	// Отправляем первое сообщение (должно создать записи в кэше)
@@ -155,8 +169,8 @@ func TestCRM_Cache(t *testing.T) {
 	}
 
 	// Проверяем статистику после первого сообщения
-	contactCount, leadCount := user.testGetCacheStats()
-	t.Logf("After msg1 - Contacts in cache: %d, Leads in cache: %d", contactCount, leadCount)
+	contactCount, altContactCount, leadCount := user.testGetCacheStats()
+	t.Logf("After msg1 - Contacts: %d, AltContacts: %d, Leads: %d", contactCount, altContactCount, leadCount)
 
 	// Отправляем второе сообщение (должно использовать кэш)
 	if err := user.SendMessage(msg2); err != nil {
@@ -164,8 +178,8 @@ func TestCRM_Cache(t *testing.T) {
 	}
 
 	// Проверяем, что количество записей не изменилось
-	contactCount2, leadCount2 := user.testGetCacheStats()
-	t.Logf("After msg2 - Contacts in cache: %d, Leads in cache: %d", contactCount2, leadCount2)
+	contactCount2, altContactCount2, leadCount2 := user.testGetCacheStats()
+	t.Logf("After msg2 - Contacts: %d, AltContacts: %d, Leads: %d", contactCount2, altContactCount2, leadCount2)
 
 	if contactCount2 != contactCount {
 		t.Errorf("Expected same contact count, got %d, want %d", contactCount2, contactCount)
@@ -177,8 +191,8 @@ func TestCRM_Cache(t *testing.T) {
 	}
 
 	// Проверяем, что добавилась новая запись
-	contactCount3, leadCount3 := user.testGetCacheStats()
-	t.Logf("After msg3 - Contacts in cache: %d, Leads in cache: %d", contactCount3, leadCount3)
+	contactCount3, altContactCount3, leadCount3 := user.testGetCacheStats()
+	t.Logf("After msg3 - Contacts: %d, AltContacts: %d, Leads: %d", contactCount3, altContactCount3, leadCount3)
 
 	if contactCount3 <= contactCount2 {
 		t.Errorf("Expected more contacts in cache, got %d, want > %d", contactCount3, contactCount2)
@@ -188,11 +202,11 @@ func TestCRM_Cache(t *testing.T) {
 	user.testClearCache()
 
 	// Проверяем, что кэш пуст
-	contactCount4, leadCount4 := user.testGetCacheStats()
-	t.Logf("After testClearCache - Contacts in cache: %d, Leads in cache: %d", contactCount4, leadCount4)
+	contactCount4, altContactCount4, leadCount4 := user.testGetCacheStats()
+	t.Logf("After testClearCache - Contacts: %d, AltContacts: %d, Leads: %d", contactCount4, altContactCount4, leadCount4)
 
-	if contactCount4 != 0 || leadCount4 != 0 {
-		t.Errorf("Expected empty cache, got contacts=%d, leads=%d", contactCount4, leadCount4)
+	if contactCount4 != 0 || altContactCount4 != 0 || leadCount4 != 0 {
+		t.Errorf("Expected empty cache, got contacts=%d, altContacts=%d, leads=%d", contactCount4, altContactCount4, leadCount4)
 	}
 
 	time.Sleep(10 * time.Second)
@@ -218,7 +232,8 @@ func TestUninitializedUser(t *testing.T) {
 	}
 
 	// Проверяем безопасность вызова методов на неинициализированном user
-	msg := user.MSG("assist", "+1234567890", "Test User", "Тестовое сообщение").
+	msg := user.MSG("assist", "Test User", "Тестовое сообщение").
+		WithPhone("+1234567890").
 		WithFiles("file1.pdf").
 		SetMeta(true)
 
@@ -258,4 +273,149 @@ func TestCRM_Options(t *testing.T) {
 	// Пример 4: Только количество воркеров
 	crm4 := New(ctx, cfg, WithNumWorkers(5))
 	t.Logf("CRM создан с 5 воркерами: %+v", crm4)
+}
+
+// TestCRM_CreateContact тестирует создание контакта
+func TestCRM_CreateContact(t *testing.T) {
+	// Получаем конфигурацию
+	cfg := getConfig()
+
+	// Используем реальный сервер на порту 8092
+	cfg.WEB.CRM = "8092"
+
+	// Создаём контекст
+	ctx := context.Background()
+
+	// Создаём экземпляр CRM
+	crm := New(ctx, cfg)
+
+	// Инициализируем пользователя
+	user, err := crm.Init(23)
+	if err != nil {
+		t.Fatalf("Failed to initialize User: %v", err)
+	}
+
+	// Создаём структуру для создания контакта
+	createContact := &CreateContact{
+		Name:       "Marusia TEST",
+		AltContact: "@telegram_test",
+		CustomFields: []CustomField{
+			{
+				ID: 806181,
+			},
+		},
+	}
+
+	// Вызываем метод CreateContact
+	contact, err := user.CreateContact(createContact)
+	if err != nil {
+		t.Fatalf("Failed to create contact: %v", err)
+	}
+
+	// Проверяем результат
+	if contact.ID == "" {
+		t.Error("Contact ID should not be empty")
+	}
+
+	if contact.Name == "" {
+		t.Error("Contact Name should not be empty")
+	}
+
+	t.Logf("Contact created successfully: ID=%s, Name=%s", contact.ID, contact.Name)
+}
+
+// TestCRM_AltContact тестирует работу с альтернативными контактами
+func TestCRM_AltContact(t *testing.T) {
+	cfg := getConfig()
+	cfg.WEB.CRM = "8092"
+
+	ctx := context.Background()
+
+	// Создаём CRM с настройкой канала Telegram
+	crm := New(ctx, cfg, WithAltContactChannel(ChannelTelegram))
+
+	// Инициализируем пользователя
+	user, err := crm.Init(23)
+	if err != nil {
+		t.Fatalf("Failed to initialize User: %v", err)
+	}
+
+	// Создаём сообщение с альтернативным контактом (без телефона)
+	msg := user.MSG("user", "Telegram User", "Тестовое сообщение через Telegram").
+		WithAltContact("@telegram_test").
+		NewDialog(true)
+
+	// Отправляем сообщение
+	if err := user.SendMessage(msg); err != nil {
+		t.Fatalf("Failed to send message: %v", err)
+	}
+
+	// Ждём обработки сообщения воркером
+	time.Sleep(5 * time.Second)
+
+	// Проверяем кэш
+	contactCount, altContactCount, leadCount := user.testGetCacheStats()
+	t.Logf("Cache stats - Contacts: %d, AltContacts: %d, Leads: %d", contactCount, altContactCount, leadCount)
+
+	if altContactCount == 0 {
+		t.Error("Expected altContactCache to have entries")
+	}
+
+	// Отправляем второе сообщение тому же контакту (должно взять из кэша)
+	msg2 := user.MSG("assist", "Telegram User", "Ответ через Telegram").
+		WithAltContact("@telegram_test")
+
+	if err := user.SendMessage(msg2); err != nil {
+		t.Fatalf("Failed to send message 2: %v", err)
+	}
+
+	// Ждём обработки второго сообщения
+	time.Sleep(5 * time.Second)
+
+	// Проверяем, что количество в кэше не изменилось
+	contactCount2, altContactCount2, leadCount2 := user.testGetCacheStats()
+	t.Logf("After msg2 - Contacts: %d, AltContacts: %d, Leads: %d", contactCount2, altContactCount2, leadCount2)
+
+	if altContactCount2 != altContactCount {
+		t.Errorf("Expected same altContact count, got %d, want %d", altContactCount2, altContactCount)
+	}
+}
+
+// TestCRM_PriorityPhoneOverAlt тестирует приоритет телефона над альтернативным контактом
+func TestCRM_PriorityPhoneOverAlt(t *testing.T) {
+	t.Skip("Manual test - requires running server")
+
+	cfg := getConfig()
+	cfg.WEB.CRM = "8092"
+
+	ctx := context.Background()
+	crm := New(ctx, cfg, WithAltContactChannel(ChannelTelegram))
+
+	user, err := crm.Init(23)
+	if err != nil {
+		t.Fatalf("Failed to initialize User: %v", err)
+	}
+
+	// Сообщение с телефоном И альтернативным контактом
+	// Приоритет должен быть у телефона
+	msg := user.MSG("user", "Test User", "Тест приоритета").
+		WithPhone("+79991234567").
+		WithAltContact("@telegram_test")
+
+	if err := user.SendMessage(msg); err != nil {
+		t.Fatalf("Failed to send message: %v", err)
+	}
+
+	// Ждём обработки сообщения воркером
+	time.Sleep(2 * time.Second)
+
+	// Проверяем что используется кэш телефонов
+	contactCount, altContactCount, leadCount := user.testGetCacheStats()
+	t.Logf("Cache stats - Contacts: %d, AltContacts: %d, Leads: %d", contactCount, altContactCount, leadCount)
+
+	if contactCount == 0 {
+		t.Error("Expected contactCache to have entries (phone has priority)")
+	}
+
+	time.Sleep(5 * time.Second)
 }

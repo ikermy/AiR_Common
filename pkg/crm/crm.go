@@ -13,7 +13,8 @@
 //
 //	// Безопасное использование без дополнительных проверок
 //	// Если user не инициализирован, методы молча вернут nil
-//	msg := user.MSG("assist", "+1234567890", "John Doe", "Привет!").
+//	msg := user.MSG("assist", "John Doe", "Привет!").
+//	    WithPhone("+1234567890").
 //	    WithFiles("file1.pdf", "file2.docx").
 //	    SetMeta(true)
 //
@@ -22,8 +23,15 @@
 //	    log.Error("Ошибка отправки: %v", err)
 //	}
 //
-//	// Простой пример
-//	msg := user.MSG("user", "+1234567890", "Jane", "Голосовое").WithVoice(true)
+//	// Простой пример с телефоном
+//	msg := user.MSG("user", "Jane", "Голосовое").
+//	    WithPhone("+1234567890").
+//	    WithVoice(true)
+//	user.SendMessage(msg)
+//
+//	// Пример с альтернативным контактом
+//	msg := user.MSG("user", "Telegram User", "Сообщение").
+//	    WithAltContact("@telegram_username")
 //	user.SendMessage(msg)
 //
 // Кэширование:
@@ -72,11 +80,16 @@ type AmoCRMSettings struct {
 	CreateNewLead    bool     `json:"CreateNewLead"`    // Создавать новый лид
 	ChatMessages     bool     `json:"ChatMessages"`     // Добавлять сообщения чата
 	MetaExist        bool     `json:"MetaExist"`        // Добавлять метаданные
+	AltContact       bool     `json:"AltContact"`       // Создавать контакты без номера телефона
+	Telegram         int64    `json:"Telegram"`         // ID канала Telegram
+	Instagram        int64    `json:"Instagram"`        // ID канала Instagram
+	Widget           int64    `json:"Widget"`           // ID канала Widget
 }
 
 type UserCRMConfig struct {
-	UserID   uint32
-	Channels ChannelsSettings
+	UserID       uint32
+	Channels     ChannelsSettings
+	AltContactID int64 // ID канала для создания контактов без номера телефона
 }
 
 // cacheEntry хранит значение с временем последнего обращения
@@ -92,9 +105,10 @@ type CRM struct {
 
 	user sync.Map // key: uint32 (userID), value: *User
 
-	respTimeOut time.Duration // Время жизни запроса к User
-	cacheTTL    time.Duration // Время жизни записи в кэше
-	numWorkers  uint8         // Количество воркеров в пуле
+	respTimeOut       time.Duration      // Время жизни запроса к User
+	cacheTTL          time.Duration      // Время жизни записи в кэше
+	numWorkers        uint8              // Количество воркеров в пуле
+	altContactChannel *altContactChannel // Настройка канала для альтернативных контактов
 
 }
 
@@ -112,6 +126,9 @@ type User struct {
 	// Кэш: Phone → Contact.ID с TTL
 	contactCache sync.Map // map[string]*cacheEntry
 
+	// Кэш: AltContact → Contact.ID с TTL
+	altContactCache sync.Map // map[string]*cacheEntry
+
 	// Кэш: Contact.ID → Lead.ID с TTL
 	leadCache sync.Map // map[string]*cacheEntry
 
@@ -126,7 +143,35 @@ type User struct {
 	wg sync.WaitGroup
 }
 
+// AltContactChannelType тип канала для создания альтернативных контактов
+type AltContactChannelType string
+
+const (
+	ChannelTelegram  AltContactChannelType = "telegram"
+	ChannelInstagram AltContactChannelType = "instagram"
+	ChannelWidget    AltContactChannelType = "widget"
+)
+
 type Option func(*CRM)
+
+// altContactChannel хранит настройку канала для альтернативных контактов
+type altContactChannel struct {
+	channelType AltContactChannelType
+}
+
+// WithAltContactChannel устанавливает канал для создания контактов без номера телефона
+// Используется совместно с настройкой AltContact = true
+// Возможные значения: ChannelTelegram, ChannelInstagram, ChannelWidget
+//
+//nolint:unused // Экспортируемая функция для использования в других пакетах
+func WithAltContactChannel(channelType AltContactChannelType) Option {
+	return func(c *CRM) {
+		if c.altContactChannel == nil {
+			c.altContactChannel = &altContactChannel{}
+		}
+		c.altContactChannel.channelType = channelType
+	}
+}
 
 // WithRespTimeout устанавливает кастомный таймаут для HTTP-запросов
 //
@@ -166,11 +211,15 @@ func WithNumWorkers(n uint8) Option {
 // С кастомным TTL кэша
 //crmClient := crm.New(ctx, cfg, crm.WithCacheTTL(1*time.Hour))
 
+// С каналом для альтернативных контактов
+//crmClient := crm.New(ctx, cfg, crm.WithAltContactChannel(crm.ChannelTelegram))
+
 // Со всеми опциями
 //crmClient := crm.New(ctx, cfg,
 //crm.WithRespTimeout(20*time.Second),
 //crm.WithCacheTTL(45*time.Minute),
 //crm.WithNumWorkers(20),
+//crm.WithAltContactChannel(crm.ChannelTelegram),
 //)
 
 func New(parent context.Context, cfg *conf.Conf, opts ...Option) *CRM {
@@ -243,6 +292,18 @@ func (c *CRM) Init(userID uint32) (*User, error) {
 	crmConfig := &UserCRMConfig{
 		UserID:   userID,
 		Channels: *setting,
+	}
+
+	// Устанавливаем AltContactID если выполнены условия
+	if setting.AmoCRM.AltContact && c.altContactChannel != nil {
+		switch c.altContactChannel.channelType {
+		case ChannelTelegram:
+			crmConfig.AltContactID = setting.AmoCRM.Telegram
+		case ChannelInstagram:
+			crmConfig.AltContactID = setting.AmoCRM.Instagram
+		case ChannelWidget:
+			crmConfig.AltContactID = setting.AmoCRM.Widget
+		}
 	}
 
 	u.conf = crmConfig
@@ -388,6 +449,15 @@ func (u *User) cleanExpiredCache() {
 				return true
 			})
 
+			// Очищаем altContactCache
+			u.altContactCache.Range(func(key, val interface{}) bool {
+				entry := val.(*cacheEntry)
+				if now.Sub(entry.lastAccess) > u.cacheTTL {
+					u.altContactCache.Delete(key)
+				}
+				return true
+			})
+
 			// Очищаем leadCache
 			u.leadCache.Range(func(key, val interface{}) bool {
 				entry := val.(*cacheEntry)
@@ -448,42 +518,115 @@ func (u *User) worker(id uint8, messages <-chan *Message) {
 }
 
 func (u *User) processor(msg *Message) {
-	// Шаг 1: Получение или создание ContactID
+	// Определяем приоритет: телефон имеет приоритет над альтернативным контактом
 	var contactID string
-	// Проверяем кэш
-	if cachedContactID, found := u.getFromCache(&u.contactCache, msg.Phone); found {
-		logger.Debug("ContactID получен из кэша для %s: %s", msg.Phone, cachedContactID, u.conf.UserID)
-		contactID = cachedContactID
+	var contactIdentifier string
+	var useAltContact bool
+
+	// Приоритет: если есть телефон, используем его, иначе альтернативный контакт
+	if msg.Phone != "" {
+		contactIdentifier = msg.Phone
+		useAltContact = false
+		logger.Debug("Использование телефона как идентификатора: %s", msg.Phone, u.conf.UserID)
+	} else if msg.AltContact != "" && u.conf.Channels.AmoCRM.AltContact {
+		contactIdentifier = msg.AltContact
+		useAltContact = true
+		logger.Debug("Использование альтернативного контакта как идентификатора: %s", msg.AltContact, u.conf.UserID)
 	} else {
-		// Запрашиваем с сервера
-		contact, err := u.ContactID(msg.Phone)
-		if err != nil {
-			logger.Error("Ошибка получения ContactID для %s: %v", msg.Phone, err, u.conf.UserID)
-			return
-		}
-
-		// Если контакт не найден, создаем новый
-		if contact.ID == "" {
-			if !u.conf.Channels.AmoCRM.CreateNewContact {
-				logger.Warn("Создание новых контактов запрещено настройками для %s", msg.Phone, u.conf.UserID)
-				return
-			}
-			newContactData := CreateContact{Name: msg.Name, Phone: msg.Phone, Tags: u.conf.Channels.AmoCRM.Tags}
-			logger.Debug("Создание нового контакта в AmoCRM для %s", msg.Phone, u.conf.UserID)
-			contact, err = u.CreateContact(&newContactData)
-			if err != nil {
-				logger.Error("Ошибка создания контакта в AmoCRM для %s: %v", msg.Phone, err, u.conf.UserID)
-				return
-			}
-			logger.Info("Новый контакт создан в AmoCRM: ID=%s, Name=%s", contact.ID, contact.Name, u.conf.UserID)
-		}
-
-		// Сохраняем в кэш
-		u.setToCache(&u.contactCache, msg.Phone, contact.ID)
-		logger.Debug("ContactID сохранён в кэш для %s: %s", msg.Phone, contact.ID, u.conf.UserID)
-		contactID = contact.ID
+		logger.Warn("Не указан ни телефон, ни альтернативный контакт для сообщения", u.conf.UserID)
+		return
 	}
-	logger.Debug("Получен ContactID: %s для %s", contactID, msg.Phone, u.conf.UserID)
+
+	// Шаг 1: Получение или создание ContactID
+	// Проверяем соответствующий кэш
+	if useAltContact {
+		// Работаем с кэшем альтернативных контактов
+		if cachedContactID, found := u.getFromCache(&u.altContactCache, contactIdentifier); found {
+			logger.Debug("ContactID получен из кэша altContact для %s: %s", contactIdentifier, cachedContactID, u.conf.UserID)
+			contactID = cachedContactID
+		} else {
+			// Запрашиваем с сервера по альтернативному контакту
+			contact, err := u.FindContactByAltContact(msg.AltContact)
+			if err != nil {
+				logger.Error("Ошибка поиска ContactID по альтернативному контакту %s: %v", msg.AltContact, err, u.conf.UserID)
+				return
+			}
+
+			// Если контакт не найден, создаем новый
+			if contact.ID == "" {
+				if !u.conf.Channels.AmoCRM.CreateNewContact {
+					logger.Warn("Создание новых контактов запрещено настройками для %s", msg.AltContact, u.conf.UserID)
+					return
+				}
+
+				newContactData := CreateContact{
+					Name:       msg.Name,
+					AltContact: msg.AltContact,
+					Tags:       u.conf.Channels.AmoCRM.Tags,
+				}
+
+				// Добавляем CustomField если настроен AltContactID
+				if u.conf.AltContactID != 0 {
+					newContactData.CustomFields = []CustomField{{ID: u.conf.AltContactID}}
+				}
+
+				logger.Debug("Создание нового контакта в AmoCRM для альтернативного контакта %s", msg.AltContact, u.conf.UserID)
+				contact, err = u.CreateContact(&newContactData)
+				if err != nil {
+					logger.Error("Ошибка создания контакта в AmoCRM для %s: %v", msg.AltContact, err, u.conf.UserID)
+					return
+				}
+				logger.Info("Новый контакт создан в AmoCRM: ID=%s, Name=%s, AltContact=%s", contact.ID, contact.Name, msg.AltContact, u.conf.UserID)
+			}
+
+			// Сохраняем в кэш альтернативных контактов
+			u.setToCache(&u.altContactCache, contactIdentifier, contact.ID)
+			logger.Debug("ContactID сохранён в кэш altContact для %s: %s", contactIdentifier, contact.ID, u.conf.UserID)
+			contactID = contact.ID
+		}
+	} else {
+		// Работаем с кэшем телефонов
+		if cachedContactID, found := u.getFromCache(&u.contactCache, contactIdentifier); found {
+			logger.Debug("ContactID получен из кэша phone для %s: %s", contactIdentifier, cachedContactID, u.conf.UserID)
+			contactID = cachedContactID
+		} else {
+			// Запрашиваем с сервера по телефону
+			contact, err := u.ContactID(msg.Phone)
+			if err != nil {
+				logger.Error("Ошибка получения ContactID для %s: %v", msg.Phone, err, u.conf.UserID)
+				return
+			}
+
+			// Если контакт не найден, создаем новый
+			if contact.ID == "" {
+				if !u.conf.Channels.AmoCRM.CreateNewContact {
+					logger.Warn("Создание новых контактов запрещено настройками для %s", msg.Phone, u.conf.UserID)
+					return
+				}
+
+				newContactData := CreateContact{
+					Name:  msg.Name,
+					Phone: msg.Phone,
+					Tags:  u.conf.Channels.AmoCRM.Tags,
+				}
+
+				logger.Debug("Создание нового контакта в AmoCRM для %s", msg.Phone, u.conf.UserID)
+				contact, err = u.CreateContact(&newContactData)
+				if err != nil {
+					logger.Error("Ошибка создания контакта в AmoCRM для %s: %v", msg.Phone, err, u.conf.UserID)
+					return
+				}
+				logger.Info("Новый контакт создан в AmoCRM: ID=%s, Name=%s, Phone=%s", contact.ID, contact.Name, msg.Phone, u.conf.UserID)
+			}
+
+			// Сохраняем в кэш телефонов
+			u.setToCache(&u.contactCache, contactIdentifier, contact.ID)
+			logger.Debug("ContactID сохранён в кэш phone для %s: %s", contactIdentifier, contact.ID, u.conf.UserID)
+			contactID = contact.ID
+		}
+	}
+
+	logger.Debug("Получен ContactID: %s для %s", contactID, contactIdentifier, u.conf.UserID)
 
 	// Шаг 2: Получение или создание LeadID
 	var leadID string
