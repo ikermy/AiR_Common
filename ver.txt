@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.25.4"
-git tag -a v1.25.4 -m "Module CRM AltContact"
+git commit -m "v1.25.5"
+git tag -a v1.25.5 -m "notification refactoring"
 git push origin master
-git push origin v1.25.4
+git push origin v1.25.5

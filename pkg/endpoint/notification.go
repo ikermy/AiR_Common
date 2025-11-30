@@ -15,6 +15,42 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
+// sendHTTPRequest отправляет HTTP POST запрос с JSON payload
+func sendHTTPRequest(url string, payload map[string]interface{}) error {
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("ошибка при преобразовании данных в JSON: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("ошибка при создании HTTP-запроса: %w", err)
+	}
+
+	// Устанавливаем заголовки
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+
+	// Отправляем запрос
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ошибка при отправке HTTP-запроса: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("неожиданный статус ответа: %d, тело: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
 func (e *Endpoint) SendEvent(userId uint32, event, userName, assistName, target string) {
 	msg := common.CarpCh{
 		UserID:     userId,
@@ -123,20 +159,7 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 
 func SendTelegramNotification(tId int64, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	var url string
-	var client *http.Client
-
-	if mode.ProductionMode {
-		url = fmt.Sprintf("http://localhost:%s/notification", mode.CarpinteroPort)
-		client = &http.Client{}
-	} else {
-		url = fmt.Sprintf("https://localhost:%s/notification", mode.CarpinteroPort)
-		client = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			},
-		}
-	}
+	url := fmt.Sprintf("http://localhost:%s/notification/telega", mode.MailServerPort)
 
 	payload := map[string]interface{}{
 		"tid":    tId,
@@ -146,37 +169,13 @@ func SendTelegramNotification(tId int64, event, userName, assistName, target str
 		"target": target,
 	}
 
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("ошибка при преобразовании данных в JSON: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("ошибка при создании HTTP-запроса: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("ошибка при отправке HTTP-запроса: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("неожиданный статус ответа: %d, тело: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	return nil
+	return sendHTTPRequest(url, payload)
 }
 
 func SendEmailNotification(email, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	// Формируем URL для webhook
-	url := fmt.Sprintf("https://%s:%s/notification", mode.CarpinteroHost, mode.MailServerPort)
+	url := fmt.Sprintf("http://localhost:%s/notification/mail", mode.MailServerPort)
 
-	// Создаем данные для отправки
 	payload := map[string]interface{}{
 		"email":  email,
 		"event":  event,
@@ -185,51 +184,13 @@ func SendEmailNotification(email, event, userName, assistName, target string) er
 		"target": target,
 	}
 
-	// Преобразуем данные в JSON
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("ошибка при преобразовании данных в JSON: %w", err)
-	}
-
-	// Создаем HTTP-запрос
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("ошибка при создании HTTP-запроса: %w", err)
-	}
-
-	// Устанавливаем заголовки
-	req.Header.Set("Content-Type", "application/json")
-
-	// Создаем HTTP-клиент с отключенной проверкой сертификата
-	// нужно брать сертификаты из /etc/ssl/custom/..
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
-
-	// Отправляем запрос
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("ошибка при отправке HTTP-запроса: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Проверяем статус ответа
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("неожиданный статус ответа: %d, тело: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	return nil
+	return sendHTTPRequest(url, payload)
 }
 
 func SendInstantNotification(uid uint32, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	// Формируем URL для webhook
-	url := fmt.Sprintf("https://%s:%s/instant", mode.CarpinteroHost, mode.MailServerPort)
+	url := fmt.Sprintf("http://localhost:%s/notification/instant", mode.MailServerPort)
 
-	// Создаем данные для отправки
 	payload := map[string]interface{}{
 		"uid":    uid,
 		"event":  event,
@@ -238,43 +199,7 @@ func SendInstantNotification(uid uint32, event, userName, assistName, target str
 		"target": target,
 	}
 
-	// Преобразуем данные в JSON
-	jsonData, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("ошибка при преобразовании данных в JSON: %w", err)
-	}
-
-	// Создаем HTTP-запрос
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("ошибка при создании HTTP-запроса: %w", err)
-	}
-
-	// Устанавливаем заголовки
-	req.Header.Set("Content-Type", "application/json")
-
-	// Создаем HTTP-клиент с отключенной проверкой сертификата
-	// нужно брать сертификаты из /etc/ssl/custom/..
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		},
-	}
-
-	// Отправляем запрос
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("ошибка при отправке HTTP-запроса: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Проверяем статус ответа
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("неожиданный статус ответа: %d, тело: %s", resp.StatusCode, string(bodyBytes))
-	}
-
-	return nil
+	return sendHTTPRequest(url, payload)
 }
 
 // Структура для информации о инициации платежа

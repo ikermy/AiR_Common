@@ -4,7 +4,12 @@
 //
 //	import "github.com/ikermy/AiR_Common/pkg/crm"
 //
+//	// Стандартная инициализация
 //	crmClient := crm.New(ctx, cfg)
+//
+//	// Или с настройкой канала для альтернативных контактов (Telegram/Instagram/Widget)
+//	crmClient := crm.New(ctx, cfg, crm.WithAltContactChannel(crm.ChannelTelegram))
+//
 //	user, err := crmClient.Init(userID)
 //	// err проверяется только для логирования, user всегда возвращается
 //	if err != nil {
@@ -29,15 +34,25 @@
 //	    WithVoice(true)
 //	user.SendMessage(msg)
 //
-//	// Пример с альтернативным контактом
+//	// Пример с альтернативным контактом (требует WithAltContactChannel при инициализации)
 //	msg := user.MSG("user", "Telegram User", "Сообщение").
 //	    WithAltContact("@telegram_username")
 //	user.SendMessage(msg)
 //
+//	// Пример с приоритетом: если указаны и телефон и альтернативный контакт,
+//	// используется телефон
+//	msg := user.MSG("user", "User", "Сообщение").
+//	    WithPhone("+1234567890").
+//	    WithAltContact("@telegram_username")  // будет проигнорирован
+//	user.SendMessage(msg)
+//
 // Кэширование:
 //
-// Пакет автоматически кэширует Phone → Contact.ID и Contact.ID → Lead.ID
-// с TTL 30 минут. При каждом обращении к записи TTL обновляется.
+// Пакет автоматически кэширует следующие данные с TTL 30 минут:
+// - Phone → Contact.ID (кэш телефонов)
+// - AltContact → Contact.ID (кэш альтернативных контактов)
+// - Contact.ID → Lead.ID (кэш лидов)
+// При каждом обращении к записи TTL обновляется.
 // Это снижает количество HTTP-запросов на ~60-70% для активных диалогов.
 //
 //	// Получить статистику кэша
