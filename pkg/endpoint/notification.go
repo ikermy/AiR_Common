@@ -141,7 +141,7 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 				lastError = fmt.Errorf("channel_value не является строкой")
 				continue
 			}
-			err = SendEmailNotification(emailValue, msg.Event, msg.UserName, msg.AssistName, msg.Target)
+			err = SendEmailNotification(msg.UserID, emailValue, msg.Event, msg.UserName, msg.AssistName, msg.Target)
 			if err != nil {
 				logger.Error("ошибка отправки Email уведомления для пользователя %d: %v", msg.UserID, err)
 				lastError = err
