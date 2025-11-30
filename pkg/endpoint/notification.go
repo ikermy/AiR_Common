@@ -119,7 +119,7 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 				lastError = err
 				continue
 			}
-			err = SendTelegramNotification(tId, msg.Event, msg.UserName, msg.AssistName, msg.Target)
+			err = SendTelegramNotification(msg.UserID, tId, msg.Event, msg.UserName, msg.AssistName, msg.Target)
 			if err != nil {
 				logger.Error("Ошибка отправки Telegram уведомления: %v", err, msg.UserID)
 				lastError = err
@@ -162,11 +162,12 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 	return nil
 }
 
-func SendTelegramNotification(tId int64, event, userName, assistName, target string) error {
+func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	url := fmt.Sprintf("http://localhost:%s/notification/telega", mode.MailServerPort)
+	url := fmt.Sprintf("https://localhost:%s/notification/telega", mode.MailServerPort)
 
 	payload := map[string]interface{}{
+		"uid":    uid,
 		"tid":    tId,
 		"event":  event,
 		"user":   userName,
@@ -177,11 +178,12 @@ func SendTelegramNotification(tId int64, event, userName, assistName, target str
 	return sendHTTPRequest(url, payload)
 }
 
-func SendEmailNotification(email, event, userName, assistName, target string) error {
+func SendEmailNotification(uid uint32, email, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	url := fmt.Sprintf("http://localhost:%s/notification/mail", mode.MailServerPort)
+	url := fmt.Sprintf("https://localhost:%s/notification/mail", mode.MailServerPort)
 
 	payload := map[string]interface{}{
+		"uid":    uid,
 		"email":  email,
 		"event":  event,
 		"user":   userName,
@@ -194,7 +196,7 @@ func SendEmailNotification(email, event, userName, assistName, target string) er
 
 func SendInstantNotification(uid uint32, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	url := fmt.Sprintf("http://localhost:%s/notification/instant", mode.MailServerPort)
+	url := fmt.Sprintf("https://localhost:%s/notification/instant", mode.MailServerPort)
 
 	payload := map[string]interface{}{
 		"uid":    uid,
