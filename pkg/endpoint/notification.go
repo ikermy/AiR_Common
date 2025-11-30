@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/common"
@@ -20,6 +21,10 @@ func sendHTTPRequest(url string, payload map[string]interface{}) error {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("ошибка при преобразовании данных в JSON: %w", err)
+	}
+
+	if mode.ProductionMode {
+		url = strings.Replace(url, "https://", "http://", 1)
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))

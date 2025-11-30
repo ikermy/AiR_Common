@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.25.6"
-git tag -a v1.25.6 -m "notification refactoring"
+git commit -m "v1.25.7"
+git tag -a v1.25.7 -m "notification refactoring"
 git push origin master
-git push origin v1.25.6
+git push origin v1.25.7
