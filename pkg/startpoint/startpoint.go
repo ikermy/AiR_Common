@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/comdb"
@@ -47,7 +48,7 @@ type EndpointInterface interface {
 type ModelInterface interface {
 	NewMessage(operator model.Operator, msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message
 	Request(modelId string, dialogId uint64, ask *string, files ...model.FileUpload) (model.AssistResponse, error)
-	GetCh(respId uint64) (model.Ch, error)
+	GetCh(respId uint64) (*model.Ch, error)
 	CleanUp()
 }
 
@@ -69,6 +70,8 @@ type Start struct {
 	End  EndpointInterface
 	Bot  BotInterface
 	Oper OperatorInterface
+
+	respondentWG sync.Map // map[uint64]*sync.WaitGroup - для синхронизации завершения Respondent
 }
 
 // New создаёт новый экземпляр Start
@@ -604,13 +607,29 @@ func (s *Start) Respondent(
 				Operator:    operatorAnswered,
 			},
 		}
-		//Проверяю что канал answerCh не закрыт
-		select {
-		case answerCh <- answ:
-		default:
-			errCh <- fmt.Errorf("канал answerCh закрыт или переполнен %v", u.Assist.UserId)
-			return
-		}
+
+		// Защита от паники при отправке в закрытый канал
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.Error("Паника при отправке в answerCh для пользователя %d: %v", u.Assist.UserId, r)
+					select {
+					case errCh <- fmt.Errorf("паника при отправке в answerCh: %v", r):
+					default:
+					}
+				}
+			}()
+
+			//Проверяю что канал answerCh не закрыт
+			select {
+			case answerCh <- answ:
+			default:
+				select {
+				case errCh <- fmt.Errorf("канал answerCh закрыт или переполнен %v", u.Assist.UserId):
+				default:
+				}
+			}
+		}()
 	}
 }
 
@@ -626,9 +645,17 @@ func (s *Start) StarterRespondent(
 	// Нужен ли мютекс???
 	if !u.Services.Respondent {
 		u.Services.Respondent = true
+
+		// Создаем WaitGroup для синхронизации
+		wg := &sync.WaitGroup{}
+		wg.Add(1)
+		s.respondentWG.Store(treadId, wg)
+
 		go func() {
 			defer func() {
 				u.Services.Respondent = false
+				wg.Done()
+				s.respondentWG.Delete(treadId)
 			}()
 
 			// Реагируем на отмену общего контекста: при отмене просто выходим, Respondent сам завершится по s.ctx.Done()
@@ -668,7 +695,7 @@ func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
 }
 
 // Listener слушает канал от пользователя и обрабатывает сообщения
-func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, treadId uint64) error {
+func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, treadId uint64) error {
 	question := make(chan Question, 1)
 	fullQuestCh := make(chan Answer, 1)
 	answerCh := make(chan Answer, 1)
@@ -681,7 +708,25 @@ func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, trea
 		logger.Debug("Закрытие каналов в Listener", u.Assist.UserId)
 
 		listenerCancel() // Отменяем контекст перед закрытием каналов
-		// Надеемся что Respondent успеет завершиться. Сделать канал?
+
+		// Ждем завершения Respondent перед закрытием каналов
+		if wgInterface, ok := s.respondentWG.Load(treadId); ok {
+			wg := wgInterface.(*sync.WaitGroup)
+
+			// Ждем с таймаутом
+			done := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+				logger.Debug("Respondent завершен, закрываем каналы", u.Assist.UserId)
+			case <-time.After(5 * time.Second):
+				logger.Warn("Таймаут ожидания завершения Respondent", u.Assist.UserId)
+			}
+		}
 
 		close(question)
 		close(fullQuestCh)
@@ -735,27 +780,51 @@ func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, trea
 					}
 				default:
 					// Неизвестный тип сообщения, пропускаю
-					errCh <- fmt.Errorf("неизвестный тип сообщения: %s", msg.Type, u.Assist.UserId)
+					errCh <- fmt.Errorf("неизвестный тип сообщения: %s для пользователя %d", msg.Type, u.Assist.UserId)
 					continue
 				}
 
-				// Безопасно отправляю вопрос ассистенту/оператору
-				select {
-				case question <- quest:
-					// Успешная отправка
-				case <-s.ctx.Done():
-					logger.Debug("Контекст отменен при отправке в questionCh", u.Assist.UserId)
-					return nil
-				default:
-					return fmt.Errorf("'Listener' question канал questionCh закрыт или переполнен")
+				// Защита от паники при отправке в questionCh
+				sendErr := func() error {
+					defer func() {
+						if r := recover(); r != nil {
+							logger.Error("Паника при отправке в questionCh для пользователя %d: %v", u.Assist.UserId, r)
+						}
+					}()
+
+					select {
+					case question <- quest:
+						return nil
+					case <-s.ctx.Done():
+						logger.Debug("Контекст отменен при отправке в questionCh", u.Assist.UserId)
+						return fmt.Errorf("контекст отменен")
+					case <-time.After(100 * time.Millisecond):
+						return fmt.Errorf("'Listener' таймаут отправки в questionCh (возможно закрыт)")
+					default:
+						return fmt.Errorf("'Listener' question канал questionCh закрыт или переполнен")
+					}
+				}()
+
+				if sendErr != nil {
+					return sendErr
 				}
 
-				// Отправляю вопрос клиента в виде сообщения
-				select {
-				// Operator верно берется из вопроса, чтобы знать кому адресовать сообщение
-				case usrCh.TxCh <- s.Mod.NewMessage(msg.Operator, "user", &msg.Content, &msg.Name):
-				default:
-					return fmt.Errorf("'Listener' question канал TxCh закрыт или переполнен")
+				// Отправляю вопрос клиента в виде сообщения с защитой от паники
+				userMsg := s.Mod.NewMessage(msg.Operator, "user", &msg.Content, &msg.Name)
+				if err := usrCh.SendToTx(userMsg); err != nil {
+					// Фолбэк на прямую отправку с защитой
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								logger.Error("Паника при отправке в TxCh для пользователя %d: %v", u.Assist.UserId, r)
+							}
+						}()
+						select {
+						case usrCh.TxCh <- userMsg:
+						default:
+							logger.Warn("'Listener' question канал TxCh закрыт или переполнен: %v", err)
+						}
+					}()
 				}
 			}
 		case quest := <-fullQuestCh: // Пришёл полный вопрос пользователя
@@ -767,17 +836,31 @@ func (s *Start) Listener(u *model.RespModel, usrCh model.Ch, respId uint64, trea
 				s.End.SaveDialog(comdb.UserVoice, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			}
 		case resp := <-answerCh: // Пришёл ответ ассистента/оператора
-			select {
-			// Operator верно берется из ответа, чтобы знать кто фактически ответил
-			case usrCh.TxCh <- s.Mod.NewMessage(resp.Operator, "assist", &resp.Answer, &u.Assist.AssistName): // Имя ассистента из настроек модели
-				switch resp.Operator.Operator {
-				case false:
-					s.End.SaveDialog(comdb.AI, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
-				case true:
-					s.End.SaveDialog(comdb.Operator, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
-				}
-			default:
-				return fmt.Errorf("'Listener' answer канал TxCh закрыт или переполнен")
+			assistMsg := s.Mod.NewMessage(resp.Operator, "assist", &resp.Answer, &u.Assist.AssistName)
+
+			// Безопасная отправка ответа в TxCh
+			if err := usrCh.SendToTx(assistMsg); err != nil {
+				// Фолбэк на прямую отправку с защитой
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							logger.Error("Паника при отправке ответа в TxCh для пользователя %d: %v", u.Assist.UserId, r)
+						}
+					}()
+					select {
+					case usrCh.TxCh <- assistMsg:
+					default:
+						logger.Warn("'Listener' answer канал TxCh закрыт или переполнен: %v", err)
+					}
+				}()
+			}
+
+			// Сохраняем диалог после успешной отправки
+			switch resp.Operator.Operator {
+			case false:
+				s.End.SaveDialog(comdb.AI, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
+			case true:
+				s.End.SaveDialog(comdb.Operator, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			}
 		}
 	}

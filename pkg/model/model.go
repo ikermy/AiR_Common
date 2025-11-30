@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/conf"
@@ -22,7 +23,7 @@ type Model interface {
 	NewMessage(operator Operator, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message
 	GetFileAsReader(url string) (io.Reader, error)
 	GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error)
-	GetCh(respId uint64) (Ch, error)
+	GetCh(respId uint64) (*Ch, error)
 	GetRespIdByDialogId(dialogId uint64) (uint64, error)
 	SaveAllContextDuringExit()
 	Request(modelId string, dialogId uint64, text *string, files ...FileUpload) (AssistResponse, error)
@@ -77,7 +78,7 @@ type RespModel struct {
 	Ctx       context.Context
 	Cancel    context.CancelFunc
 	TreadsGPT map[uint64]*openai.Thread
-	Chan      map[uint64]Ch
+	Chan      map[uint64]*Ch
 	TTL       time.Time
 	Assist    Assistant
 	RespName  string
@@ -126,13 +127,81 @@ type Ch struct {
 	UserId   uint32
 	DialogId uint64
 	RespName string
+	txClosed atomic.Bool // Флаг закрытия TxCh
+	rxClosed atomic.Bool // Флаг закрытия RxCh
+}
+
+// IsTxOpen проверяет, открыт ли канал TxCh для записи
+func (ch *Ch) IsTxOpen() bool {
+	return !ch.txClosed.Load()
+}
+
+// IsRxOpen проверяет, открыт ли канал RxCh для записи
+func (ch *Ch) IsRxOpen() bool {
+	return !ch.rxClosed.Load()
+}
+
+// SendToTx безопасно отправляет сообщение в TxCh
+func (ch *Ch) SendToTx(msg Message) error {
+	if !ch.IsTxOpen() {
+		return fmt.Errorf("канал TxCh закрыт для dialogId %d", ch.DialogId)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Паника при отправке в TxCh для dialogId %d: %v", ch.DialogId, r)
+		}
+	}()
+
+	select {
+	case ch.TxCh <- msg:
+		return nil
+	default:
+		return fmt.Errorf("канал TxCh переполнен для dialogId %d", ch.DialogId)
+	}
+}
+
+// SendToRx безопасно отправляет сообщение в RxCh
+func (ch *Ch) SendToRx(msg Message) error {
+	if !ch.IsRxOpen() {
+		return fmt.Errorf("канал RxCh закрыт для dialogId %d", ch.DialogId)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Паника при отправке в RxCh для dialogId %d: %v", ch.DialogId, r)
+		}
+	}()
+
+	select {
+	case ch.RxCh <- msg:
+		return nil
+	default:
+		return fmt.Errorf("канал RxCh переполнен для dialogId %d", ch.DialogId)
+	}
+}
+
+// Close безопасно закрывает каналы Ch
+func (ch *Ch) Close() error {
+	// Устанавливаем флаги (блокируем новые отправки)
+	ch.txClosed.Store(true)
+	ch.rxClosed.Store(true)
+
+	// Даем время для завершения активных операций
+	time.Sleep(10 * time.Millisecond)
+
+	// Безопасно закрываем каналы
+	safeClose(ch.TxCh)
+	safeClose(ch.RxCh)
+
+	return nil
 }
 
 // StartCh структура для передачи данных для запуска слушателя
 type StartCh struct {
 	Ctx     context.Context
 	Model   *RespModel
-	Chanel  Ch
+	Chanel  *Ch
 	TreadId uint64
 	RespId  uint64
 }
@@ -394,14 +463,14 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 		Assist:   assist,
 		RespName: respName,
 		TTL:      time.Now().Add(m.UserModelTTl), // * time.Minute, ПРОВЕРИТЬ!!!
-		Chan:     make(map[uint64]Ch),
+		Chan:     make(map[uint64]*Ch),
 		Services: Services{Listener: false, Respondent: false},
 		Ctx:      userCtx,
 		Cancel:   cancel,
 	}
 
 	// Добавляем новый Ch в map
-	user.Chan[respId] = Ch{
+	user.Chan[respId] = &Ch{
 		TxCh:     make(chan Message, 1),
 		RxCh:     make(chan Message, 1),
 		UserId:   assist.UserId,
@@ -449,7 +518,7 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 	return user, nil
 }
 
-func (m *Models) GetCh(respId uint64) (Ch, error) {
+func (m *Models) GetCh(respId uint64) (*Ch, error) {
 	// Проверяем, есть ли уже канал для ожидания этого responderId
 	waitChInterface, exists := m.waitChannels.Load(respId)
 	var waitCh chan struct{}
@@ -474,15 +543,15 @@ func (m *Models) GetCh(respId uint64) (Ch, error) {
 		// Сигнал получен, пробуем снова
 		return m.getTryCh(respId)
 	case <-m.ctx.Done():
-		return Ch{}, fmt.Errorf("отменено контекстом ожидание канала для responderId %d", respId)
+		return nil, fmt.Errorf("отменено контекстом ожидание канала для responderId %d", respId)
 	case <-time.After(1 * time.Second):
-		return Ch{}, fmt.Errorf("тайм-аут при ожидании канала для responderId %d", respId)
+		return nil, fmt.Errorf("тайм-аут при ожидании канала для responderId %d", respId)
 	}
 }
 
 // Метод для проверки существования канала
-func (m *Models) getTryCh(respId uint64) (Ch, error) {
-	var userCh Ch
+func (m *Models) getTryCh(respId uint64) (*Ch, error) {
+	var userCh *Ch
 	var found bool
 
 	m.responders.Range(func(key, value interface{}) bool {
@@ -508,7 +577,7 @@ func (m *Models) getTryCh(respId uint64) (Ch, error) {
 	if found {
 		return userCh, nil
 	}
-	return Ch{}, fmt.Errorf("respModel не найден для responderId %d", respId)
+	return nil, fmt.Errorf("respModel не найден для responderId %d", respId)
 }
 
 func (m *Models) CleanDialogData(dialogId uint64) {
@@ -554,7 +623,15 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 		// Блокируем доступ к полям RespModel для записи при закрытии каналов
 		respModel.mu.Lock()
 		// Закрытие всех каналов в TxCh
-		for respId, ch := range respModel.Chan {
+		for respId := range respModel.Chan {
+			ch := respModel.Chan[respId]
+			// Устанавливаем флаги закрытия ПЕРЕД закрытием каналов
+			ch.txClosed.Store(true)
+			ch.rxClosed.Store(true)
+
+			// Небольшая задержка для завершения активных отправок
+			time.Sleep(10 * time.Millisecond)
+
 			safeClose(ch.TxCh)
 			safeClose(ch.RxCh)
 			//log.Printf("Каналы закрыты для responderId %d", respId)
@@ -827,7 +904,15 @@ func (m *Models) cleanupAllResponders() {
 
 		// Закрываем все каналы
 		respModel.mu.Lock()
-		for respId, ch := range respModel.Chan {
+		for respId := range respModel.Chan {
+			ch := respModel.Chan[respId]
+			// Устанавливаем флаги закрытия ПЕРЕД закрытием каналов
+			ch.txClosed.Store(true)
+			ch.rxClosed.Store(true)
+
+			// Небольшая задержка для завершения активных отправок
+			time.Sleep(10 * time.Millisecond)
+
 			safeClose(ch.TxCh)
 			safeClose(ch.RxCh)
 			delete(respModel.Chan, respId)

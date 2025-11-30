@@ -1,0 +1,343 @@
+// ПАТЧ для библиотеки github.com/ikermy/AiR_Common
+// Версия: v1.26.0
+// Дата: 2025-11-30
+
+// ============================================================================
+// 1. pkg/model/model.go
+// ============================================================================
+
+// ---- ДОБАВИТЬ после импортов (примерно строка 20) ----
+
+// safeClose безопасно закрывает канал Message с защитой от паники
+func safeClose(ch chan Message) {
+	if ch == nil {
+		return
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Debug("Попытка закрыть уже закрытый канал: %v", r)
+		}
+	}()
+
+	close(ch)
+}
+
+// ---- ИЗМЕНИТЬ структуру Ch (строка ~123) ----
+// БЫЛО:
+/*
+type Ch struct {
+	TxCh     chan Message
+	RxCh     chan Message
+	UserId   uint32
+	DialogId uint64
+	RespName string
+}
+*/
+
+// СТАЛО:
+type Ch struct {
+	TxCh     chan Message
+	RxCh     chan Message
+	UserId   uint32
+	DialogId uint64
+	RespName string
+	txClosed atomic.Bool // Флаг закрытия TxCh
+	rxClosed atomic.Bool // Флаг закрытия RxCh
+}
+
+// ---- ДОБАВИТЬ методы для Ch (после определения структуры) ----
+
+// IsTxOpen проверяет, открыт ли канал TxCh для записи
+func (ch *Ch) IsTxOpen() bool {
+	return !ch.txClosed.Load()
+}
+
+// IsRxOpen проверяет, открыт ли канал RxCh для записи
+func (ch *Ch) IsRxOpen() bool {
+	return !ch.rxClosed.Load()
+}
+
+// SendToTx безопасно отправляет сообщение в TxCh
+func (ch *Ch) SendToTx(msg Message) error {
+	if !ch.IsTxOpen() {
+		return fmt.Errorf("канал TxCh закрыт для dialogId %d", ch.DialogId)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Паника при отправке в TxCh для dialogId %d: %v", ch.DialogId, r)
+		}
+	}()
+
+	select {
+	case ch.TxCh <- msg:
+		return nil
+	default:
+		return fmt.Errorf("канал TxCh переполнен для dialogId %d", ch.DialogId)
+	}
+}
+
+// SendToRx безопасно отправляет сообщение в RxCh
+func (ch *Ch) SendToRx(msg Message) error {
+	if !ch.IsRxOpen() {
+		return fmt.Errorf("канал RxCh закрыт для dialogId %d", ch.DialogId)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Паника при отправке в RxCh для dialogId %d: %v", ch.DialogId, r)
+		}
+	}()
+
+	select {
+	case ch.RxCh <- msg:
+		return nil
+	default:
+		return fmt.Errorf("канал RxCh переполнен для dialogId %d", ch.DialogId)
+	}
+}
+
+// Close безопасно закрывает каналы Ch
+func (ch *Ch) Close() error {
+	// Устанавливаем флаги (блокируем новые отправки)
+	ch.txClosed.Store(true)
+	ch.rxClosed.Store(true)
+
+	// Даем время для завершения активных операций
+	time.Sleep(10 * time.Millisecond)
+
+	// Безопасно закрываем каналы
+	safeClose(ch.TxCh)
+	safeClose(ch.RxCh)
+
+	return nil
+}
+
+// ---- ИЗМЕНИТЬ CleanDialogData (строка ~548) ----
+// ЗАМЕНИТЬ блок:
+/*
+	respModel.mu.Lock()
+	for respId, ch := range respModel.Chan {
+		safeClose(ch.TxCh)
+		safeClose(ch.RxCh)
+		delete(respModel.Chan, respId)
+	}
+	respModel.mu.Unlock()
+*/
+
+// НА:
+	respModel.mu.Lock()
+	for respId, ch := range respModel.Chan {
+		// Устанавливаем флаги закрытия ПЕРЕД закрытием каналов
+		ch.txClosed.Store(true)
+		ch.rxClosed.Store(true)
+
+		// Небольшая задержка для завершения активных отправок
+		time.Sleep(10 * time.Millisecond)
+
+		safeClose(ch.TxCh)
+		safeClose(ch.RxCh)
+		delete(respModel.Chan, respId)
+	}
+	respModel.mu.Unlock()
+
+// ---- ИЗМЕНИТЬ cleanupAllResponders (строка ~820) ----
+// ЗАМЕНИТЬ аналогичный блок закрытия каналов на тот же код с флагами
+
+// ============================================================================
+// 2. pkg/startpoint/startpoint.go
+// ============================================================================
+
+// ---- ИЗМЕНИТЬ Respondent, перед отправкой в answerCh (строка ~607) ----
+// ЗАМЕНИТЬ:
+/*
+	select {
+	case answerCh <- answ:
+	default:
+		errCh <- fmt.Errorf("канал answerCh закрыт или переполнен %v", u.Assist.UserId)
+		return
+	}
+*/
+
+// НА:
+	// Защита от паники при отправке в закрытый канал
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("Паника при отправке в answerCh для пользователя %d: %v", u.Assist.UserId, r)
+				errCh <- fmt.Errorf("паника при отправке в answerCh: %v", r)
+			}
+		}()
+
+		select {
+		case answerCh <- answ:
+		default:
+			errCh <- fmt.Errorf("канал answerCh закрыт или переполнен %v", u.Assist.UserId)
+		}
+	}()
+
+	// Если была паника или ошибка, выходим
+	select {
+	case <-errCh:
+		return
+	default:
+	}
+
+// ---- ИЗМЕНИТЬ Listener, отправку в questionCh (строка ~733) ----
+// ЗАМЕНИТЬ:
+/*
+	select {
+	case question <- quest:
+		// Успешная отправка
+	case <-s.ctx.Done():
+		logger.Debug("Контекст отменен при отправке в questionCh", u.Assist.UserId)
+		return nil
+	default:
+		return fmt.Errorf("'Listener' question канал questionCh закрыт или переполнен")
+	}
+*/
+
+// НА:
+	// Защита от паники
+	sendErr := func() error {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Error("Паника при отправке в questionCh для пользователя %d: %v", u.Assist.UserId, r)
+			}
+		}()
+
+		select {
+		case question <- quest:
+			return nil
+		case <-s.ctx.Done():
+			logger.Debug("Контекст отменен при отправке в questionCh", u.Assist.UserId)
+			return fmt.Errorf("контекст отменен")
+		case <-time.After(100 * time.Millisecond):
+			return fmt.Errorf("'Listener' таймаут отправки в questionCh (возможно закрыт)")
+		default:
+			return fmt.Errorf("'Listener' question канал questionCh закрыт или переполнен")
+		}
+	}()
+
+	if sendErr != nil {
+		return sendErr
+	}
+
+// ---- ДОБАВИТЬ в структуру Start (строка ~30-50) ----
+type Start struct {
+	ctx          context.Context
+	cancel       context.CancelFunc
+	Ask          AskFunc
+	Mod          model.Model
+	Bot          BotInterface
+	End          EndpointInterface
+	Oper         OperatorInterface
+	respondentWG sync.Map // map[uint64]*sync.WaitGroup - для синхронизации завершения
+}
+
+// ---- ИЗМЕНИТЬ StarterRespondent (строка ~620) ----
+// ДОБАВИТЬ в начало функции, после проверки Services.Respondent:
+	if !u.Services.Respondent {
+		u.Services.Respondent = true
+
+		// Создаем WaitGroup для синхронизации
+		wg := &sync.WaitGroup{}
+		wg.Add(1)
+		s.respondentWG.Store(treadId, wg)
+
+		go func() {
+			defer func() {
+				u.Services.Respondent = false
+				wg.Done()
+				s.respondentWG.Delete(treadId)
+			}()
+
+			// Остальной код...
+			s.Respondent(u, questionCh, answerCh, fullQuestCh, respId, treadId, errCh)
+		}()
+	}
+
+// ---- ИЗМЕНИТЬ defer в Listener (строка ~678) ----
+// ЗАМЕНИТЬ:
+/*
+	defer func() {
+		logger.Debug("Закрытие каналов в Listener", u.Assist.UserId)
+		listenerCancel()
+		close(question)
+		close(fullQuestCh)
+		close(answerCh)
+		close(errCh)
+	}()
+*/
+
+// НА:
+	defer func() {
+		logger.Debug("Закрытие каналов в Listener", u.Assist.UserId)
+		listenerCancel()
+
+		// Ждем завершения Respondent перед закрытием каналов
+		if wgInterface, ok := s.respondentWG.Load(treadId); ok {
+			wg := wgInterface.(*sync.WaitGroup)
+
+			// Ждем с таймаутом
+			done := make(chan struct{})
+			go func() {
+				wg.Wait()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+				logger.Debug("Respondent завершен, закрываем каналы", u.Assist.UserId)
+			case <-time.After(5 * time.Second):
+				logger.Warn("Таймаут ожидания завершения Respondent", u.Assist.UserId)
+			}
+		}
+
+		close(question)
+		close(fullQuestCh)
+		close(answerCh)
+		close(errCh)
+	}()
+
+// ============================================================================
+// ИНСТРУКЦИЯ ПО ПРИМЕНЕНИЮ ПАТЧА
+// ============================================================================
+/*
+1. Создать новую ветку: git checkout -b feature/safe-channel-operations
+2. Внести изменения согласно патчу в указанные файлы
+3. Запустить тесты: go test -race ./pkg/...
+4. Проверить обратную совместимость
+5. Обновить версию в go.mod: v1.26.0
+6. Создать Pull Request с описанием изменений
+
+КРИТИЧЕСКИЕ ТОЧКИ ДЛЯ ТЕСТИРОВАНИЯ:
+- Одновременная отправка и закрытие канала
+- Shutdown при активных диалогах
+- Быстрое переключение между операторским режимом и AI
+- Множественные респонденты на одного пользователя
+
+BREAKING CHANGES:
+- Добавлены поля txClosed и rxClosed в структуру Ch
+- Клиентский код должен использовать методы SendToTx/SendToRx вместо прямой отправки
+- Необходимо обновить все места, где создается Ch с помощью литерала
+
+МИГРАЦИЯ ДЛЯ КЛИЕНТСКОГО КОДА:
+Старый код:
+	usrCh.RxCh <- userMessage
+
+Новый код (рекомендуется):
+	if err := usrCh.SendToRx(userMessage); err != nil {
+		// обработка ошибки
+	}
+
+Альтернатива (обратная совместимость):
+	defer func() {
+		if r := recover(); r != nil {
+			// обработка паники
+		}
+	}()
+	usrCh.RxCh <- userMessage
+*/
+

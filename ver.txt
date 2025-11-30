@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.25.9"
-git tag -a v1.25.9 -m "notification refactoring"
+git commit -m "v1.26.0"
+git tag -a v1.26.0 -m "Fix critical race conditions in channel operations"
 git push origin master
-git push origin v1.25.9
+git push origin v1.26.0
