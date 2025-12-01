@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.26.1"
-git tag -a v1.26.1 -m "Fix critical race conditions in channel operations"
+git commit -m "v1.26.2"
+git tag -a v1.26.2 -m "Fix critical race conditions in channel operations"
 git push origin master
-git push origin v1.26.1
+git push origin v1.26.2

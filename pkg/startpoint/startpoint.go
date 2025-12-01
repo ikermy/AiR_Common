@@ -128,11 +128,6 @@ func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string, files ...m
 	defer cancel()
 
 	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Warn("Восстановлено от паники в горутине Ask: %v", r)
-			}
-		}()
 
 		// Ранний выход, если контекст уже отменён
 		select {
@@ -608,28 +603,15 @@ func (s *Start) Respondent(
 			},
 		}
 
-		// Защита от паники при отправке в закрытый канал
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					logger.Error("Паника при отправке в answerCh для пользователя %d: %v", u.Assist.UserId, r)
-					select {
-					case errCh <- fmt.Errorf("паника при отправке в answerCh: %v", r):
-					default:
-					}
-				}
-			}()
-
-			//Проверяю что канал answerCh не закрыт
+		//Проверяю что канал answerCh не закрыт
+		select {
+		case answerCh <- answ:
+		default:
 			select {
-			case answerCh <- answ:
+			case errCh <- fmt.Errorf("канал answerCh закрыт или переполнен %v", u.Assist.UserId):
 			default:
-				select {
-				case errCh <- fmt.Errorf("канал answerCh закрыт или переполнен %v", u.Assist.UserId):
-				default:
-				}
 			}
-		}()
+		}
 	}
 }
 
@@ -786,11 +768,6 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 
 				// Защита от паники при отправке в questionCh
 				sendErr := func() error {
-					defer func() {
-						if r := recover(); r != nil {
-							logger.Error("Паника при отправке в questionCh для пользователя %d: %v", u.Assist.UserId, r)
-						}
-					}()
 
 					select {
 					case question <- quest:
@@ -814,11 +791,6 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 				if err := usrCh.SendToTx(userMsg); err != nil {
 					// Фолбэк на прямую отправку с защитой
 					func() {
-						defer func() {
-							if r := recover(); r != nil {
-								logger.Error("Паника при отправке в TxCh для пользователя %d: %v", u.Assist.UserId, r)
-							}
-						}()
 						select {
 						case usrCh.TxCh <- userMsg:
 						default:
@@ -842,11 +814,6 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 			if err := usrCh.SendToTx(assistMsg); err != nil {
 				// Фолбэк на прямую отправку с защитой
 				func() {
-					defer func() {
-						if r := recover(); r != nil {
-							logger.Error("Паника при отправке ответа в TxCh для пользователя %d: %v", u.Assist.UserId, r)
-						}
-					}()
 					select {
 					case usrCh.TxCh <- assistMsg:
 					default:
