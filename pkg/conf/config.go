@@ -43,6 +43,7 @@ type WebConfig struct {
 	Whats   string `mapstructure:"whats"`
 	Oper    string `mapstructure:"oper"`
 	CRM     string `mapstructure:"crm"`
+	Pay     string `mapstructure:"pay"`
 }
 
 type DBConfig struct {
