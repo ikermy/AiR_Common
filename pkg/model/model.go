@@ -464,7 +464,7 @@ func (m *Models) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, resp
 		RespName: respName,
 		TTL:      time.Now().Add(m.UserModelTTl), // * time.Minute, ПРОВЕРИТЬ!!!
 		Chan:     make(map[uint64]*Ch),
-		Services: Services{Listener: false, Respondent: false},
+		Services: Services{},
 		Ctx:      userCtx,
 		Cancel:   cancel,
 	}
