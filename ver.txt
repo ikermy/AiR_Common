@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.26.3"
-git tag -a v1.26.3 -m "notification fix"
+git commit -m "v1.26.4"
+git tag -a v1.26.4 -m "startpoint no critical errors"
 git push origin master
-git push origin v1.26.3
+git push origin v1.26.4

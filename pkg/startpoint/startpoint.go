@@ -1,4 +1,4 @@
-package startpoint
+﻿package startpoint
 
 import (
 	"context"
@@ -95,7 +95,7 @@ func (s *Start) Shutdown() {
 	}
 }
 
-func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (s *Start) ask(modelId string, dialogId uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 	answerCh := make(chan model.AssistResponse, 1)
 	errCh := make(chan error, 1)
@@ -132,7 +132,7 @@ func (s *Start) Ask(modelId string, dialogId uint64, arrAsk []string, files ...m
 		// Ранний выход, если контекст уже отменён
 		select {
 		case <-ctx.Done():
-			logger.Debug("Ask ранний выход по ctx.Done() для модели %s и диалога %d", modelId, dialogId)
+			logger.Debug("ask ранний выход по ctx.Done() для модели %s и диалога %d", modelId, dialogId)
 			return
 		default:
 		}
@@ -501,9 +501,15 @@ func (s *Start) Respondent(
 			if err != nil || (respMsg.Content.Message == "" && len(respMsg.Content.Action.SendFiles) == 0) {
 				errCh <- fmt.Errorf("ошибка запроса к оператору или пустой ответ, фолбэк в OpenAI: %v", err)
 				// Отправляю запрос в OpenAI
-				answer, err = s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+				answer, err = s.AskWithRetry(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
 				if err != nil {
-					errCh <- fmt.Errorf("ошибка запроса к модели: %v", err)
+					if IsFatalError(err) {
+						errCh <- fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserId, err)
+						return
+					}
+					// Некритическая ошибка — логируем и продолжаем слушать
+					logger.Debug("Некритическая ошибка для пользователя %d: %v", u.Assist.UserId, err)
+					continue
 				}
 				operatorAnswered = false
 			} else {
@@ -522,10 +528,19 @@ func (s *Start) Respondent(
 
 		} else {
 			// Отправляю запрос в OpenAI
-			answer, err = s.Ask(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+			answer, err = s.AskWithRetry(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+			if err != nil {
+				if IsFatalError(err) {
+					errCh <- fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserId, err)
+					return
+				}
+				// Некритическая ошибка — логируем и продолжаем слушать
+				logger.Debug("Некритическая ошибка для пользователя %d: %v", u.Assist.UserId, err)
+				continue
+			}
 
 			// Пришёл ответ от модели, проверяю на флаг запроса операторского режима
-			if err == nil && answer.Operator {
+			if answer.Operator {
 				// Модель запросила эскалацию к оператору
 				if !operatorMode {
 					operatorMode = true
@@ -578,10 +593,6 @@ func (s *Start) Respondent(
 		// Oyente
 		deaf = false
 
-		if err != nil {
-			errCh <- fmt.Errorf("пользователь %d, ошибка запроса к модели/оператору: %v", u.Assist.UserId, err)
-			continue
-		}
 		// Если пустой ответ
 		if answer.Message == "" && len(answer.Action.SendFiles) == 0 {
 			continue
@@ -624,9 +635,8 @@ func (s *Start) StarterRespondent(
 	treadId uint64,
 	errCh chan error,
 ) {
-	// Нужен ли мютекс???
-	if !u.Services.Respondent {
-		u.Services.Respondent = true
+	if !u.Services.Respondent.Load() {
+		u.Services.Respondent.Store(true)
 
 		// Создаем WaitGroup для синхронизации
 		wg := &sync.WaitGroup{}
@@ -635,7 +645,7 @@ func (s *Start) StarterRespondent(
 
 		go func() {
 			defer func() {
-				u.Services.Respondent = false
+				u.Services.Respondent.Store(false)
 				wg.Done()
 				s.respondentWG.Delete(treadId)
 			}()
@@ -655,22 +665,39 @@ func (s *Start) StarterRespondent(
 
 // StarterListener запускает Listener для пользователя, если он ещё не запущен
 func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
-	// Заменяю на контекст бота
-	s.ctx = start.Ctx
-
-	if !start.Model.Services.Listener {
-		start.Model.Services.Listener = true
+	if !start.Model.Services.Listener.Load() {
+		start.Model.Services.Listener.Store(true)
 		go func() {
-			defer func() { start.Model.Services.Listener = false }()
-			//// Если общий контекст отменён — не запускаем Listener
-			//select {
-			//case <-s.ctx.Done():
-			//	logger.Debug("StarterListener canceled by Start context %s", start.Model.RespName, start.Model.Assist.UserId)
-			//	return
-			//default:
-			//}
+			defer func() { start.Model.Services.Listener.Store(false) }()
+			// Создаём контекст listener, который завершится при отмене:
+			// - родительского s.ctx (общий контекст Start)
+			// - или контекста бота start.Ctx
+			listenerCtx, listenerCancel := context.WithCancel(s.ctx)
+			defer listenerCancel()
+
+			// Связываем с контекстом бота
+			go func() {
+				select {
+				case <-start.Ctx.Done():
+					listenerCancel()
+				case <-listenerCtx.Done():
+				}
+			}()
+
+			// Если контекст бота уже отменён — не запускаем Listener
+			select {
+			case <-start.Ctx.Done():
+				logger.Debug("StarterListener canceled by bot context %s %d", start.Model.RespName, start.Model.Assist.UserId)
+				return
+			default:
+			}
+
 			if err := s.Listener(start.Model, start.Chanel, start.RespId, start.TreadId); err != nil {
-				errCh <- err // Отправляем ошибку в App
+				select {
+				case errCh <- err: // Отправляем ошибку в App
+				default:
+					logger.Warn("Не удалось отправить ошибку в errCh: %v", err, start.Model.Assist.UserId)
+				}
 			}
 		}()
 	}
@@ -678,9 +705,9 @@ func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
 
 // Listener слушает канал от пользователя и обрабатывает сообщения
 func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, treadId uint64) error {
-	question := make(chan Question, 1)
+	question := make(chan Question, 10)
 	fullQuestCh := make(chan Answer, 1)
-	answerCh := make(chan Answer, 1)
+	answerCh := make(chan Answer, 10)
 	errCh := make(chan error, 1)
 
 	// Создаем контекст для координированного завершения
@@ -794,7 +821,7 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 						select {
 						case usrCh.TxCh <- userMsg:
 						default:
-							logger.Warn("'Listener' question канал TxCh закрыт или переполнен: %v", err)
+							logger.Warn("'Listener' question канал TxCh закрыт или переполнен: %v", err, u.Assist.UserId)
 						}
 					}()
 				}
@@ -817,7 +844,7 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 					select {
 					case usrCh.TxCh <- assistMsg:
 					default:
-						logger.Warn("'Listener' answer канал TxCh закрыт или переполнен: %v", err)
+						logger.Warn("'Listener' answer канал TxCh закрыт или переполнен: %v", err, u.Assist.UserId)
 					}
 				}()
 			}

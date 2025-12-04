@@ -89,8 +89,8 @@ type RespModel struct {
 
 // Фактически не используется!?
 type Services struct {
-	Listener   bool
-	Respondent bool
+	Listener   atomic.Bool
+	Respondent atomic.Bool
 }
 
 type Action struct {
