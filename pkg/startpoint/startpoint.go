@@ -1,4 +1,4 @@
-﻿package startpoint
+package startpoint
 
 import (
 	"context"
@@ -176,15 +176,20 @@ func (s *Start) Respondent(
 	errCh chan error,
 ) {
 	var (
-		deaf            bool   // Не слушать ввод пользователя до момента получения ответа
-		ask             string // Вопрос пользователя
-		askTimer        *time.Timer
-		VoiceQuestion   bool                 // Флаг, указывающий, что вопрос был задан голосом
-		currentQuest    Question             // Текущий вопрос пользователя, который обрабатывается
-		operatorMode    bool                 // Флаг включенного операторского режима
-		operatorRxCh    <-chan model.Message // Канал для получения сообщений от оператора
-		operatorErrorCh <-chan string        // Канал для получения ошибок от операторского бэка
+		deaf                 bool   // Не слушать ввод пользователя до момента получения ответа
+		ask                  string // Вопрос пользователя
+		askTimer             *time.Timer
+		VoiceQuestion        bool                 // Флаг, указывающий, что вопрос был задан голосом
+		currentQuest         Question             // Текущий вопрос пользователя, который обрабатывается
+		operatorMode         bool                 // Флаг включенного операторского режима
+		operatorRxCh         <-chan model.Message // Канал для получения сообщений от оператора
+		operatorErrorCh      <-chan string        // Канал для получения ошибок от операторского бэка
+		operatorTimeoutTimer *time.Timer          // Таймер для отслеживания таймаута ответа оператора
+		operatorTimeoutCh    chan struct{}        // Канал для сигнала о таймауте оператора
 	)
+
+	// Создаём канал для таймаута оператора
+	operatorTimeoutCh = make(chan struct{}, 1)
 
 	// Получаем канал ошибок сразу при запуске Respondent
 	operatorErrorCh = s.Oper.GetConnectionErrors(s.ctx, u.Assist.UserId, treadId)
@@ -230,6 +235,79 @@ func (s *Start) Respondent(
 				continue
 			}
 
+		// Обработка таймаута ожидания ответа оператора
+		case <-operatorTimeoutCh:
+			logger.Warn("Таймаут ожидания ответа оператора для пользователя %d (%d сек), переключение на AI режим",
+				u.Assist.UserId, mode.OperatorResponseTimeout)
+
+			// Останавливаем таймер
+			operatorTimeoutTimer = nil
+
+			// Отключаем операторский режим
+			operatorMode = false
+			operatorRxCh = nil
+
+			// Удаляем сессию оператора
+			if err := s.Oper.DeleteSession(u.Assist.UserId, treadId); err != nil {
+				logger.Warn("Ошибка при удалении сессии оператора: %v", err)
+			}
+
+			// Отключаем режим оператора в боте
+			if err := s.Bot.DisableOperatorMode(u.Assist.UserId, treadId); err != nil {
+				logger.Warn("Ошибка при отключении режима оператора в боте: %v", err)
+			}
+
+			// Отправляем информационное сообщение пользователю о переключении на AI
+			timeoutMessage := fmt.Sprintf("⏱️ Оператор не ответил в течение %d секунд\nПродолжаю работу в режиме AI-агента 🧠", mode.OperatorResponseTimeout)
+			// Для production (120 секунд = 2 минуты) показываем в минутах
+			if mode.OperatorResponseTimeout >= 60 {
+				timeoutMessage = fmt.Sprintf("⏱️ Оператор не ответил в течение %d минут\nПродолжаю работу в режиме AI-агента 🧠", mode.OperatorResponseTimeout/60)
+			}
+			systemMsg := model.AssistResponse{
+				Message: timeoutMessage,
+			}
+			select {
+			case answerCh <- Answer{
+				Answer:   systemMsg,
+				Operator: model.Operator{SetOperator: false, Operator: false},
+			}:
+				logger.Debug("Отправлено сообщение о переключении с оператора на AI", u.Assist.UserId)
+			default:
+				logger.Warn("Не удалось отправить сообщение о переключении на AI", u.Assist.UserId)
+			}
+
+			// Если есть текущий вопрос без ответа, обрабатываем его через AI
+			if !deaf && currentQuest.Question != nil && len(currentQuest.Question) > 0 {
+				logger.Debug("Обрабатываем необработанный вопрос через AI после таймаута оператора", u.Assist.UserId)
+
+				// Формируем вопрос для AI
+				userAsk := currentQuest.Question
+
+				// Отправляем запрос в AI
+				answer, err := s.AskWithRetry(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+				if err != nil {
+					if IsFatalError(err) {
+						errCh <- fmt.Errorf("критическая ошибка при обработке вопроса после таймаута оператора: %v", err)
+						return
+					}
+					logger.Debug("Некритическая ошибка AI после таймаута оператора для пользователя %d: %v", u.Assist.UserId, err)
+				} else {
+					// Отправляем ответ AI
+					select {
+					case answerCh <- Answer{
+						Answer:        answer,
+						VoiceQuestion: currentQuest.Voice,
+						Operator:      model.Operator{SetOperator: false, Operator: false},
+					}:
+						deaf = false
+					default:
+						errCh <- fmt.Errorf("канал answerCh закрыт при отправке ответа AI после таймаута оператора")
+						return
+					}
+				}
+			}
+			continue
+
 		// Обработка сообщений от оператора (только если канал инициализирован)
 		case operatorMsg := <-func() <-chan model.Message {
 			if operatorMode && operatorRxCh != nil {
@@ -260,6 +338,19 @@ func (s *Start) Respondent(
 					errCh <- fmt.Errorf("ошибка при отключении режима оператора: %w", err)
 				}
 				continue
+			}
+
+			// Останавливаем таймер ожидания первого ответа оператора
+			// После первого ответа режим становится постоянным (без таймера)
+			if operatorTimeoutTimer != nil {
+				operatorTimeoutTimer.Stop()
+				operatorTimeoutTimer = nil // Обнуляем чтобы больше не перезапускать
+				// Очищаем канал если там есть сигнал
+				select {
+				case <-operatorTimeoutCh:
+				default:
+				}
+				logger.Debug("Таймер оператора остановлен - режим теперь постоянный", u.Assist.UserId)
 			}
 
 			// Отправка ответа оператора пользователю
@@ -326,7 +417,15 @@ func (s *Start) Respondent(
 				if !operatorMode {
 					operatorMode = true
 					operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserId, treadId)
-					logger.Debug("Включен операторский режим для пользователя %d", u.Assist.UserId)
+
+					// Запускаем таймер ожидания ответа оператора с callback
+					operatorTimeoutTimer = time.AfterFunc(time.Duration(mode.OperatorResponseTimeout)*time.Second, func() {
+						select {
+						case operatorTimeoutCh <- struct{}{}:
+						default:
+						}
+					})
+					logger.Debug("Включен операторский режим для пользователя %d (таймаут: %d сек)", u.Assist.UserId, mode.OperatorResponseTimeout, u.Assist.UserId)
 				}
 
 				if askTimer != nil {
@@ -522,7 +621,26 @@ func (s *Start) Respondent(
 				if !operatorMode {
 					operatorMode = true
 					operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserId, treadId)
-					logger.Debug("Операторский режим активирован после ответа оператора для пользователя %d", u.Assist.UserId)
+
+					// Запускаем таймер для операторского режима с callback
+					operatorTimeoutTimer = time.AfterFunc(time.Duration(mode.OperatorResponseTimeout)*time.Second, func() {
+						select {
+						case operatorTimeoutCh <- struct{}{}:
+						default:
+						}
+					})
+					logger.Debug("Операторский режим активирован после ответа оператора для пользователя %d (таймаут: %d сек)", u.Assist.UserId, mode.OperatorResponseTimeout)
+				} else if operatorTimeoutTimer != nil {
+					// Оператор ответил - останавливаем таймер навсегда
+					// Режим становится постоянным
+					operatorTimeoutTimer.Stop()
+					operatorTimeoutTimer = nil // Обнуляем чтобы больше не использовать
+					// Очищаем канал если там есть сигнал
+					select {
+					case <-operatorTimeoutCh:
+					default:
+					}
+					logger.Debug("Таймер оператора остановлен для пользователя %d - режим теперь постоянный", u.Assist.UserId)
 				}
 			}
 
@@ -705,9 +823,9 @@ func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
 
 // Listener слушает канал от пользователя и обрабатывает сообщения
 func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, treadId uint64) error {
-	question := make(chan Question, 10)
+	question := make(chan Question, 1)
 	fullQuestCh := make(chan Answer, 1)
-	answerCh := make(chan Answer, 10)
+	answerCh := make(chan Answer, 1)
 	errCh := make(chan error, 1)
 
 	// Создаем контекст для координированного завершения
@@ -813,17 +931,10 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 					return sendErr
 				}
 
-				// Отправляю вопрос клиента в виде сообщения с защитой от паники
+				// Отправляю вопрос клиента в виде сообщения
 				userMsg := s.Mod.NewMessage(msg.Operator, "user", &msg.Content, &msg.Name)
 				if err := usrCh.SendToTx(userMsg); err != nil {
-					// Фолбэк на прямую отправку с защитой
-					func() {
-						select {
-						case usrCh.TxCh <- userMsg:
-						default:
-							logger.Warn("'Listener' question канал TxCh закрыт или переполнен: %v", err, u.Assist.UserId)
-						}
-					}()
+					logger.Warn("Ошибка отправки вопроса в TxCh для dialogId %d: %v", treadId, err, u.Assist.UserId)
 				}
 			}
 		case quest := <-fullQuestCh: // Пришёл полный вопрос пользователя
@@ -839,14 +950,7 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 
 			// Безопасная отправка ответа в TxCh
 			if err := usrCh.SendToTx(assistMsg); err != nil {
-				// Фолбэк на прямую отправку с защитой
-				func() {
-					select {
-					case usrCh.TxCh <- assistMsg:
-					default:
-						logger.Warn("'Listener' answer канал TxCh закрыт или переполнен: %v", err, u.Assist.UserId)
-					}
-				}()
+				logger.Warn("Ошибка отправки ответа в TxCh для dialogId %d: %v", treadId, err, u.Assist.UserId)
 			}
 
 			// Сохраняем диалог после успешной отправки

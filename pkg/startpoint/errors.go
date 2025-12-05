@@ -1,4 +1,4 @@
-﻿package startpoint
+package startpoint
 
 import (
 	"errors"

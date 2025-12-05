@@ -1,4 +1,4 @@
-﻿package mode
+package mode
 
 import (
 	"github.com/ikermy/AiR_Common/pkg/common"
@@ -27,6 +27,10 @@ var (
 	CarpinteroPort string
 	CarpinteroHost string
 	RealHost       string
+	// Operator settings
+	// Таймаут ожидания ПЕРВОГО ответа оператора в секундах (120 сек = 2 минуты)
+	// После первого ответа операторский режим становится постоянным (без таймера)
+	OperatorResponseTimeout = 120
 )
 
 func SetTestMode(enabled bool) {

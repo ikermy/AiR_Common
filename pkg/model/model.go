@@ -156,8 +156,8 @@ func (ch *Ch) SendToTx(msg Message) error {
 	select {
 	case ch.TxCh <- msg:
 		return nil
-	default:
-		return fmt.Errorf("канал TxCh переполнен для dialogId %d", ch.DialogId)
+	case <-time.After(1 * time.Second):
+		return fmt.Errorf("таймаут отправки в TxCh для dialogId %d", ch.DialogId)
 	}
 }
 
@@ -599,9 +599,14 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 	tread := respModel.TreadsGPT[dialogId]
 	respModel.mu.RUnlock()
 
+	// Создаём независимый контекст с таймаутом для отмены runs
+	// Это гарантирует, что отмена runs завершится даже если respModel.Cancel() будет вызван
+	cancelCtx, cancelFunc := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelFunc()
+
 	// Отменяем активные runs перед сохранением и очисткой
 	if tread != nil {
-		if err := m.cancelActiveRunsCtx(m.ctx, tread.ID); err != nil {
+		if err := m.cancelActiveRunsCtx(cancelCtx, tread.ID); err != nil {
 			logger.Warn("Ошибка при отмене активных runs для dialogId %d: %v", dialogId, err, userId)
 		}
 	}
@@ -618,39 +623,40 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 		logger.Error("ошибка сохранения контекста для dialogId %d: %v", dialogId, err, userId)
 	}
 
-	// Вызов функции Cancel, если она существует
+	// Отменяем контекст респондера перед закрытием каналов
 	if respModel.Cancel != nil {
-		// Блокируем доступ к полям RespModel для записи при закрытии каналов
-		respModel.mu.Lock()
-		// Закрытие всех каналов в TxCh
-		for respId := range respModel.Chan {
-			ch := respModel.Chan[respId]
-			// Устанавливаем флаги закрытия ПЕРЕД закрытием каналов
-			ch.txClosed.Store(true)
-			ch.rxClosed.Store(true)
-
-			// Небольшая задержка для завершения активных отправок
-			time.Sleep(10 * time.Millisecond)
-
-			safeClose(ch.TxCh)
-			safeClose(ch.RxCh)
-			//log.Printf("Каналы закрыты для responderId %d", respId)
-			// Удаляем канал из TxCh
-			delete(respModel.Chan, respId)
-		}
-		respModel.mu.Unlock()
-
-		//log.Printf("Channels closed for dialogId %d", dialogId)
-
-		// Освобождаю контекст и завершаю горутины
 		respModel.Cancel()
-		// Удаляю запись из кэша
-		//respModel.activeOps.Wait() // ТЕСТИРОВАТЬ
-		m.responders.Delete(dialogId)
-
-		//log.Printf("Контекст отменен для dialogId %d", dialogId)
 	} else {
 		logger.Error("Контекст не найден для dialogId %d", dialogId, userId)
+	}
+
+	// Закрываем каналы и очищаем респондер
+	m.closeResponderChannels(respModel)
+
+	// Удаляем запись из кэша
+	m.responders.Delete(dialogId)
+}
+
+// closeResponderChannels закрывает все каналы респондера
+func (m *Models) closeResponderChannels(respModel *RespModel) {
+	respModel.mu.Lock()
+	defer respModel.mu.Unlock()
+
+	for respId := range respModel.Chan {
+		ch := respModel.Chan[respId]
+
+		// Устанавливаем флаги закрытия ПЕРЕД закрытием каналов
+		ch.txClosed.Store(true)
+		ch.rxClosed.Store(true)
+
+		// Небольшая задержка для завершения активных отправок
+		time.Sleep(10 * time.Millisecond)
+
+		safeClose(ch.TxCh)
+		safeClose(ch.RxCh)
+
+		// Удаляем канал из карты
+		delete(respModel.Chan, respId)
 	}
 }
 
@@ -902,23 +908,8 @@ func (m *Models) cleanupAllResponders() {
 			respModel.Cancel()
 		}
 
-		// Закрываем все каналы
-		respModel.mu.Lock()
-		for respId := range respModel.Chan {
-			ch := respModel.Chan[respId]
-			// Устанавливаем флаги закрытия ПЕРЕД закрытием каналов
-			ch.txClosed.Store(true)
-			ch.rxClosed.Store(true)
-
-			// Небольшая задержка для завершения активных отправок
-			time.Sleep(10 * time.Millisecond)
-
-			safeClose(ch.TxCh)
-			safeClose(ch.RxCh)
-			delete(respModel.Chan, respId)
-			//logger.Debug("Каналы закрыты для responderId %d", respId)
-		}
-		respModel.mu.Unlock()
+		// Закрываем все каналы используя общую функцию
+		m.closeResponderChannels(respModel)
 
 		// Удаляем респондер из кэша
 		m.responders.Delete(key)
