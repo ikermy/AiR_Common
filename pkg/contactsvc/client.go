@@ -7,15 +7,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/ikermy/AiR_Common/pkg/contactsvc/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 // ClientConfig конфигурация для подключения к удалённому сервису
 type ClientConfig struct {
-	Host    string
-	Port    int
+	Address string
 	Timeout time.Duration
 }
 
@@ -27,8 +26,8 @@ type Client struct {
 	timeout time.Duration
 }
 
-// NewClient создаёт новый клиент для отправки контактов
-func NewClient(config ClientConfig) *Client {
+// RealNewClient создаёт новый клиент для отправки контактов
+func RealNewClient(config ClientConfig) *Client {
 	if config.Timeout == 0 {
 		config.Timeout = 30 * time.Second
 	}
@@ -48,20 +47,16 @@ func (c *Client) Connect() error {
 		return nil // Уже подключен
 	}
 
-	addr := fmt.Sprintf("%s:%d", c.config.Host, c.config.Port)
-
-	// Используем grpc.NewClient вместо устаревшего DialContext
+	// Создаём gRPC-соединение
 	conn, err := grpc.NewClient(
-		addr,
+		c.config.Address,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 	if err != nil {
-		logger.Error("Ошибка при подключении к контактному сервису на %s: %v", addr, err)
-		return err
+		return fmt.Errorf("ошибка при подключении к %s: %w", c.config.Address, err)
 	}
 
 	c.conn = conn
-	logger.Info("Успешное подключение к контактному сервису на %s", addr)
 	return nil
 }
 
@@ -74,10 +69,8 @@ func (c *Client) Close() error {
 		err := c.conn.Close()
 		c.conn = nil
 		if err != nil {
-			logger.Error("Ошибка при закрытии соединения с контактным сервисом: %v", err)
 			return err
 		}
-		logger.Info("Соединение с контактным сервисом закрыто")
 	}
 
 	return nil
@@ -94,9 +87,23 @@ func (c *Client) SendFinalResult(ctx context.Context, contactsData json.RawMessa
 		return fmt.Errorf("соединение не установлено")
 	}
 
-	// Примечание: Реальная отправка будет выполняться целевым приложением
-	// используя свой gRPC-клиент и proto-определения
-	// Здесь мы просто проверяем соединение
+	// Десериализуем JSON в FinalResult
+	var finalResult pb.FinalResult
+	if err := json.Unmarshal(contactsData, &finalResult); err != nil {
+		return fmt.Errorf("ошибка при десериализации контактов: %w", err)
+	}
+
+	// Создаём gRPC-клиент
+	client := pb.Client(conn)
+
+	// Отправляем данные с таймаутом
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	_, err := client.SendFinalResult(ctxWithTimeout, &finalResult)
+	if err != nil {
+		return fmt.Errorf("ошибка при отправке контактов: %w", err)
+	}
 
 	return nil
 }

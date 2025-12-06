@@ -1,53 +1,45 @@
 package contactsvc
 
 import (
-	"encoding/json"
+	"context"
 	"sync"
+
+	"github.com/ikermy/AiR_Common/pkg/contactsvc/pb"
 )
 
-// ContactsServiceHandler - обобщённый обработчик для любых контактных данных
-// Не зависит от конкретного proto-пакета
-type ContactsServiceHandler struct {
+// Handler - реализация gRPC-сервиса ContactsService
+type Handler struct {
+	pb.UnimplementedServiceServer
 	mu   sync.Mutex
-	db   DB
-	data map[string]json.RawMessage // Буфер для хранения полученных контактов (JSON)
+	data *pb.FinalResult // Буфер для хранения последних полученных контактов
 }
 
-// NewContactsServiceHandler создаёт новый обработчик
-func NewContactsServiceHandler(db DB) *ContactsServiceHandler {
-	return &ContactsServiceHandler{
-		db:   db,
-		data: make(map[string]json.RawMessage),
-	}
+// NewHandler создаёт новый обработчик
+func NewHandler() *Handler {
+	return &Handler{}
 }
 
-// HandleContactsData получает данные контактов и сохраняет их
-// Работает с любыми структурами контактов благодаря JSON
-func (h *ContactsServiceHandler) HandleContactsData(contactsData json.RawMessage) error {
+// SendFinalResult реализует gRPC-метод для получения контактов
+func (h *Handler) SendFinalResult(ctx context.Context, result *pb.FinalResult) (*pb.Empty, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	// Сохраняем в буфер
-	h.data["contacts"] = contactsData
+	h.data = result
 
-	return nil
+	return &pb.Empty{}, nil
 }
 
-// GetData возвращает полученные контакты в виде JSON
-func (h *ContactsServiceHandler) GetData() map[string]json.RawMessage {
+// GetData возвращает последние полученные контакты
+func (h *Handler) GetData() *pb.FinalResult {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
-	result := make(map[string]json.RawMessage)
-	for k, v := range h.data {
-		result[k] = v
-	}
-	return result
+	return h.data
 }
 
 // ClearData очищает буфер полученных контактов
-func (h *ContactsServiceHandler) ClearData() {
+func (h *Handler) ClearData() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.data = make(map[string]json.RawMessage)
+	h.data = nil
 }
