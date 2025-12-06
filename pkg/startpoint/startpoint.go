@@ -13,6 +13,18 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/model"
 )
 
+// sendError безопасно отправляет ошибку в errCh без блокировки.
+// Если канал переполнен, ошибка логируется как предупреждение.
+func (s *Start) sendError(errCh chan<- error, err error, userId uint32) {
+	select {
+	case errCh <- err:
+		// Успешно отправлено в канал
+	default:
+		// Канал переполнен - fallback логирование
+		logger.Warn("Канал errCh переполнен, ошибка: %v", err, userId)
+	}
+}
+
 // Question структура для хранения вопросов пользователя
 type Question struct {
 	Question []string           // Вопрос пользователя, может состоять из нескольких вопросов
@@ -206,14 +218,14 @@ func (s *Start) Respondent(
 		// Обработка ошибок подключения к оператору
 		case errorType := <-operatorErrorCh:
 			if errorType == "no_tg_id" {
-				logger.Warn("Нет tg_id для пользователя %d, отключаем операторский режим", u.Assist.UserId)
+				logger.Warn("Нет tg_id, отключаем операторский режим", u.Assist.UserId)
 				operatorMode = false
 				operatorRxCh = nil
 
 				// Вызываю тихое отключение режима оператор для пользовательского бота
 				err := s.Bot.DisableOperatorMode(u.Assist.UserId, treadId, true)
 				if err != nil {
-					errCh <- fmt.Errorf("ошибка при отключении режима оператора: %w", err)
+					s.sendError(errCh, fmt.Errorf("ошибка при отключении режима оператора: %w", err), u.Assist.UserId)
 				}
 
 				// Отправляем информационное сообщение пользователю
@@ -226,7 +238,7 @@ func (s *Start) Respondent(
 					Operator: model.Operator{SetOperator: false, Operator: false},
 				}:
 				default:
-					errCh <- fmt.Errorf("канал answerCh закрыт при отправке сообщения об ошибке tg_id")
+					s.sendError(errCh, fmt.Errorf("канал answerCh закрыт при отправке сообщения об ошибке tg_id"), u.Assist.UserId)
 					return
 				}
 
@@ -237,8 +249,8 @@ func (s *Start) Respondent(
 
 		// Обработка таймаута ожидания ответа оператора
 		case <-operatorTimeoutCh:
-			logger.Warn("Таймаут ожидания ответа оператора для пользователя %d (%d сек), переключение на AI режим",
-				u.Assist.UserId, mode.OperatorResponseTimeout)
+			logger.Warn("Таймаут ожидания ответа оператора (%d сек), переключение на AI режим",
+				mode.OperatorResponseTimeout, u.Assist.UserId)
 
 			// Останавливаем таймер
 			operatorTimeoutTimer = nil
@@ -249,12 +261,12 @@ func (s *Start) Respondent(
 
 			// Удаляем сессию оператора
 			if err := s.Oper.DeleteSession(u.Assist.UserId, treadId); err != nil {
-				logger.Warn("Ошибка при удалении сессии оператора: %v", err)
+				logger.Warn("Ошибка при удалении сессии оператора: %v", err, u.Assist.UserId)
 			}
 
 			// Отключаем режим оператора в боте
 			if err := s.Bot.DisableOperatorMode(u.Assist.UserId, treadId); err != nil {
-				logger.Warn("Ошибка при отключении режима оператора в боте: %v", err)
+				logger.Warn("Ошибка при отключении режима оператора в боте: %v", err, u.Assist.UserId)
 			}
 
 			// Отправляем информационное сообщение пользователю о переключении на AI
@@ -287,10 +299,10 @@ func (s *Start) Respondent(
 				answer, err := s.AskWithRetry(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
 				if err != nil {
 					if IsFatalError(err) {
-						errCh <- fmt.Errorf("критическая ошибка при обработке вопроса после таймаута оператора: %v", err)
+						s.sendError(errCh, fmt.Errorf("критическая ошибка при обработке вопроса после таймаута оператора: %v", err), u.Assist.UserId)
 						return
 					}
-					logger.Debug("Некритическая ошибка AI после таймаута оператора для пользователя %d: %v", u.Assist.UserId, err)
+					logger.Debug("Некритическая ошибка AI после таймаута оператора: %v", err, u.Assist.UserId)
 				} else {
 					// Отправляем ответ AI
 					select {
@@ -301,7 +313,7 @@ func (s *Start) Respondent(
 					}:
 						deaf = false
 					default:
-						errCh <- fmt.Errorf("канал answerCh закрыт при отправке ответа AI после таймаута оператора")
+						s.sendError(errCh, fmt.Errorf("канал answerCh закрыт при отправке ответа AI после таймаута оператора"), u.Assist.UserId)
 						return
 					}
 				}
@@ -329,13 +341,13 @@ func (s *Start) Respondent(
 				// Удаляем сессию оператора
 				err := s.Oper.DeleteSession(u.Assist.UserId, treadId)
 				if err != nil {
-					errCh <- fmt.Errorf("ошибка при удалении текущей сессии оператора: %v", err)
+					s.sendError(errCh, fmt.Errorf("ошибка при удалении текущей сессии оператора: %v", err), u.Assist.UserId)
 				}
 
 				// Вызываем колбэк для корректного завершения сессии оператора
 				err = s.Bot.DisableOperatorMode(u.Assist.UserId, treadId)
 				if err != nil {
-					errCh <- fmt.Errorf("ошибка при отключении режима оператора: %w", err)
+					s.sendError(errCh, fmt.Errorf("ошибка при отключении режима оператора: %w", err), u.Assist.UserId)
 				}
 				continue
 			}
@@ -364,15 +376,14 @@ func (s *Start) Respondent(
 			case answerCh <- answ:
 				logger.Debug("Ответ оператора отправлен пользователю", u.Assist.UserId)
 			default:
-				errCh <- fmt.Errorf("канал answerCh закрыт или переполнен %v", u.Assist.UserId)
+				s.sendError(errCh, fmt.Errorf("канал answerCh закрыт или переполнен %v", u.Assist.UserId), u.Assist.UserId)
 				return
 			}
 			continue // т.к. это операторское сообщение то сразу ждём следующее, а не спускаемся вниз по логике AI
 
 		case quest, open := <-questionCh:
 			if !open {
-				errCh <- fmt.Errorf("канал questionCh закрыт %v", u.Assist.UserId)
-				//continue
+				s.sendError(errCh, fmt.Errorf("канал questionCh закрыт %v", u.Assist.UserId), u.Assist.UserId)
 				return // Тут только выходить
 			}
 
@@ -399,13 +410,13 @@ func (s *Start) Respondent(
 					msgType, &content, &name, quest.Files...,
 				)
 				if err := s.Oper.SendToOperator(s.ctx, u.Assist.UserId, treadId, opMsg); err != nil {
-					errCh <- fmt.Errorf("ошибка отправки сообщения оператору: %v", err)
+					s.sendError(errCh, fmt.Errorf("ошибка отправки сообщения оператору: %v", err), u.Assist.UserId)
 				}
 				// Сохраняем полный вопрос
 				select {
 				case fullQuestCh <- Answer{Answer: content, VoiceQuestion: quest.Voice}:
 				default:
-					errCh <- fmt.Errorf("канал fullQuestCh закрыт или переполнен %v", u.Assist.UserId)
+					s.sendError(errCh, fmt.Errorf("канал fullQuestCh закрыт или переполнен %v", u.Assist.UserId), u.Assist.UserId)
 					return
 				}
 				continue
@@ -425,7 +436,7 @@ func (s *Start) Respondent(
 						default:
 						}
 					})
-					logger.Debug("Включен операторский режим для пользователя %d (таймаут: %d сек)", u.Assist.UserId, mode.OperatorResponseTimeout, u.Assist.UserId)
+					logger.Debug("Включен операторский режим (таймаут: %d сек)", mode.OperatorResponseTimeout, u.Assist.UserId)
 				}
 
 				if askTimer != nil {
@@ -448,13 +459,13 @@ func (s *Start) Respondent(
 					msgType, &content, &name, quest.Files...,
 				)
 				if err := s.Oper.SendToOperator(s.ctx, u.Assist.UserId, treadId, opMsg); err != nil {
-					errCh <- fmt.Errorf("ошибка отправки сообщения оператору: %v", err)
+					s.sendError(errCh, fmt.Errorf("ошибка отправки сообщения оператору: %v", err), u.Assist.UserId)
 				}
 
 				select {
 				case fullQuestCh <- Answer{Answer: content, VoiceQuestion: quest.Voice}:
 				default:
-					errCh <- fmt.Errorf("канал fullQuestCh закрыт или переполнен %d", u.Assist.UserId)
+					s.sendError(errCh, fmt.Errorf("канал fullQuestCh закрыт или переполнен %d", u.Assist.UserId), u.Assist.UserId)
 					return
 				}
 				continue
@@ -517,7 +528,7 @@ func (s *Start) Respondent(
 				case inputStruct, open := <-questionCh:
 					if !open {
 						askTimer.Stop()
-						errCh <- fmt.Errorf("канал questionCh закрыт %v", u.Assist.UserId)
+						s.sendError(errCh, fmt.Errorf("канал questionCh закрыт %v", u.Assist.UserId), u.Assist.UserId)
 						// По хорошему нужно выходить
 					}
 					// Обновляем флаги оператора текущего вопроса,
@@ -571,7 +582,7 @@ func (s *Start) Respondent(
 		select {
 		case fullQuestCh <- fullAsk:
 		default:
-			errCh <- fmt.Errorf("канал fullQuestCh закрыт или переполнен %v", u.Assist.UserId)
+			s.sendError(errCh, fmt.Errorf("канал fullQuestCh закрыт или переполнен %v", u.Assist.UserId), u.Assist.UserId)
 			return
 		}
 
@@ -598,16 +609,16 @@ func (s *Start) Respondent(
 			respMsg, err = s.Oper.AskOperator(s.ctx, u.Assist.UserId, treadId, opMsg)
 			// Если получили ошибку от оператора или пустой ответ — делаем фолбэк в OpenAI
 			if err != nil || (respMsg.Content.Message == "" && len(respMsg.Content.Action.SendFiles) == 0) {
-				errCh <- fmt.Errorf("ошибка запроса к оператору или пустой ответ, фолбэк в OpenAI: %v", err)
+				s.sendError(errCh, fmt.Errorf("ошибка запроса к оператору или пустой ответ, фолбэк в OpenAI: %v", err), u.Assist.UserId)
 				// Отправляю запрос в OpenAI
 				answer, err = s.AskWithRetry(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
 				if err != nil {
 					if IsFatalError(err) {
-						errCh <- fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserId, err)
+						s.sendError(errCh, fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserId, err), u.Assist.UserId)
 						return
 					}
 					// Некритическая ошибка — логируем и продолжаем слушать
-					logger.Debug("Некритическая ошибка для пользователя %d: %v", u.Assist.UserId, err)
+					logger.Debug("Некритическая ошибка: %v", err, u.Assist.UserId)
 					continue
 				}
 				operatorAnswered = false
@@ -629,7 +640,7 @@ func (s *Start) Respondent(
 						default:
 						}
 					})
-					logger.Debug("Операторский режим активирован после ответа оператора для пользователя %d (таймаут: %d сек)", u.Assist.UserId, mode.OperatorResponseTimeout)
+					logger.Debug("Операторский режим активирован после ответа оператора (таймаут: %d сек)", mode.OperatorResponseTimeout, u.Assist.UserId)
 				} else if operatorTimeoutTimer != nil {
 					// Оператор ответил - останавливаем таймер навсегда
 					// Режим становится постоянным
@@ -640,7 +651,7 @@ func (s *Start) Respondent(
 					case <-operatorTimeoutCh:
 					default:
 					}
-					logger.Debug("Таймер оператора остановлен для пользователя %d - режим теперь постоянный", u.Assist.UserId)
+					logger.Debug("Таймер оператора остановлен - режим теперь постоянный", u.Assist.UserId)
 				}
 			}
 
@@ -649,11 +660,11 @@ func (s *Start) Respondent(
 			answer, err = s.AskWithRetry(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
 			if err != nil {
 				if IsFatalError(err) {
-					errCh <- fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserId, err)
+					s.sendError(errCh, fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserId, err), u.Assist.UserId)
 					return
 				}
 				// Некритическая ошибка — логируем и продолжаем слушать
-				logger.Debug("Некритическая ошибка для пользователя %d: %v", u.Assist.UserId, err)
+				logger.Debug("Некритическая ошибка : %v", err, u.Assist.UserId)
 				continue
 			}
 
@@ -684,7 +695,7 @@ func (s *Start) Respondent(
 					currentQuest.Files...,
 				)
 				if errSend := s.Oper.SendToOperator(s.ctx, u.Assist.UserId, treadId, opMsg); errSend != nil {
-					errCh <- fmt.Errorf("ошибка отправки эскалации оператору: %v", errSend)
+					s.sendError(errCh, fmt.Errorf("ошибка отправки эскалации оператору: %v", errSend), u.Assist.UserId)
 				}
 			}
 		}
@@ -805,7 +816,7 @@ func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
 			// Если контекст бота уже отменён — не запускаем Listener
 			select {
 			case <-start.Ctx.Done():
-				logger.Debug("StarterListener canceled by bot context %s %d", start.Model.RespName, start.Model.Assist.UserId)
+				logger.Debug("StarterListener отменён по контексту бота %s", start.Model.RespName, start.Model.Assist.UserId)
 				return
 			default:
 			}
@@ -823,10 +834,10 @@ func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
 
 // Listener слушает канал от пользователя и обрабатывает сообщения
 func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, treadId uint64) error {
-	question := make(chan Question, 1)
-	fullQuestCh := make(chan Answer, 1)
-	answerCh := make(chan Answer, 1)
-	errCh := make(chan error, 1)
+	question := make(chan Question, 10)
+	fullQuestCh := make(chan Answer, 10)
+	answerCh := make(chan Answer, 10)
+	errCh := make(chan error, 10)
 
 	// Создаем контекст для координированного завершения
 	listenerCtx, listenerCancel := context.WithCancel(s.ctx)
@@ -873,7 +884,7 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 	for {
 		select {
 		case <-s.ctx.Done():
-			logger.Debug("Start context canceled in Listener %s", u.RespName, u.Assist.UserId)
+			logger.Debug("Start context отменён в Listener %s", u.RespName, u.Assist.UserId)
 			return nil
 		case err := <-errCh:
 			return err // Возвращаем возможные ошибки
@@ -907,28 +918,21 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 					}
 				default:
 					// Неизвестный тип сообщения, пропускаю
-					errCh <- fmt.Errorf("неизвестный тип сообщения: %s для пользователя %d", msg.Type, u.Assist.UserId)
+					s.sendError(errCh, fmt.Errorf("неизвестный тип сообщения: %s для пользователя %d", msg.Type, u.Assist.UserId), u.Assist.UserId)
 					continue
 				}
 
 				// Защита от паники при отправке в questionCh
-				sendErr := func() error {
-
-					select {
-					case question <- quest:
-						return nil
-					case <-s.ctx.Done():
-						logger.Debug("Контекст отменен при отправке в questionCh", u.Assist.UserId)
-						return fmt.Errorf("контекст отменен")
-					case <-time.After(100 * time.Millisecond):
-						return fmt.Errorf("'Listener' таймаут отправки в questionCh (возможно закрыт)")
-					default:
-						return fmt.Errorf("'Listener' question канал questionCh закрыт или переполнен")
-					}
-				}()
-
-				if sendErr != nil {
-					return sendErr
+				select {
+				case question <- quest:
+					// Успешно отправлено в очередь
+				case <-s.ctx.Done():
+					logger.Debug("Контекст отменен при отправке в questionCh", u.Assist.UserId)
+					return fmt.Errorf("контекст отменен")
+				case <-time.After(500 * time.Millisecond):
+					// Редкий случай переполнения (>10 сообщений за 5 сек) - тихо пропускаем
+					logger.Warn("Очередь вопросов переполнена, сообщение пропущено", u.Assist.UserId)
+					// НЕ завершаем Listener - продолжаем работу
 				}
 
 				// Отправляю вопрос клиента в виде сообщения
