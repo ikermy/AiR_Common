@@ -9,15 +9,16 @@ import (
 )
 
 type Conf struct {
-	DemoAS DemoAssist
-	TG     TgConfig
-	GPT    GPTConfig
-	WEB    WebConfig
-	DB     DBConfig
-	AU     AUTH
-	SMTP   SMTP
-	GLOB   GLOB
-	OPER   OPER
+	DemoAS   DemoAssist
+	TG       TgConfig
+	GPT      GPTConfig
+	WEB      WebConfig
+	DB       DBConfig
+	AU       AUTH
+	SMTP     SMTP
+	GLOB     GLOB
+	OPER     OPER
+	Contacts ContactsServiceConfig
 }
 
 type TgConfig struct {
@@ -81,6 +82,18 @@ type DemoAssist struct {
 type OPER struct {
 	Token string `mapstructure:"oper_token"`
 	Id    int64  `mapstructure:"oper_id"`
+}
+
+type ContactsServiceConfig struct {
+	Enabled bool            `mapstructure:"enabled"`
+	Port    int             `mapstructure:"port"`
+	Targets []TargetService `mapstructure:"targets"`
+}
+
+type TargetService struct {
+	Name string `mapstructure:"name"`
+	Host string `mapstructure:"host"`
+	Port int    `mapstructure:"port"`
 }
 
 func NewConf() (*Conf, error) {
@@ -197,6 +210,22 @@ func NewConf() (*Conf, error) {
 	}
 
 	conf.OPER = operConfig
+
+	// Contacts секция (опциональная)
+	var contactsConfig ContactsServiceConfig
+	if v.IsSet("contacts") {
+		if err := v.UnmarshalKey("contacts", &contactsConfig); err != nil {
+			return nil, fmt.Errorf("ошибка разбора секции contacts: %w", err)
+		}
+	} else {
+		// Значения по умолчанию
+		contactsConfig = ContactsServiceConfig{
+			Enabled: false,
+			Port:    50051,
+			Targets: []TargetService{},
+		}
+	}
+	conf.Contacts = contactsConfig
 
 	return conf, nil
 }

@@ -217,7 +217,7 @@ func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *m
 func (e *Endpoint) Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string) {
 	err := e.Db.UpdateDialogsMeta(dialogId, meta)
 	if err != nil {
-		logger.Error("ошибка обновления метаданных для диалога %d: %v", dialogId, err)
+		logger.Error("ошибка обновления метаданных для диалога %d: %v", dialogId, err, userId)
 	}
 	e.SendEvent(userId, meta, respName, assistName, metaAction)
 }
