@@ -152,32 +152,32 @@ func TestNewServer(t *testing.T) {
 	if server.port != "50051" {
 		t.Errorf("expected port 50051, got %s", server.port)
 	}
-	if server.handler == nil {
-		t.Error("handler not initialized")
-	}
 }
 
 func TestServerStartStop(t *testing.T) {
-	server := NewServer("") // port 0 для автоматического выбора свободного порта
-
-	err := server.Start()
-	if err != nil {
+	s := NewServer("") // port 0 для автоматического выбора свободного порта
+	handler := Handler{}
+	if err := s.Start(&handler); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 
 	// Даём серверу время на запуск
 	time.Sleep(100 * time.Millisecond)
 
-	server.Stop()
+	s.Stop()
 }
 
 func TestServerGetHandler(t *testing.T) {
 	server := NewServer("50051")
-
-	handler := server.GetHandler()
-	if handler == nil {
+	handler := Handler{}
+	if err := server.Start(&handler); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	if server.handler == nil {
 		t.Error("GetHandler returned nil")
 	}
+
+	server.Stop()
 }
 
 // ===== Handler Tests =====
@@ -307,19 +307,16 @@ func TestNewContactsClient(t *testing.T) {
 }
 
 func TestStartContactsServer(t *testing.T) {
-	server, err := Start("")
-	if err != nil {
+	s := NewServer("50051")
+	handler := Handler{}
+	if err := s.Start(&handler); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 
-	if server == nil {
-		t.Fatal("Start returned nil server")
-	}
-
-	Stop(server)
+	s.Stop()
 }
 
 func TestStopContactsServer(t *testing.T) {
-	// Проверяем, что Stop не паникует при nil
-	Stop(nil)
+	s := NewServer("50051")
+	s.Stop()
 }

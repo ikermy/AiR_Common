@@ -8,19 +8,17 @@ import (
 
 // Start запускает gRPC-сервер для приёма контактов
 // Эта функция может быть импортирована в другие проекты
-func Start(port string) (*Server, error) {
-	server := NewServer(port)
-	if err := server.Start(); err != nil {
-		return nil, err
+func (s *Server) Start(handler *Handler) error {
+	s.handler = handler
+	if err := s.ServerStart(); err != nil {
+		return err
 	}
-	return server, nil
+	return nil
 }
 
 // Stop останавливает gRPC-сервер
-func Stop(server *Server) {
-	if server != nil {
-		server.Stop()
-	}
+func (s *Server) Stop() {
+	s.ServerStop()
 }
 
 // NewClient создаёт новый клиент для отправки контактов

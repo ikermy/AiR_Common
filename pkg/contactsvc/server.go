@@ -19,15 +19,15 @@ type Server struct {
 }
 
 // NewServer создаёт новый экземпляр gRPC-сервера для приёма контактов
-func NewServer(port string, handler *Handler) *Server {
+func NewServer(port string) *Server {
 	return &Server{
-		port:    port,
-		handler: handler,
+		port: port,
+		//handler: handler,
 	}
 }
 
 // Start запускает gRPC-сервер
-func (s *Server) Start() error {
+func (s *Server) ServerStart() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -51,7 +51,7 @@ func (s *Server) Start() error {
 }
 
 // Stop останавливает gRPC-сервер
-func (s *Server) Stop() {
+func (s *Server) ServerStop() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
