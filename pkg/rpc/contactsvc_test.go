@@ -205,9 +205,9 @@ func TestHandlerSendResult(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	_, err := handler.SendResult(ctx, result)
+	_, err := handler.SendContacts(ctx, result)
 	if err != nil {
-		t.Errorf("SendResult failed: %v", err)
+		t.Errorf("SendContacts failed: %v", err)
 	}
 }
 

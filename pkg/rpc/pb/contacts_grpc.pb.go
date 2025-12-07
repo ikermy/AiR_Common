@@ -9,22 +9,22 @@ import (
 	status "google.golang.org/grpc/status"
 )
 
-// ServiceClient is the client API for ContactsService service.
-type ServiceClient interface {
-	SendResult(ctx context.Context, in *Result, opts ...grpc.CallOption) (*Empty, error)
+// ContactsClient is the client API for ContactsService service.
+type ContactsClient interface {
+	SendContacts(ctx context.Context, in *Result, opts ...grpc.CallOption) (*Empty, error)
 }
 
-type serviceClient struct {
+type contactsClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func Client(cc grpc.ClientConnInterface) ServiceClient {
-	return &serviceClient{cc}
+func Client(cc grpc.ClientConnInterface) ContactsClient {
+	return &contactsClient{cc}
 }
 
-func (c *serviceClient) SendResult(ctx context.Context, in *Result, opts ...grpc.CallOption) (*Empty, error) {
+func (c *contactsClient) SendContacts(ctx context.Context, in *Result, opts ...grpc.CallOption) (*Empty, error) {
 	out := new(Empty)
-	err := c.cc.Invoke(ctx, "/contacts.ContactsService/SendResult", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/contacts.ContactsService/SendContacts", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -33,34 +33,34 @@ func (c *serviceClient) SendResult(ctx context.Context, in *Result, opts ...grpc
 
 // ContactsServer is the server API for ContactsService service.
 type ContactsServer interface {
-	SendResult(context.Context, *Result) (*Empty, error)
+	SendContacts(context.Context, *Result) (*Empty, error)
 }
 
 // UnimplementedServer can be embedded to have forward compatible implementations.
 type UnimplementedServer struct{}
 
-func (UnimplementedServer) SendResult(context.Context, *Result) (*Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SendResult not implemented")
+func (UnimplementedServer) SendContacts(context.Context, *Result) (*Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SendContacts not implemented")
 }
 
 func RegisterServer(s grpc.ServiceRegistrar, srv ContactsServer) {
 	s.RegisterService(&Contacts_Desc, srv)
 }
 
-func _Service_SendResult_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _Service_SendContacts_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(Result)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(ContactsServer).SendResult(ctx, in)
+		return srv.(ContactsServer).SendContacts(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/contacts.ContactsService/SendResult",
+		FullMethod: "/contacts.ContactsService/SendContacts",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ContactsServer).SendResult(ctx, req.(*Result))
+		return srv.(ContactsServer).SendContacts(ctx, req.(*Result))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -71,8 +71,8 @@ var Contacts_Desc = grpc.ServiceDesc{
 	HandlerType: (*ContactsServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "SendResult",
-			Handler:    _Service_SendResult_Handler,
+			MethodName: "SendContacts",
+			Handler:    _Service_SendContacts_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

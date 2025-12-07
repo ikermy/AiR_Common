@@ -12,7 +12,7 @@ import (
 // Каждый хандлер отвечает за регистрацию себя в gRPC-сервере
 type ServiceHandler interface {
 	// RegisterService регистрирует сервис в gRPC-сервере
-	RegisterService(grpcServer *grpc.Server) error
+	RegisterContact(grpcServer *grpc.Server) error
 }
 
 // Server структура для gRPC-сервера
@@ -40,7 +40,7 @@ func (s *Server) serverStart() error {
 	// Регистрируем только первый хандлер в gRPC-сервере
 	// Остальные хандлеры доступны через GetHandlers() для использования в приложении
 	if len(s.handlers) > 0 && s.handlers[0] != nil {
-		if err := s.handlers[0].RegisterService(s.grpc); err != nil {
+		if err := s.handlers[0].RegisterContact(s.grpc); err != nil {
 			return fmt.Errorf("ошибка при регистрации первого сервиса: %w", err)
 		}
 	}

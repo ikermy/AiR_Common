@@ -64,7 +64,7 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// SendFinalResult отправляет финальный результат (контакты) на удалённый сервер
+// SendContacts отправляет финальный результат (контакты) на удалённый сервер
 // contactsData должны быть JSON-сериализованными данными контактов
 func (c *Client) SendResult(ctx context.Context, contactsData json.RawMessage) error {
 	c.mu.Lock()
@@ -88,7 +88,7 @@ func (c *Client) SendResult(ctx context.Context, contactsData json.RawMessage) e
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	_, err := client.SendResult(ctxWithTimeout, &finalResult)
+	_, err := client.SendContacts(ctxWithTimeout, &finalResult)
 	if err != nil {
 		return fmt.Errorf("ошибка при отправке контактов: %w", err)
 	}

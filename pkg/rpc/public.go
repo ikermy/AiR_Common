@@ -50,9 +50,9 @@ func NewClient(addr string, timeOut time.Duration) *Client {
 	}
 }
 
-// SendFinalResult отправляет финальный результат (контакты) на удалённый сервис
+// SendContacts отправляет финальный результат (контакты) на удалённый сервис
 // contactsData должны быть JSON-сериализованными данными контактов
-func SendFinalResult(ctx context.Context, client *Client, contactsData json.RawMessage) error {
+func SendContacts(ctx context.Context, client *Client, contactsData json.RawMessage) error {
 	// Проверяем, подключен ли клиент, если нет - подключаемся
 	if !client.IsConnected() {
 		if err := client.Connect(); err != nil {
@@ -69,7 +69,7 @@ func BatchSendContacts(ctx context.Context, client *Client, contactsData json.Ra
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		err := SendFinalResult(ctx, client, contactsData)
+		err := SendContacts(ctx, client, contactsData)
 		if err == nil {
 			return nil
 		}
