@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.28.5"
-git tag -a v1.28.5 -m "contact grpc transfer"
+git commit -m "v1.28.6"
+git tag -a v1.28.6 -m "contact grpc transfer"
 git push origin master
-git push origin v1.28.5
+git push origin v1.28.6

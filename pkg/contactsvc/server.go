@@ -19,10 +19,10 @@ type Server struct {
 }
 
 // NewServer создаёт новый экземпляр gRPC-сервера для приёма контактов
-func NewServer(port string) *Server {
+func NewServer(port string, handler *Handler) *Server {
 	return &Server{
 		port:    port,
-		handler: NewHandler(),
+		handler: handler,
 	}
 }
 
