@@ -1,4 +1,4 @@
-package contactsvc
+package rpc
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/contactsvc/pb"
+	"github.com/ikermy/AiR_Common/pkg/rpc/pb"
 )
 
 // ===== Client Tests =====
@@ -156,8 +156,8 @@ func TestNewServer(t *testing.T) {
 
 func TestServerStartStop(t *testing.T) {
 	s := NewServer("") // port 0 для автоматического выбора свободного порта
-	handler := Handler{}
-	if err := s.Start(&handler); err != nil {
+	handler := NewHandler()
+	if err := s.Start(handler); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 
@@ -169,12 +169,14 @@ func TestServerStartStop(t *testing.T) {
 
 func TestServerGetHandler(t *testing.T) {
 	server := NewServer("50051")
-	handler := Handler{}
-	if err := server.Start(&handler); err != nil {
+	handler := NewHandler()
+	if err := server.Start(handler); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
-	if server.handler == nil {
-		t.Error("GetHandler returned nil")
+
+	handlers := server.GetHandlers()
+	if len(handlers) == 0 {
+		t.Error("GetHandlers returned empty slice")
 	}
 
 	server.Stop()
@@ -308,12 +310,45 @@ func TestNewContactsClient(t *testing.T) {
 
 func TestStartContactsServer(t *testing.T) {
 	s := NewServer("50051")
-	handler := Handler{}
-	if err := s.Start(&handler); err != nil {
+	handler := NewHandler()
+	if err := s.Start(handler); err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
 
 	s.Stop()
+}
+
+func TestStartContactsServerMultipleHandlers(t *testing.T) {
+	s := NewServer("")
+	handler1 := NewHandler()
+	handler2 := NewHandler()
+	handler3 := NewHandler()
+
+	//注: Множество хандлеров одного типа регистрируются, но только первый обрабатывает gRPC-запросы
+	// Остальные доступны как "слушатели" или обработчики для других целей
+	if err := s.Start(handler1, handler2, handler3); err != nil {
+		t.Fatalf("Start with multiple handlers failed: %v", err)
+	}
+
+	// Проверяем, что все хандлеры сохранены
+	handlers := s.GetHandlers()
+	if len(handlers) != 3 {
+		t.Errorf("expected 3 handlers, got %d", len(handlers))
+	}
+
+	s.Stop()
+}
+
+func TestStartContactsServerNoHandlers(t *testing.T) {
+	s := NewServer("50051")
+
+	err := s.Start()
+	if err == nil {
+		t.Error("expected error when starting with no handlers")
+	}
+	if err != ErrNoHandlers {
+		t.Errorf("expected ErrNoHandlers, got %v", err)
+	}
 }
 
 func TestStopContactsServer(t *testing.T) {

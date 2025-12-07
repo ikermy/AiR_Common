@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package contacts;
 
-option go_package = "github.com/ikermy/AiR_Common/pkg/contactsvc/pb;pb";
+option go_package = "github.com/ikermy/AiR_Common/pkg/rpc/pb;pb";
 
 // Источник/сервис, откуда пришёл контакт/канал/группа
 enum Service {

@@ -1,4 +1,4 @@
-package contactsvc
+package rpc
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/contactsvc/pb"
+	"github.com/ikermy/AiR_Common/pkg/rpc/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

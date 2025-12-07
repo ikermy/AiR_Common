@@ -1,10 +1,11 @@
-package contactsvc
+package rpc
 
 import (
 	"context"
 	"sync"
 
-	"github.com/ikermy/AiR_Common/pkg/contactsvc/pb"
+	"github.com/ikermy/AiR_Common/pkg/rpc/pb"
+	"google.golang.org/grpc"
 )
 
 // Handler - реализация gRPC-сервиса ContactsService
@@ -42,4 +43,10 @@ func (h *Handler) ClearData() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.data = nil
+}
+
+// RegisterService регистрирует ContactsService в gRPC-сервере
+func (h *Handler) RegisterService(grpcServer *grpc.Server) error {
+	pb.RegisterServer(grpcServer, h)
+	return nil
 }

@@ -1,16 +1,32 @@
-package contactsvc
+package rpc
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
+// ErrNoHandlers ошибка, возвращаемая когда не передано ни одного хандлера
+var ErrNoHandlers = errors.New("требуется хотя бы один хандлер")
+
+// NewServer создаёт новый экземпляр gRPC-сервера для приёма контактов
+func NewServer(port string) *Server {
+	return &Server{
+		port: port,
+	}
+}
+
 // Start запускает gRPC-сервер для приёма контактов
-// Эта функция может быть импортирована в другие проекты
-func (s *Server) Start(handler *Handler) error {
-	s.handler = handler
-	if err := s.ServerStart(); err != nil {
+// Принимает вариативное количество ServiceHandler (могут быть разные типы хандлеров)
+func (s *Server) Start(handlers ...ServiceHandler) error {
+	if len(handlers) == 0 {
+		return ErrNoHandlers
+	}
+
+	s.handlers = handlers
+
+	if err := s.serverStart(); err != nil {
 		return err
 	}
 	return nil
@@ -18,7 +34,7 @@ func (s *Server) Start(handler *Handler) error {
 
 // Stop останавливает gRPC-сервер
 func (s *Server) Stop() {
-	s.ServerStop()
+	s.serverStop()
 }
 
 // NewClient создаёт новый клиент для отправки контактов
@@ -36,7 +52,6 @@ func NewClient(addr string, timeOut time.Duration) *Client {
 
 // SendFinalResult отправляет финальный результат (контакты) на удалённый сервис
 // contactsData должны быть JSON-сериализованными данными контактов
-// Это удобная функция для отправки контактов, которая может быть импортирована в другие проекты
 func SendFinalResult(ctx context.Context, client *Client, contactsData json.RawMessage) error {
 	// Проверяем, подключен ли клиент, если нет - подключаемся
 	if !client.IsConnected() {

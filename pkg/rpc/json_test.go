@@ -1,10 +1,10 @@
-package contactsvc
+package rpc
 
 import (
 	"encoding/json"
 	"testing"
 
-	"github.com/ikermy/AiR_Common/pkg/contactsvc/pb"
+	"github.com/ikermy/AiR_Common/pkg/rpc/pb"
 )
 
 func TestJSONSerialization(t *testing.T) {
