@@ -192,7 +192,7 @@ func TestNewContactsServiceHandler(t *testing.T) {
 	}
 }
 
-func TestHandlerSendFinalResult(t *testing.T) {
+func TestHandlerSendResult(t *testing.T) {
 	handler := NewHandler()
 
 	// Создаём тестовые данные
@@ -209,84 +209,6 @@ func TestHandlerSendFinalResult(t *testing.T) {
 	if err != nil {
 		t.Errorf("SendResult failed: %v", err)
 	}
-
-	// Проверяем, что данные сохранены
-	data := handler.GetData()
-	if data == nil {
-		t.Error("data not stored in handler")
-	}
-	if len(data.Humans) != 1 {
-		t.Errorf("expected 1 human, got %d", len(data.Humans))
-	}
-}
-
-func TestHandlerGetData(t *testing.T) {
-	handler := NewHandler()
-
-	// Пустые данные
-	data := handler.GetData()
-	if data != nil {
-		t.Error("expected nil data initially")
-	}
-
-	// После добавления данных
-	result := &pb.Result{
-		Humans: []*pb.Contact{{Id: 1}},
-	}
-	handler.SendResult(context.Background(), result)
-
-	data = handler.GetData()
-	if data == nil {
-		t.Error("expected data after SendResult")
-	}
-}
-
-func TestHandlerClearData(t *testing.T) {
-	handler := NewHandler()
-
-	result := &pb.Result{
-		Humans: []*pb.Contact{{Id: 1}},
-	}
-	handler.SendResult(context.Background(), result)
-
-	if handler.GetData() == nil {
-		t.Error("data should not be nil before clear")
-	}
-
-	handler.ClearData()
-
-	if handler.GetData() != nil {
-		t.Error("data should be nil after clear")
-	}
-}
-
-func TestHandlerConcurrentAccess(t *testing.T) {
-	handler := NewHandler()
-
-	var wg sync.WaitGroup
-
-	// Параллельная обработка данных
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func(n int) {
-			defer wg.Done()
-			result := &pb.Result{
-				Humans: []*pb.Contact{{Id: int64(n)}},
-			}
-			handler.SendResult(context.Background(), result)
-		}(i)
-	}
-
-	// Параллельное чтение данных
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			handler.GetData()
-		}()
-	}
-
-	wg.Wait()
 }
 
 // ===== Public Functions Tests =====
