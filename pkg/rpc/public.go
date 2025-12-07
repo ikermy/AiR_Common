@@ -61,7 +61,7 @@ func SendContacts(ctx context.Context, client *Client, contactsData json.RawMess
 	}
 
 	// Отправляем контакты
-	return client.SendResult(ctx, contactsData)
+	return client.SendContacts(ctx, contactsData)
 }
 
 // BatchSendContacts отправляет контакты несколькими попытками с повторами

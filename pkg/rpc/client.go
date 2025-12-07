@@ -66,7 +66,7 @@ func (c *Client) Close() error {
 
 // SendContacts отправляет финальный результат (контакты) на удалённый сервер
 // contactsData должны быть JSON-сериализованными данными контактов
-func (c *Client) SendResult(ctx context.Context, contactsData json.RawMessage) error {
+func (c *Client) SendContacts(ctx context.Context, contactsData json.RawMessage) error {
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()

@@ -107,7 +107,7 @@ func TestClientSendFinalResult(t *testing.T) {
 		client := NewClient("localhost:50051", 10*time.Second)
 
 		contactsData := json.RawMessage(`{"humans": [], "bots": []}`)
-		err := client.SendResult(context.Background(), contactsData)
+		err := client.SendContacts(context.Background(), contactsData)
 		if err == nil {
 			t.Error("expected error when sending without connection")
 		}

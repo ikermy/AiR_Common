@@ -53,7 +53,7 @@ message Result {
 
 // Сервис для передачи данных
 service ContactsService {
-  rpc SendResult (Result) returns (Empty);
+  rpc SendContacts (Result) returns (Empty);
 }
 
 message Empty {}
