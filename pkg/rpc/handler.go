@@ -17,13 +17,13 @@ func NewHandler() *Handler {
 	return &Handler{}
 }
 
-// SendResult реализует gRPC-метод для получения контактов
+// SendContacts реализует gRPC-метод для получения контактов
 func (h *Handler) SendContacts(ctx context.Context, result *pb.Result) (*pb.Empty, error) {
 	// Обработка контактов здесь
 	return &pb.Empty{}, nil
 }
 
-// RegisterService регистрирует ContactsService в gRPC-сервере
+// RegisterContact регистрирует ContactsService в gRPC-сервере
 func (h *Handler) RegisterContact(grpcServer *grpc.Server) error {
 	pb.RegisterServer(grpcServer, h)
 	return nil
