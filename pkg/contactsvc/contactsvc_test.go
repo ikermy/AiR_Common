@@ -14,26 +14,21 @@ import (
 
 func TestNewClient(t *testing.T) {
 	t.Run("with default timeout", func(t *testing.T) {
-		client := RealNewClient(ClientConfig{
-			Address: "localhost:50051",
-		})
+		client := NewClient("localhost:50051", 10*time.Second)
 
 		if client == nil {
-			t.Fatal("RealNewClient returned nil")
+			t.Fatal("NewClient returned nil")
 		}
 		if client.config.Address != "localhost:50051" {
 			t.Errorf("expected host 'localhost', got '%s'", client.config.Address)
 		}
-		if client.timeout != 30*time.Second {
+		if client.timeout != 10*time.Second {
 			t.Errorf("expected default timeout 30s, got %v", client.timeout)
 		}
 	})
 
 	t.Run("with custom timeout", func(t *testing.T) {
-		client := RealNewClient(ClientConfig{
-			Address: "example:8088",
-			Timeout: 10 * time.Second,
-		})
+		client := NewClient("localhost:50051", 10*time.Second)
 
 		if client.timeout != 10*time.Second {
 			t.Errorf("expected timeout 10s, got %v", client.timeout)
@@ -43,9 +38,7 @@ func TestNewClient(t *testing.T) {
 
 func TestClientConnect(t *testing.T) {
 	t.Run("successful connect", func(t *testing.T) {
-		client := RealNewClient(ClientConfig{
-			Address: "localhost:50051",
-		})
+		client := NewClient("localhost:50051", 10*time.Second)
 
 		err := client.Connect()
 		if err != nil {
@@ -67,9 +60,7 @@ func TestClientConnect(t *testing.T) {
 }
 
 func TestClientIsConnected(t *testing.T) {
-	client := RealNewClient(ClientConfig{
-		Address: "localhost:50051",
-	})
+	client := NewClient("localhost:50051", 10*time.Second)
 
 	if client.IsConnected() {
 		t.Error("new client should not be connected")
@@ -88,9 +79,7 @@ func TestClientIsConnected(t *testing.T) {
 
 func TestClientClose(t *testing.T) {
 	t.Run("close connected client", func(t *testing.T) {
-		client := RealNewClient(ClientConfig{
-			Address: "localhost:50051",
-		})
+		client := NewClient("localhost:50051", 10*time.Second)
 
 		client.Connect()
 		err := client.Close()
@@ -104,9 +93,7 @@ func TestClientClose(t *testing.T) {
 	})
 
 	t.Run("close not connected client", func(t *testing.T) {
-		client := RealNewClient(ClientConfig{
-			Address: "localhost:50051",
-		})
+		client := NewClient("localhost:50051", 10*time.Second)
 
 		err := client.Close()
 		if err != nil {
@@ -117,12 +104,10 @@ func TestClientClose(t *testing.T) {
 
 func TestClientSendFinalResult(t *testing.T) {
 	t.Run("send without connection", func(t *testing.T) {
-		client := RealNewClient(ClientConfig{
-			Address: "localhost:50051",
-		})
+		client := NewClient("localhost:50051", 10*time.Second)
 
 		contactsData := json.RawMessage(`{"humans": [], "bots": []}`)
-		err := client.SendFinalResult(context.Background(), contactsData)
+		err := client.SendResult(context.Background(), contactsData)
 		if err == nil {
 			t.Error("expected error when sending without connection")
 		}
@@ -130,9 +115,7 @@ func TestClientSendFinalResult(t *testing.T) {
 }
 
 func TestClientConcurrentAccess(t *testing.T) {
-	client := RealNewClient(ClientConfig{
-		Address: "localhost:50051",
-	})
+	client := NewClient("localhost:50051", 10*time.Second)
 
 	var wg sync.WaitGroup
 
@@ -177,8 +160,7 @@ func TestNewServer(t *testing.T) {
 func TestServerStartStop(t *testing.T) {
 	server := NewServer("") // port 0 для автоматического выбора свободного порта
 
-	ctx := context.Background()
-	err := server.Start(ctx)
+	err := server.Start()
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}
@@ -212,16 +194,18 @@ func TestHandlerSendFinalResult(t *testing.T) {
 	handler := NewHandler()
 
 	// Создаём тестовые данные
-	result := &pb.FinalResult{
+	result := &pb.Result{
 		Humans: []*pb.Contact{
 			{Id: 1, FirstName: "John", LastName: "Doe"},
 		},
+		Service: pb.TELEGRAM,
+		UserId:  42,
 	}
 
 	ctx := context.Background()
-	_, err := handler.SendFinalResult(ctx, result)
+	_, err := handler.SendResult(ctx, result)
 	if err != nil {
-		t.Errorf("SendFinalResult failed: %v", err)
+		t.Errorf("SendResult failed: %v", err)
 	}
 
 	// Проверяем, что данные сохранены
@@ -244,24 +228,24 @@ func TestHandlerGetData(t *testing.T) {
 	}
 
 	// После добавления данных
-	result := &pb.FinalResult{
+	result := &pb.Result{
 		Humans: []*pb.Contact{{Id: 1}},
 	}
-	handler.SendFinalResult(context.Background(), result)
+	handler.SendResult(context.Background(), result)
 
 	data = handler.GetData()
 	if data == nil {
-		t.Error("expected data after SendFinalResult")
+		t.Error("expected data after SendResult")
 	}
 }
 
 func TestHandlerClearData(t *testing.T) {
 	handler := NewHandler()
 
-	result := &pb.FinalResult{
+	result := &pb.Result{
 		Humans: []*pb.Contact{{Id: 1}},
 	}
-	handler.SendFinalResult(context.Background(), result)
+	handler.SendResult(context.Background(), result)
 
 	if handler.GetData() == nil {
 		t.Error("data should not be nil before clear")
@@ -284,10 +268,10 @@ func TestHandlerConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			result := &pb.FinalResult{
+			result := &pb.Result{
 				Humans: []*pb.Contact{{Id: int64(n)}},
 			}
-			handler.SendFinalResult(context.Background(), result)
+			handler.SendResult(context.Background(), result)
 		}(i)
 	}
 
@@ -323,8 +307,7 @@ func TestNewContactsClient(t *testing.T) {
 }
 
 func TestStartContactsServer(t *testing.T) {
-	ctx := context.Background()
-	server, err := Start(ctx, "")
+	server, err := Start("")
 	if err != nil {
 		t.Fatalf("Start failed: %v", err)
 	}

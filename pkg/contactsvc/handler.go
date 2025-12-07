@@ -9,9 +9,9 @@ import (
 
 // Handler - реализация gRPC-сервиса ContactsService
 type Handler struct {
-	pb.UnimplementedServiceServer
+	pb.UnimplementedServer
 	mu   sync.Mutex
-	data *pb.FinalResult // Буфер для хранения последних полученных контактов
+	data *pb.Result // Буфер для хранения последних полученных контактов
 }
 
 // NewHandler создаёт новый обработчик
@@ -20,7 +20,7 @@ func NewHandler() *Handler {
 }
 
 // SendFinalResult реализует gRPC-метод для получения контактов
-func (h *Handler) SendFinalResult(ctx context.Context, result *pb.FinalResult) (*pb.Empty, error) {
+func (h *Handler) SendResult(ctx context.Context, result *pb.Result) (*pb.Empty, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -31,7 +31,7 @@ func (h *Handler) SendFinalResult(ctx context.Context, result *pb.FinalResult) (
 }
 
 // GetData возвращает последние полученные контакты
-func (h *Handler) GetData() *pb.FinalResult {
+func (h *Handler) GetData() *pb.Result {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.data

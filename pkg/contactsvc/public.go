@@ -8,9 +8,9 @@ import (
 
 // Start запускает gRPC-сервер для приёма контактов
 // Эта функция может быть импортирована в другие проекты
-func Start(ctx context.Context, port string) (*Server, error) {
+func Start(port string) (*Server, error) {
 	server := NewServer(port)
-	if err := server.Start(ctx); err != nil {
+	if err := server.Start(); err != nil {
 		return nil, err
 	}
 	return server, nil
@@ -24,12 +24,16 @@ func Stop(server *Server) {
 }
 
 // NewClient создаёт новый клиент для отправки контактов
-// Эта функция может быть импортирована в другие проекты
 func NewClient(addr string, timeOut time.Duration) *Client {
-	return RealNewClient(ClientConfig{
+	config := Config{
 		Address: addr,
 		Timeout: timeOut,
-	})
+	}
+
+	return &Client{
+		config:  config,
+		timeout: config.Timeout,
+	}
 }
 
 // SendFinalResult отправляет финальный результат (контакты) на удалённый сервис
@@ -44,7 +48,7 @@ func SendFinalResult(ctx context.Context, client *Client, contactsData json.RawM
 	}
 
 	// Отправляем контакты
-	return client.SendFinalResult(ctx, contactsData)
+	return client.SendResult(ctx, contactsData)
 }
 
 // BatchSendContacts отправляет контакты несколькими попытками с повторами

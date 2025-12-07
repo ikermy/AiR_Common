@@ -1,7 +1,6 @@
 package contactsvc
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"sync"
@@ -28,7 +27,7 @@ func NewServer(port string) *Server {
 }
 
 // Start запускает gRPC-сервер
-func (s *Server) Start(_ context.Context) error {
+func (s *Server) Start() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -41,7 +40,7 @@ func (s *Server) Start(_ context.Context) error {
 	s.grpc = grpc.NewServer()
 
 	// Регистрируем gRPC-сервис напрямую
-	pb.RegisterServiceServer(s.grpc, s.handler)
+	pb.RegisterServer(s.grpc, s.handler)
 
 	// Запускаем сервер в отдельной горутине
 	go func() {

@@ -12,8 +12,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// ClientConfig конфигурация для подключения к удалённому сервису
-type ClientConfig struct {
+// Config конфигурация для подключения к удалённому сервису
+type Config struct {
 	Address string
 	Timeout time.Duration
 }
@@ -21,21 +21,9 @@ type ClientConfig struct {
 // Client структура для отправки контактов на удалённый сервер
 type Client struct {
 	mu      sync.Mutex
-	config  ClientConfig
+	config  Config
 	conn    *grpc.ClientConn
 	timeout time.Duration
-}
-
-// RealNewClient создаёт новый клиент для отправки контактов
-func RealNewClient(config ClientConfig) *Client {
-	if config.Timeout == 0 {
-		config.Timeout = 30 * time.Second
-	}
-
-	return &Client{
-		config:  config,
-		timeout: config.Timeout,
-	}
 }
 
 // Connect устанавливает соединение с удалённым сервером
@@ -78,7 +66,7 @@ func (c *Client) Close() error {
 
 // SendFinalResult отправляет финальный результат (контакты) на удалённый сервер
 // contactsData должны быть JSON-сериализованными данными контактов
-func (c *Client) SendFinalResult(ctx context.Context, contactsData json.RawMessage) error {
+func (c *Client) SendResult(ctx context.Context, contactsData json.RawMessage) error {
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
@@ -87,8 +75,8 @@ func (c *Client) SendFinalResult(ctx context.Context, contactsData json.RawMessa
 		return fmt.Errorf("соединение не установлено")
 	}
 
-	// Десериализуем JSON в FinalResult
-	var finalResult pb.FinalResult
+	// Десериализуем JSON в Result
+	var finalResult pb.Result
 	if err := json.Unmarshal(contactsData, &finalResult); err != nil {
 		return fmt.Errorf("ошибка при десериализации контактов: %w", err)
 	}
@@ -100,7 +88,7 @@ func (c *Client) SendFinalResult(ctx context.Context, contactsData json.RawMessa
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	_, err := client.SendFinalResult(ctxWithTimeout, &finalResult)
+	_, err := client.SendResult(ctxWithTimeout, &finalResult)
 	if err != nil {
 		return fmt.Errorf("ошибка при отправке контактов: %w", err)
 	}

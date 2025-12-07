@@ -9,7 +9,7 @@ import (
 
 func TestJSONSerialization(t *testing.T) {
 	// Создаём тестовые данные
-	original := &pb.FinalResult{
+	original := &pb.Result{
 		Humans: []*pb.Contact{
 			{
 				Id:        123,
@@ -17,7 +17,6 @@ func TestJSONSerialization(t *testing.T) {
 				LastName:  "Doe",
 				Username:  "johndoe",
 				Phone:     "+1234567890",
-				Service:   pb.TELEGRAM,
 			},
 			{
 				Id:        456,
@@ -25,7 +24,6 @@ func TestJSONSerialization(t *testing.T) {
 				LastName:  "Smith",
 				Username:  "janesmith",
 				Phone:     "+0987654321",
-				Service:   pb.WHATSAPP,
 			},
 		},
 		Bots: []*pb.Contact{
@@ -33,7 +31,6 @@ func TestJSONSerialization(t *testing.T) {
 				Id:        789,
 				FirstName: "TestBot",
 				Username:  "testbot",
-				Service:   pb.TELEGRAM,
 			},
 		},
 		Channels: []*pb.Channel{
@@ -41,14 +38,12 @@ func TestJSONSerialization(t *testing.T) {
 				Id:       1001,
 				Title:    "Test Channel",
 				Username: "testchannel",
-				Service:  pb.TELEGRAM,
 			},
 		},
 		Groups: []*pb.Group{
 			{
-				Id:      2001,
-				Title:   "Test Group",
-				Service: pb.TELEGRAM,
+				Id:    2001,
+				Title: "Test Group",
 			},
 		},
 		Supergroups: []*pb.Supergroup{
@@ -56,9 +51,10 @@ func TestJSONSerialization(t *testing.T) {
 				Id:       3001,
 				Title:    "Test Supergroup",
 				Username: "testsupergroup",
-				Service:  pb.TELEGRAM,
 			},
 		},
+		Service: pb.TELEGRAM,
+		UserId:  42,
 	}
 
 	// Сериализуем в JSON
@@ -70,7 +66,7 @@ func TestJSONSerialization(t *testing.T) {
 	t.Logf("JSON data: %s", string(jsonData))
 
 	// Десериализуем обратно
-	var deserialized pb.FinalResult
+	var deserialized pb.Result
 	err = json.Unmarshal(jsonData, &deserialized)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal from JSON: %v", err)
@@ -86,8 +82,13 @@ func TestJSONSerialization(t *testing.T) {
 	if deserialized.Humans[0].FirstName != "John" {
 		t.Errorf("Expected human[0].FirstName='John', got '%s'", deserialized.Humans[0].FirstName)
 	}
-	if deserialized.Humans[0].Service != pb.TELEGRAM {
-		t.Errorf("Expected human[0].Service=TELEGRAM, got %d", deserialized.Humans[0].Service)
+
+	// Проверяем Service и UserId
+	if deserialized.Service != pb.TELEGRAM {
+		t.Errorf("Expected Service=TELEGRAM, got %d", deserialized.Service)
+	}
+	if deserialized.UserId != 42 {
+		t.Errorf("Expected UserId=42, got %d", deserialized.UserId)
 	}
 
 	// Проверяем Bots
@@ -132,8 +133,7 @@ func TestJSONDeserializationFromRawMessage(t *testing.T) {
 				"first_name": "John",
 				"last_name": "Doe",
 				"username": "johndoe",
-				"phone": "+1234567890",
-				"service": 1
+				"phone": "+1234567890"
 			}
 		],
 		"bots": [],
@@ -141,17 +141,18 @@ func TestJSONDeserializationFromRawMessage(t *testing.T) {
 			{
 				"id": 1001,
 				"title": "Test Channel",
-				"username": "testchannel",
-				"service": 1
+				"username": "testchannel"
 			}
 		],
 		"groups": [],
-		"supergroups": []
+		"supergroups": [],
+		"service": 1,
+		"user_id": 42
 	}`
 
 	contactsData := json.RawMessage(jsonStr)
 
-	var finalResult pb.FinalResult
+	var finalResult pb.Result
 	err := json.Unmarshal(contactsData, &finalResult)
 	if err != nil {
 		t.Fatalf("Failed to unmarshal: %v", err)
@@ -175,5 +176,13 @@ func TestJSONDeserializationFromRawMessage(t *testing.T) {
 
 	if finalResult.Channels[0].Title != "Test Channel" {
 		t.Errorf("Expected Title='Test Channel', got '%s'", finalResult.Channels[0].Title)
+	}
+
+	if finalResult.Service != pb.TELEGRAM {
+		t.Errorf("Expected Service=1, got %d", finalResult.Service)
+	}
+
+	if finalResult.UserId != 42 {
+		t.Errorf("Expected UserId=42, got %d", finalResult.UserId)
 	}
 }

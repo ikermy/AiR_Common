@@ -18,7 +18,6 @@ message Contact {
   string last_name = 3;
   string username = 4;
   string phone = 5;
-  Service service = 6;
 }
 
 // Канал
@@ -26,14 +25,12 @@ message Channel {
   int64 id = 1;
   string title = 2;
   string username = 3;
-  Service service = 4;
 }
 
 // Обычная группа
 message Group {
   int64 id = 1;
   string title = 2;
-  Service service = 3;
 }
 
 // Супергруппа (Telegram-специфично)
@@ -41,21 +38,22 @@ message Supergroup {
   int64 id = 1;
   string title = 2;
   string username = 3;
-  Service service = 4;
 }
 
 // Финальный результат, совместимый с AiR_TgUserBot
-message FinalResult {
+message Result {
   repeated Contact humans = 1;
   repeated Contact bots = 2;
   repeated Channel channels = 3;
   repeated Group groups = 4;
   repeated Supergroup supergroups = 5;
+  Service service = 6;
+  uint32 user_id = 7;
 }
 
 // Сервис для передачи данных
 service ContactsService {
-  rpc SendFinalResult (FinalResult) returns (Empty);
+  rpc SendResult (Result) returns (Empty);
 }
 
 message Empty {}
