@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -163,9 +164,59 @@ func (m *MockModel) CleanUp() {
 	defer m.mu.Unlock()
 
 	for _, ch := range m.channels {
-		ch.Close()
+		_ = ch.Close()
 	}
 	m.channels = make(map[uint64]*model.Ch)
+}
+
+// GetFileAsReader реализует ModelInterface
+func (m *MockModel) GetFileAsReader(url string) (io.Reader, error) {
+	// Заглушка для тестов
+	return nil, fmt.Errorf("GetFileAsReader not implemented in mock")
+}
+
+// GetOrSetRespGPT реализует ModelInterface
+func (m *MockModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId uint64, respName string) (*model.RespModel, error) {
+	// Создаём минимальную реализацию для тестов
+	ch, err := m.GetCh(respId)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.RespModel{
+		Assist:   assist,
+		RespName: respName,
+		Chan: map[uint64]*model.Ch{
+			respId: ch,
+		},
+	}, nil
+}
+
+// GetRespIdByDialogId реализует ModelInterface
+func (m *MockModel) GetRespIdByDialogId(dialogId uint64) (uint64, error) {
+	// Для простоты возвращаем dialogId как respId
+	return dialogId, nil
+}
+
+// SaveAllContextDuringExit реализует ModelInterface
+func (m *MockModel) SaveAllContextDuringExit() {
+	// Заглушка для тестов
+}
+
+// CleanDialogData реализует ModelInterface
+func (m *MockModel) CleanDialogData(dialogId uint64) {
+	// Заглушка для тестов
+}
+
+// TranscribeAudio реализует ModelInterface
+func (m *MockModel) TranscribeAudio(audioData []byte, fileName string) (string, error) {
+	// Заглушка для тестов
+	return "", fmt.Errorf("TranscribeAudio not implemented in mock")
+}
+
+// Shutdown реализует ModelInterface
+func (m *MockModel) Shutdown() {
+	// Заглушка для тестов
 }
 
 // Mock для EndpointInterface

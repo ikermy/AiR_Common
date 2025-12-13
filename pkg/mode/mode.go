@@ -14,6 +14,8 @@ const (
 	// Retry settings
 	RetryMaxAttempts = 3 // Максимальное количество повторных попыток
 	RetryBaseDelay   = 1 // Базовая задержка между попытками в секундах
+	// Mistral API settings
+	MistralAgentsURL = "https://api.mistral.ai/v1/agents/completions" // URL для Mistral Agents API
 )
 
 var (
@@ -31,6 +33,10 @@ var (
 	// Таймаут ожидания ПЕРВОГО ответа оператора в секундах (120 сек = 2 минуты)
 	// После первого ответа операторский режим становится постоянным (без таймера)
 	OperatorResponseTimeout = 120
+	// Context settings
+	// Максимальное количество последних сообщений для передачи в контекст модели
+	// 0 означает передачу всей истории диалога
+	ContextMessagesLimit = 20
 )
 
 func SetTestMode(enabled bool) {

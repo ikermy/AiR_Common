@@ -12,8 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/conf"
-	"github.com/ikermy/AiR_Common/pkg/handler"
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/sashabaranov/go-openai"
 )
@@ -29,21 +27,26 @@ type Model interface {
 	Request(modelId string, dialogId uint64, text *string, files ...FileUpload) (AssistResponse, error)
 	CleanDialogData(dialogId uint64)
 	TranscribeAudio(audioData []byte, fileName string) (string, error)
+	CleanUp() // Фоновая очистка устаревших записей
 	Shutdown()
 }
 
 type DB interface {
 	ReadContext(dialogId uint64) (json.RawMessage, error)
 	SaveContext(treadId uint64, context json.RawMessage) error
+	// Методы для работы с диалогами (из DialogDB)
+	SaveDialog(dialogId uint64, data json.RawMessage) error
+	ReadDialog(dialogId uint64) (DialogData, error)
 }
 
 type Models struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
-	client        *openai.Client
+	client        *openai.Client // OpenAI клиент (может быть nil если используется только через ModelRouter)
 	db            DB
-	responders    sync.Map // Хранит указатели на RespModel, а не сами структуры
-	waitChannels  sync.Map // Хранит каналы для синхронизации горутин
+	dialogSaver   DialogSaver // Сервис батчированного сохранения диалогов
+	responders    sync.Map    // Хранит указатели на RespModel, а не сами структуры
+	waitChannels  sync.Map    // Хранит каналы для синхронизации горутин
 	UserModelTTl  time.Duration
 	actionHandler ActionHandler
 	shutdownOnce  sync.Once // Гарантирует однократное выполнение shutdown
@@ -70,6 +73,7 @@ type Assistant struct {
 	Events     Notifications
 	UserId     uint32
 	Limit      uint32
+	Provider   ProviderType // Тип провайдера модели (OpenAI, Mistral)
 	Espero     uint8
 	Ignore     bool
 }
@@ -183,18 +187,33 @@ func (ch *Ch) SendToRx(msg Message) error {
 
 // Close безопасно закрывает каналы Ch
 func (ch *Ch) Close() error {
-	// Устанавливаем флаги (блокируем новые отправки)
-	ch.txClosed.Store(true)
-	ch.rxClosed.Store(true)
-
-	// Даем время для завершения активных операций
-	time.Sleep(10 * time.Millisecond)
-
-	// Безопасно закрываем каналы
-	safeClose(ch.TxCh)
-	safeClose(ch.RxCh)
-
+	ch.CloseTx()
+	ch.CloseRx()
 	return nil
+}
+
+// CloseTx безопасно закрывает TxCh
+func (ch *Ch) CloseTx() {
+	ch.txClosed.Store(true)
+	time.Sleep(10 * time.Millisecond)
+	safeCloseMessage(ch.TxCh)
+}
+
+// CloseRx безопасно закрывает RxCh
+func (ch *Ch) CloseRx() {
+	ch.rxClosed.Store(true)
+	time.Sleep(10 * time.Millisecond)
+	safeCloseMessage(ch.RxCh)
+}
+
+// safeCloseMessage закрывает канал и обрабатывает панику
+func safeCloseMessage(ch chan Message) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Паника при закрытии канала: %v", r)
+		}
+	}()
+	close(ch)
 }
 
 // StartCh структура для передачи данных для запуска слушателя
@@ -206,23 +225,10 @@ type StartCh struct {
 	RespId  uint64
 }
 
-// ActionHandler интерфейс для обработки функций OpenAI ассистента
+// ActionHandler интерфейс для обработки функций ассистента
 type ActionHandler interface {
 	RunAction(ctx context.Context, functionName, arguments string) string
-}
-
-func New(parent context.Context, conf *conf.Conf, d DB) *Models {
-	ctx, cancel := context.WithCancel(parent)
-	return &Models{
-		ctx:           ctx,
-		cancel:        cancel,
-		client:        openai.NewClient(conf.GPT.Key),
-		db:            d,
-		responders:    sync.Map{},
-		waitChannels:  sync.Map{},
-		UserModelTTl:  time.Duration(conf.GLOB.UserModelTTl) * time.Minute,
-		actionHandler: &handler.ActionHandlerOpenAI{},
-	}
+	GetTools(provider ProviderType) interface{} // Возвращает инструменты для конкретного провайдера
 }
 
 // getAssistantVectorStore получает векторное хранилище ассистента
@@ -403,6 +409,11 @@ func (m *Models) GetFileAsReader(url string) (io.Reader, error) {
 }
 
 func (m *Models) CreateThead(dialogId uint64) error {
+	// Проверка наличия OpenAI клиента
+	if m.client == nil {
+		return fmt.Errorf("OpenAI клиент не инициализирован: не удалось создать тред для dialogId %d", dialogId)
+	}
+
 	// Загружаем модель пользователя из sync.Map
 	val, ok := m.responders.Load(dialogId)
 	if !ok {
@@ -637,6 +648,22 @@ func (m *Models) CleanDialogData(dialogId uint64) {
 	m.responders.Delete(dialogId)
 }
 
+// SaveDialog делегирует сохранение диалога в DialogSaver
+func (m *Models) SaveDialog(creator CreatorType, dialogId uint64, resp *AssistResponse) {
+	if m.dialogSaver != nil {
+		m.dialogSaver.SaveDialog(creator, dialogId, resp)
+	} else {
+		logger.Warn("DialogSaver не инициализирован для сохранения диалога %d", dialogId)
+	}
+}
+
+// FlushDialog принудительно сохраняет все накопленные сообщения для диалога
+func (m *Models) FlushDialog(dialogId uint64) {
+	if m.dialogSaver != nil {
+		m.dialogSaver.FlushDialog(dialogId)
+	}
+}
+
 // closeResponderChannels закрывает все каналы респондера
 func (m *Models) closeResponderChannels(respModel *RespModel) {
 	respModel.mu.Lock()
@@ -865,25 +892,31 @@ func (m *Models) Shutdown() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
-		// 1) Отменяем активные runs ДО отмены m.ctx
+		// 1) Сохраняем все диалоги через DialogSaver
+		if m.dialogSaver != nil {
+			logger.Info("Сохранение всех диалогов через DialogSaver")
+			m.dialogSaver.Shutdown()
+		}
+
+		// 2) Отменяем активные runs ДО отмены m.ctx
 		if err := m.cancelAllActiveRunsCtx(shutdownCtx); err != nil {
 			shutdownErrors = append(shutdownErrors, fmt.Sprintf("ошибка отмены активных runs: %v", err))
 		}
 
-		// 2) Сохраняем все контексты
+		// 3) Сохраняем все контексты тредов
 		logger.Info("Сохранение всех контекстов при завершении работы")
 		if err := m.saveAllContextsGracefullyCtx(shutdownCtx); err != nil {
 			shutdownErrors = append(shutdownErrors, fmt.Sprintf("ошибка сохранения контекстов: %v", err))
 		}
 
-		// 3) Теперь отменяем главный контекст
+		// 4) Теперь отменяем главный контекст
 		if m.cancel != nil {
 			m.cancel()
 		}
 
-		// 4) Закрываем все каналы и очищаем данные
+		// 5) Закрываем все каналы и очищаем данные
 		m.cleanupAllResponders()
-		// 5) Очищаем каналы ожидания
+		// 6) Оч��щаем каналы ожидания
 		m.cleanupWaitChannels()
 
 		logger.Info("Процесс завершения работы модуля Models завершен")
@@ -974,6 +1007,11 @@ func (m *Models) SaveAllContextDuringExit() {
 }
 
 func (m *Models) TranscribeAudio(audioData []byte, fileName string) (string, error) {
+	// Проверка наличия OpenAI клиента
+	if m.client == nil {
+		return "", fmt.Errorf("транскрибация аудио недоступна: OpenAI клиент не инициализирован")
+	}
+
 	// Проверка наличия аудиоданных
 	if len(audioData) == 0 {
 		return "", fmt.Errorf("пустые аудиоданные")

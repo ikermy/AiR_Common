@@ -134,14 +134,21 @@ func (o *Operator) getOrCreateSession(userID uint32, dialogID uint64) (*session,
 }
 
 // GetConnectionErrors возвращает канал для получения ошибок подключения
+// Если сессия ещё не создана, возвращает пустой канал (не создаёт сессию)
 func (o *Operator) GetConnectionErrors(ctx context.Context, userID uint32, dialogID uint64) <-chan string {
-	s, err := o.getOrCreateSession(userID, dialogID)
-	if err != nil {
-		ch := make(chan string)
-		close(ch)
-		return ch
+	key := opKey{userID: userID, dialogID: dialogID}
+
+	// Проверяем, существует ли уже сессия (БЕЗ создания новой)
+	if val, ok := o.operatorChMap.Load(key); ok {
+		s := val.(*session)
+		return s.connectionErrorCh
 	}
-	return s.connectionErrorCh
+
+	// Если сессии нет, возвращаем пустой канал, который никогда не отправит данные
+	// Это предотвращает автоматическое создание операторской сессии для всех пользователей
+	ch := make(chan string)
+	close(ch) // Закрываем сразу, чтобы select не блокировался
+	return ch
 }
 
 // touch продлевает TTL сессии и сбрасывает таймер простоя

@@ -1,4 +1,4 @@
-package model
+package openai
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -34,8 +35,7 @@ func (j JSONSchemaDefinition) MarshalJSON() ([]byte, error) {
 	return json.Marshal((Alias)(j))
 }
 
-// handleRequiredAction обрабатывает статус RunStatusRequiresAction
-func (m *Models) handleRequiredAction(ctx context.Context, run *openai.Run) (*openai.Run, error) {
+func (m *OpenAIModel) handleRequiredAction(ctx context.Context, run *openai.Run) (*openai.Run, error) {
 	if run.RequiredAction == nil || run.RequiredAction.SubmitToolOutputs == nil {
 		return run, nil
 	}
@@ -61,7 +61,6 @@ func (m *Models) handleRequiredAction(ctx context.Context, run *openai.Run) (*op
 		toolOutputs = append(toolOutputs, output)
 	}
 
-	// Отправляем результаты выполнения функций
 	updatedRun, err := m.client.SubmitToolOutputs(ctx, run.ThreadID, run.ID, openai.SubmitToolOutputsRequest{
 		ToolOutputs: toolOutputs,
 	})
@@ -72,15 +71,13 @@ func (m *Models) handleRequiredAction(ctx context.Context, run *openai.Run) (*op
 	return &updatedRun, nil
 }
 
-// waitForRunCompletion ожидает завершения выполнения run
-func (m *Models) waitForRunCompletion(ctx context.Context, run *openai.Run) (*openai.Run, error) {
+func (m *OpenAIModel) waitForRunCompletion(ctx context.Context, run *openai.Run) (*openai.Run, error) {
 	currentRun := run
 
 	for currentRun.Status == openai.RunStatusQueued ||
 		currentRun.Status == openai.RunStatusInProgress ||
 		currentRun.Status == openai.RunStatusRequiresAction {
 
-		// Обработка RunStatusRequiresAction
 		if currentRun.Status == openai.RunStatusRequiresAction {
 			updatedRun, err := m.handleRequiredAction(ctx, currentRun)
 			if err != nil {
@@ -105,9 +102,8 @@ func (m *Models) waitForRunCompletion(ctx context.Context, run *openai.Run) (*op
 	return currentRun, nil
 }
 
-// extractAssistantResponse извлекает ответ ассистента из сообщений треда
-func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) (AssistResponse, error) {
-	var emptyResponse AssistResponse
+func (m *OpenAIModel) extractAssistantResponse(ctx context.Context, run *openai.Run) (model.AssistResponse, error) {
+	var emptyResponse model.AssistResponse
 
 	order := "desc"
 	messagesList, err := m.client.ListMessage(ctx, run.ThreadID, nil, &order, nil, nil, nil)
@@ -119,9 +115,8 @@ func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) 
 		return emptyResponse, fmt.Errorf("получен пустой список сообщений")
 	}
 
-	var validResponses []AssistResponse
+	var validResponses []model.AssistResponse
 
-	// Собираем все валидные ответы от ассистента после запуска
 	for _, message := range messagesList.Messages {
 		if message.Role == "assistant" && int64(message.CreatedAt) >= run.CreatedAt {
 			for _, content := range message.Content {
@@ -131,7 +126,7 @@ func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) 
 						continue
 					}
 
-					var assistResp AssistResponse
+					var assistResp model.AssistResponse
 					if err := json.Unmarshal([]byte(response), &assistResp); err != nil {
 						logger.Error("Ошибка парсинга JSON: %v. Ответ: %s", err, response)
 						continue
@@ -152,15 +147,14 @@ func (m *Models) extractAssistantResponse(ctx context.Context, run *openai.Run) 
 	return finalResponse, nil
 }
 
-// mergeResponses объединяет несколько ответов в один
-func (m *Models) mergeResponses(responses []AssistResponse) AssistResponse {
+func (m *OpenAIModel) mergeResponses(responses []model.AssistResponse) model.AssistResponse {
 	if len(responses) == 1 {
 		return responses[0]
 	}
 
-	var merged AssistResponse
+	var merged model.AssistResponse
 	var messages []string
-	var allFiles []File
+	var allFiles []model.File
 
 	for _, resp := range responses {
 		if resp.Message != "" {
@@ -171,14 +165,12 @@ func (m *Models) mergeResponses(responses []AssistResponse) AssistResponse {
 		}
 	}
 
-	// Объединяем сообщения
 	if len(messages) > 0 {
 		merged.Message = strings.Join(messages, "\n\n")
 	}
 
-	// Объединяем файлы (удаляем дубликаты по URL)
 	if len(allFiles) > 0 {
-		uniqueFiles := make(map[string]File)
+		uniqueFiles := make(map[string]model.File)
 		for _, file := range allFiles {
 			uniqueFiles[file.URL] = file
 		}
@@ -191,13 +183,8 @@ func (m *Models) mergeResponses(responses []AssistResponse) AssistResponse {
 	return merged
 }
 
-func (m *Models) Request(modelId string, dialogId uint64, text *string, files ...FileUpload) (AssistResponse, error) {
-	var emptyResponse AssistResponse
-
-	// Проверка наличия OpenAI клиента
-	if m.client == nil {
-		return emptyResponse, fmt.Errorf("OpenAI клиент не инициализирован: используйте провайдер OpenAI или проверьте конфигурацию")
-	}
+func (m *OpenAIModel) Request(modelId string, dialogId uint64, text *string, files ...model.FileUpload) (model.AssistResponse, error) {
+	var emptyResponse model.AssistResponse
 
 	if (text == nil || *text == "") && len(files) == 0 {
 		return emptyResponse, fmt.Errorf("пустое сообщение и нет файлов")
@@ -208,33 +195,42 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 		logger.Warn("не удалось создать тред: %v", err)
 	}
 
-	val, ok := m.responders.Load(dialogId)
-	if !ok {
+	// Ищем RespModel по dialogId в Chan
+	var respModel *RespModel
+	m.responders.Range(func(key, value interface{}) bool {
+		rm := value.(*RespModel)
+
+		if rm.Chan != nil && rm.Chan.DialogId == dialogId {
+			respModel = rm
+			return false
+		}
+		return true
+	})
+
+	if respModel == nil {
 		return emptyResponse, fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
 	}
 
-	respModel := val.(*RespModel)
-
-	respModel.mu.RLock()
-	thead, ok := respModel.TreadsGPT[dialogId]
-	respModel.mu.RUnlock()
-
-	if !ok || thead == nil {
+	thead := respModel.Thread
+	if thead == nil {
 		return emptyResponse, fmt.Errorf("тред не найден для dialogId %d после попытки создания", dialogId)
 	}
 
-	// Загружаем файлы, если они есть
+	// Обновляем TTL при каждом запросе
+	respModel.TTL = time.Now().Add(m.UserModelTTl)
+
 	var (
 		fileIDs     []string
 		messageReq  openai.MessageRequest
 		vectorStore *openai.VectorStore
 	)
-	// Гарантируем, что в createMsg/WithFiles не попадет nil
+
 	t := text
 	if t == nil {
 		empty := ""
 		t = &empty
 	}
+
 	if len(files) > 0 {
 		vectorStore, err = m.getAssistantVectorStore(respModel.Assist.AssistId)
 		if err != nil {
@@ -242,7 +238,6 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 		}
 	}
 
-	// Создаем сообщение с файлами или без них
 	if vectorStore != nil {
 		var fileNames []string
 		fileIDs, fileNames, err = m.uploadFilesForAssistant(files, vectorStore)
@@ -261,7 +256,6 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 		return emptyResponse, fmt.Errorf("не удалось создать сообщение: %w", err)
 	}
 
-	// Создаем схему ответа
 	additionalFalse := false
 	schema := JSONSchemaDefinition{
 		Type: "object",
@@ -297,7 +291,7 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 				Type: "boolean",
 			},
 		},
-		Required:   []string{"message", "action", "target", "operator"}, // все поля обязательны иначе ошибка!
+		Required:   []string{"message", "action", "target", "operator"},
 		Additional: &additionalFalse,
 	}
 
@@ -315,9 +309,8 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 		ResponseFormat: responseFormat,
 	}
 
-	// Добавляем инструменты через ActionHandler если он доступен
 	if m.actionHandler != nil {
-		if tools := m.actionHandler.GetTools(ProviderOpenAI); tools != nil {
+		if tools := m.actionHandler.GetTools(model.ProviderOpenAI); tools != nil {
 			if openaiTools, ok := tools.([]openai.Tool); ok {
 				runRequest.Tools = openaiTools
 			}
@@ -336,7 +329,6 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 
 	response, err := m.extractAssistantResponse(m.ctx, completedRun)
 
-	// Очищаем загруженные файлы после обработки
 	defer func() {
 		if len(fileIDs) > 0 {
 			go m.cleanupFiles(fileIDs, vectorStore.ID)
@@ -344,4 +336,28 @@ func (m *Models) Request(modelId string, dialogId uint64, text *string, files ..
 	}()
 
 	return response, err
+}
+
+// createMsg создает простое сообщение для OpenAI
+func createMsg(text *string) openai.MessageRequest {
+	return openai.MessageRequest{
+		Role:    "user",
+		Content: *text,
+	}
+}
+
+// createMsgWithFiles создает сообщение с файлами для OpenAI
+func createMsgWithFiles(text *string, fileNames []string) openai.MessageRequest {
+	msg := openai.MessageRequest{
+		Role:    "user",
+		Content: *text,
+	}
+	if len(fileNames) == 1 {
+		*text += fmt.Sprintf("\n\nОБЯЗАТЕЛЬНО используй file_search для анализа содержимого этого файла: %s. И если потребуется code_interpreter. ИГНОРИРУЙ все остальные файлы в векторном хранилище - это важно!", fileNames[0])
+	} else {
+		*text += fmt.Sprintf("\n\nОБЯЗАТЕЛЬНО используй file_search для анализа содержимого этих файлов: %s. И если потребуется code_interpreter. ИГНОРИРУЙ все остальные файлы в векторном хранилище - это важно!", strings.Join(fileNames, ", "))
+	}
+	msg.Content = *text
+
+	return msg
 }

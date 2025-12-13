@@ -20,6 +20,7 @@ type Message struct {
 	Message   model.AssistResponse `json:"message"`
 	Timestamp time.Time            `json:"timestamp"`
 }
+
 type Espero struct {
 	Limit  uint16 `json:"limit"`
 	Wait   uint8  `json:"wait"`

@@ -49,6 +49,10 @@ build/
 gen/
 generated/
 
+# Exclude documentation and migration files
+docs/
+migrations/
+
 # Temporary files
 tmp/
 temp/

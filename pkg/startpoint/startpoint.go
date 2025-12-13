@@ -3,6 +3,7 @@ package startpoint
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -59,9 +60,15 @@ type EndpointInterface interface {
 // ModelInterface - интерфейс для моделей
 type ModelInterface interface {
 	NewMessage(operator model.Operator, msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message
-	Request(modelId string, dialogId uint64, ask *string, files ...model.FileUpload) (model.AssistResponse, error)
+	GetFileAsReader(url string) (io.Reader, error)
+	GetOrSetRespGPT(assist model.Assistant, dialogId, respId uint64, respName string) (*model.RespModel, error)
 	GetCh(respId uint64) (*model.Ch, error)
-	CleanUp()
+	GetRespIdByDialogId(dialogId uint64) (uint64, error)
+	SaveAllContextDuringExit()
+	Request(modelId string, dialogId uint64, text *string, files ...model.FileUpload) (model.AssistResponse, error)
+	CleanDialogData(dialogId uint64)
+	TranscribeAudio(audioData []byte, fileName string) (string, error)
+	Shutdown()
 }
 
 // OperatorInterface - интерфейс для отправки сообщений от и для операторов
@@ -594,6 +601,7 @@ func (s *Start) Respondent(
 		)
 
 		// Операторский запрос (явный), без SetOperator — сначала пробуем синхронно спросить оператора
+		logger.Infoln("Обрабатываю вопрос пользователя, операторский режим:", operatorMode, " запрос оператору:", currentQuest.Operator.Operator, u.Assist.UserId)
 		if currentQuest.Operator.Operator {
 			// Если вопрос помечен как операторский но операторский режим ещё не включён,
 			// значит это первоначальный запрос на операторский режим, пробую связаться с оператором
@@ -794,6 +802,12 @@ func (s *Start) StarterRespondent(
 
 // StarterListener запускает Listener для пользователя, если он ещё не запущен
 func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
+	// Проверка на nil перед доступом к полям
+	if start.Model == nil {
+		logger.Error("StarterListener: start.Model is nil, RespId=%d", start.RespId)
+		return
+	}
+
 	if !start.Model.Services.Listener.Load() {
 		start.Model.Services.Listener.Store(true)
 		go func() {
