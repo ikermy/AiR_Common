@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
@@ -25,9 +26,9 @@ type Endpoint struct {
 
 	Db           DB
 	arrMsg       map[uint64]map[uint64][]string
-	messageBatch map[uint64][]Message // Буфер сообщений для каждого треда
-	batchSize    int                  // Размер батча
-	mu           sync.Mutex           // Мьютекс для защиты буфера
+	messageBatch map[uint64][]comdb.Message // Буфер сообщений для каждого треда
+	batchSize    int                        // Размер батча
+	mu           sync.Mutex                 // Мьютекс для защиты буфера
 }
 
 func New(parent context.Context, d DB) *Endpoint {
@@ -37,7 +38,7 @@ func New(parent context.Context, d DB) *Endpoint {
 		cancel: cancel,
 
 		Db:           d,
-		messageBatch: make(map[uint64][]Message),
+		messageBatch: make(map[uint64][]comdb.Message),
 		batchSize:    mode.BatchSize, // Размер батча по умолчанию
 	}
 
@@ -187,28 +188,13 @@ func (e *Endpoint) SetUserAsk(dialogId, respId uint64, ask string, askLimit ...u
 	return true
 }
 
-type CreatorType uint8
-
-type Message struct {
-	Creator   CreatorType          `json:"creator"`
-	Message   model.AssistResponse `json:"message"`
-	Timestamp time.Time            `json:"timestamp"`
-}
-
-const (
-	AI        CreatorType = 1 // Право
-	User      CreatorType = 2 // Лево
-	UserVoice CreatorType = 3 // Лево
-	Operator  CreatorType = 4 // Прав
-)
-
-func (e *Endpoint) SaveDialog(creator CreatorType, treadId uint64, resp *model.AssistResponse) {
+func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse) {
 	//ask := strings.TrimSpace(*resp)
 	//if ask == "" || ask == "[]" { // Этого не может быть?! Но на всякий случай
 	//	return
 	//}
 
-	message := Message{
+	message := comdb.Message{
 		Creator:   creator,
 		Message:   *resp,
 		Timestamp: time.Now(),
