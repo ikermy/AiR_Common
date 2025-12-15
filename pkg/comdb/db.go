@@ -49,6 +49,26 @@ const (
 	Operator  CreatorType = 4 // Прав
 )
 
+// UserModelRecord представляет запись из таблицы user_models
+type UserModelRecord struct {
+	UserId   uint32             `json:"user_id"`
+	ModelId  uint64             `json:"model_id"`
+	Provider model.ProviderType `json:"provider"`
+	IsActive bool               `json:"is_active"`
+}
+
+// Ids представляет идентификатор файла с именем
+type Ids struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// VecIds содержит ID файлов и векторных хранилищ
+type VecIds struct {
+	FileIds  []Ids    `json:"file_ids"`
+	VectorId []string `json:"vector_id"`
+}
+
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction
 func DecompressAndExtractMetadata(compressedData []byte) (string, []string, *Espero, error) {
 	// Создаем reader для распаковки данных
@@ -628,4 +648,211 @@ func (d *DB) GetNotificationChannel(userId uint32) (json.RawMessage, error) {
 	}
 
 	return json.RawMessage(data.String), nil
+}
+
+// ============================================================================
+// Методы для работы с multi-model системой
+// ============================================================================
+
+// ReadUserModelByProvider получает данные модели пользователя по провайдеру
+// Возвращает сжатые данные модели, VecIds и ошибку
+func (d *DB) ReadUserModelByProvider(userId uint32, provider model.ProviderType) ([]byte, *VecIds, error) {
+	if userId == 0 {
+		return nil, nil, fmt.Errorf("получен пустой userId")
+	}
+
+	if !provider.IsValid() {
+		return nil, nil, fmt.Errorf("некорректный provider: %d", provider)
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel)
+	defer cancel()
+
+	// Получаем запись из user_models для данного провайдера
+	var modelId uint64
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT ModelId FROM user_models 
+		 WHERE UserId = ? AND Provider = ? 
+		 LIMIT 1`,
+		userId, provider).Scan(&modelId)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, nil, nil // Модель не найдена - это нормально
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, nil, fmt.Errorf("тайм-аут (%d с) при получении modelId: %w", mode.SqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return nil, nil, fmt.Errorf("операция отменена: %w", err)
+		default:
+			return nil, nil, fmt.Errorf("ошибка получения modelId: %w", err)
+		}
+	}
+
+	// Получаем данные модели из user_gpt
+	var compressedData []byte
+	var vecIdsJSON sql.NullString
+
+	err = d.conn.QueryRowContext(ctx,
+		`SELECT Data, Ids FROM user_gpt WHERE Id = ?`,
+		modelId).Scan(&compressedData, &vecIdsJSON)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, nil, fmt.Errorf("модель с Id=%d не найдена в user_gpt", modelId)
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, nil, fmt.Errorf("тайм-аут (%d с) при получении данных модели: %w", mode.SqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return nil, nil, fmt.Errorf("операция отменена: %w", err)
+		default:
+			return nil, nil, fmt.Errorf("ошибка получения данных модели: %w", err)
+		}
+	}
+
+	// Парсим VecIds
+	var vecIds *VecIds
+	if vecIdsJSON.Valid && vecIdsJSON.String != "" {
+		vecIds = &VecIds{}
+		if err := json.Unmarshal([]byte(vecIdsJSON.String), vecIds); err != nil {
+			logger.Warn("Ошибка парсинга VecIds для модели %d: %v", modelId, err, userId)
+			// Продолжаем с пустым VecIds
+			vecIds = &VecIds{
+				FileIds:  []Ids{},
+				VectorId: []string{},
+			}
+		}
+	} else {
+		vecIds = &VecIds{
+			FileIds:  []Ids{},
+			VectorId: []string{},
+		}
+	}
+
+	return compressedData, vecIds, nil
+}
+
+// GetUserModels получает все модели пользователя из таблицы user_models
+func (d *DB) GetUserModels(userId uint32) ([]UserModelRecord, error) {
+	if userId == 0 {
+		return nil, fmt.Errorf("получен пустой userId")
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel)
+	defer cancel()
+
+	rows, err := d.conn.QueryContext(ctx,
+		`SELECT UserId, ModelId, Provider, IsActive 
+		 FROM user_models 
+		 WHERE UserId = ? 
+		 ORDER BY IsActive DESC, CreatedAt DESC`,
+		userId)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, fmt.Errorf("тайм-аут (%d с) при получении моделей: %w", mode.SqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return nil, fmt.Errorf("операция отменена: %w", err)
+		default:
+			return nil, fmt.Errorf("ошибка получения моделей: %w", err)
+		}
+	}
+	defer rows.Close()
+
+	var records []UserModelRecord
+	for rows.Next() {
+		var record UserModelRecord
+		var isActive int8
+
+		if err := rows.Scan(&record.UserId, &record.ModelId, &record.Provider, &isActive); err != nil {
+			logger.Warn("Ошибка сканирования записи user_models: %v", err, userId)
+			continue
+		}
+
+		record.IsActive = isActive == 1
+		records = append(records, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка при итерации по записям: %w", err)
+	}
+
+	return records, nil
+}
+
+// GetActiveModel получает активную модель пользователя из таблицы user_models
+func (d *DB) GetActiveModel(userId uint32) (*UserModelRecord, error) {
+	if userId == 0 {
+		return nil, fmt.Errorf("получен пустой userId")
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel)
+	defer cancel()
+
+	var record UserModelRecord
+	var isActive int8
+
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT UserId, ModelId, Provider, IsActive 
+		 FROM user_models 
+		 WHERE UserId = ? AND IsActive = 1 
+		 LIMIT 1`,
+		userId).Scan(&record.UserId, &record.ModelId, &record.Provider, &isActive)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, nil // Активная модель не найдена - это нормально
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, fmt.Errorf("тайм-аут (%d с) при получении активной модели: %w", mode.SqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return nil, fmt.Errorf("операция отменена: %w", err)
+		default:
+			return nil, fmt.Errorf("ошибка получения активной модели: %w", err)
+		}
+	}
+
+	record.IsActive = isActive == 1
+	return &record, nil
+}
+
+// GetModelByProvider получает модель пользователя по провайдеру из таблицы user_models
+func (d *DB) GetModelByProvider(userId uint32, provider model.ProviderType) (*UserModelRecord, error) {
+	if userId == 0 {
+		return nil, fmt.Errorf("получен пустой userId")
+	}
+
+	if !provider.IsValid() {
+		return nil, fmt.Errorf("некорректный provider: %d", provider)
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel)
+	defer cancel()
+
+	var record UserModelRecord
+	var isActive int8
+
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT UserId, ModelId, Provider, IsActive 
+		 FROM user_models 
+		 WHERE UserId = ? AND Provider = ? 
+		 LIMIT 1`,
+		userId, provider).Scan(&record.UserId, &record.ModelId, &record.Provider, &isActive)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, nil // Модель не найдена - это нормально
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, fmt.Errorf("тайм-аут (%d с) при получении модели по провайдеру: %w", mode.SqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return nil, fmt.Errorf("операция отменена: %w", err)
+		default:
+			return nil, fmt.Errorf("ошибка получения модели по провайдеру: %w", err)
+		}
+	}
+
+	record.IsActive = isActive == 1
+	return &record, nil
 }
