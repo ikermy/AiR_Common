@@ -1,6 +1,8 @@
 package mode
 
 import (
+	"time"
+
 	"github.com/ikermy/AiR_Common/pkg/common"
 )
 
@@ -37,6 +39,8 @@ var (
 	// Максимальное количество последних сообщений для передачи в контекст модели
 	// 0 означает передачу всей истории диалога
 	ContextMessagesLimit = 20
+
+	SqlTimeToCancel = 5 * time.Second // Тайм-аут на операции с БД (в секундах)
 )
 
 func SetTestMode(enabled bool) {
