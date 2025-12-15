@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -450,9 +451,9 @@ func (d *DB) SaveChannelData(userId uint32, channelType string, data string, ena
 	}
 
 	if _, err := d.conn.ExecContext(ctx, "CALL SaveChannelData(?, ?, ?, ?)",
-		userId,                   // p_UserId
-		channelType,              // p_Type
-		jsonData,                 // p_Data (теперь валидный JSON)
+		userId,      // p_UserId
+		channelType, // p_Type
+		jsonData,    // p_Data (теперь валидный JSON)
 		enabledInt); err != nil { // p_Enabled
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -855,4 +856,67 @@ func (d *DB) GetModelByProvider(userId uint32, provider model.ProviderType) (*Us
 
 	record.IsActive = isActive == 1
 	return &record, nil
+}
+
+// GetActiveModelData получает данные активной модели пользователя
+// Возвращает данные, VecIds и информацию о провайдере
+
+// SetActiveModel переключает активную модель пользователя
+// Параметры:
+//   - userId: ID пользователя
+//   - modelId: ID записи из таблицы user_models
+//
+// Триггер БД автоматически снимет IsActive с других моделей пользователя
+func (d *DB) SetActiveModel(userId uint32, modelId uint64) error {
+	if userId == 0 {
+		return fmt.Errorf("получен пустой userId")
+	}
+
+	if modelId == 0 {
+		return fmt.Errorf("получен пустой modelId")
+	}
+
+	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
+	defer cancel()
+
+	// Начинаем транзакцию
+	tx, err := d.Conn().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("ошибка начала транзакции: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Обновляем IsActive для указанной модели
+	// Триггер trg_user_models_before_update автоматически снимет IsActive с других моделей
+	result, err := tx.ExecContext(ctx,
+		"UPDATE user_models SET IsActive = 1 WHERE Id = ? AND UserId = ?",
+		modelId, userId)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при переключении активной модели: %w", mode.SqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена: %w", err)
+		default:
+			return fmt.Errorf("ошибка переключения активной модели: %w", err)
+		}
+	}
+
+	// Проверяем, была ли обновлена хотя бы одна строка
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("ошибка получения количества обновленных строк: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("модель с Id=%d для пользователя %d не найдена", modelId, userId)
+	}
+
+	// Фиксируем транзакцию
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ошибка фиксации транзакции: %w", err)
+	}
+
+	return nil
 }
