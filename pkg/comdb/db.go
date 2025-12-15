@@ -181,6 +181,11 @@ func (d *DB) Context() context.Context {
 	return d.ctx
 }
 
+// MainCTX возвращает главный контекст приложения
+func (d *DB) MainCTX() context.Context {
+	return d.mainCTX
+}
+
 // ReadContext читает контекст диалога из базы данных
 func (d *DB) ReadContext(dialogId uint64) (json.RawMessage, error) {
 	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel)
