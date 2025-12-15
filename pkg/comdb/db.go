@@ -171,6 +171,16 @@ func (d *DB) Close() error {
 	return nil
 }
 
+// Conn возвращает базовое подключение к БД для расширенного использования в приложениях
+func (d *DB) Conn() *sql.DB {
+	return d.conn
+}
+
+// Context возвращает контекст БД для использования в пользовательских методах
+func (d *DB) Context() context.Context {
+	return d.ctx
+}
+
 // ReadContext читает контекст диалога из базы данных
 func (d *DB) ReadContext(dialogId uint64) (json.RawMessage, error) {
 	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel)
