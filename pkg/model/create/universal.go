@@ -543,8 +543,8 @@ func (m *Models) GetUserModelByProvider(userId uint32, provider ProviderType) (*
 	return modelData, nil
 }
 
-// SetActiveUserModel переключает активную модель пользователя (в транзакции)
-func (m *Models) SetActiveUserModel(userId uint32, modelId uint64) error {
+// SetActiveModel переключает активную модель пользователя (в транзакции)
+func (m *Models) SetActiveModel(userId uint32, modelId uint64) error {
 	err := m.db.SetActiveModel(userId, modelId)
 	if err != nil {
 		return fmt.Errorf("ошибка переключения активной модели: %w", err)

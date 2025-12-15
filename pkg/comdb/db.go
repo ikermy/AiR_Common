@@ -50,25 +50,13 @@ const (
 	Operator  CreatorType = 4 // Прав
 )
 
-// UserModelRecord представляет запись из таблицы user_models
-type UserModelRecord struct {
-	UserId   uint32              `json:"user_id"`
-	ModelId  uint64              `json:"model_id"`
-	Provider models.ProviderType `json:"provider"`
-	IsActive bool                `json:"is_active"`
-}
-
-// Ids представляет идентификатор файла с именем
-type Ids struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// VecIds содержит ID файлов и векторных хранилищ
-type VecIds struct {
-	FileIds  []Ids    `json:"file_ids"`
-	VectorId []string `json:"vector_id"`
-}
+// Используем типы из пакета model/create для совместимости с интерфейсом models.DB
+type (
+	Ids             = models.Ids
+	VecIds          = models.VecIds
+	UserModelRecord = models.UserModelRecord
+	ProviderType    = models.ProviderType
+)
 
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction
 func DecompressAndExtractMetadata(compressedData []byte) (string, []string, *Espero, error) {
@@ -260,13 +248,13 @@ func (d *DB) SaveContext(threadId uint64, dialogContext json.RawMessage) error {
 	return nil
 }
 
-// SetActiveUserModel переключает активную модель пользователя
+// SetActiveModel переключает активную модель пользователя
 // Параметры:
 //   - userId: ID пользователя
 //   - modelId: ID записи из таблицы user_models
 //
 // Триггер БД автоматически снимет IsActive с других моделей пользователя
-func (d *DB) SetActiveUserModel(userId uint32, modelId uint64) error {
+func (d *DB) SetActiveModel(userId uint32, modelId uint64) error {
 	if userId == 0 {
 		return fmt.Errorf("получен пустой userId")
 	}
@@ -451,9 +439,9 @@ func (d *DB) SaveChannelData(userId uint32, channelType string, data string, ena
 	}
 
 	if _, err := d.conn.ExecContext(ctx, "CALL SaveChannelData(?, ?, ?, ?)",
-		userId,                   // p_UserId
-		channelType,              // p_Type
-		jsonData,                 // p_Data (теперь валидный JSON)
+		userId,      // p_UserId
+		channelType, // p_Type
+		jsonData,    // p_Data (теперь валидный JSON)
 		enabledInt); err != nil { // p_Enabled
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -858,67 +846,71 @@ func (d *DB) GetModelByProvider(userId uint32, provider models.ProviderType) (*U
 	return &record, nil
 }
 
-// GetActiveModelData получает данные активной модели пользователя
-// Возвращает данные, VecIds и информацию о провайдере
-
-// SetActiveModel переключает активную модель пользователя
-// Параметры:
-//   - userId: ID пользователя
-//   - modelId: ID записи из таблицы user_models
-//
-// Триггер БД автоматически снимет IsActive с других моделей пользователя
-func (d *DB) SetActiveModel(userId uint32, modelId uint64) error {
+// RemoveModelFromUser удаляет связь модель-пользователь из user_models
+// НЕ удаляет саму модель из user_gpt (это делается через DeleteModel)
+func (d *DB) RemoveModelFromUser(userId uint32, modelId uint64) error {
 	if userId == 0 {
 		return fmt.Errorf("получен пустой userId")
 	}
-
 	if modelId == 0 {
 		return fmt.Errorf("получен пустой modelId")
 	}
 
-	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
+	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel)
 	defer cancel()
 
-	// Начинаем транзакцию
-	tx, err := d.Conn().BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("ошибка начала транзакции: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Обновляем IsActive для указанной модели
-	// Триггер trg_user_models_before_update автоматически снимет IsActive с других моделей
-	result, err := tx.ExecContext(ctx,
-		"UPDATE user_models SET IsActive = 1 WHERE Id = ? AND UserId = ?",
-		modelId, userId)
+	result, err := d.conn.ExecContext(ctx,
+		"DELETE FROM user_models WHERE UserId = ? AND ModelId = ?",
+		userId, modelId)
 
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
-			return fmt.Errorf("тайм-аут (%d с) при переключении активной модели: %w", mode.SqlTimeToCancel, err)
+			return fmt.Errorf("тайм-аут (%d с) при удалении связи: %w", mode.SqlTimeToCancel, err)
 		case errors.Is(err, context.Canceled):
 			return fmt.Errorf("операция отменена: %w", err)
 		default:
-			return fmt.Errorf("ошибка переключения активной модели: %w", err)
+			return fmt.Errorf("ошибка удаления связи: %w", err)
 		}
 	}
 
-	// Проверяем, была ли обновлена хотя бы одна строка
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("ошибка получения количества обновленных строк: %w", err)
-	}
-
+	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		return fmt.Errorf("модель с Id=%d для пользователя %d не найдена", modelId, userId)
-	}
-
-	// Фиксируем транзакцию
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("ошибка фиксации транзакции: %w", err)
+		return fmt.Errorf("связь модели не найдена")
 	}
 
 	return nil
+}
+
+// GetUserVectorStorage получает ID векторного хранилища (deprecated: используйте ReadUserModelByProvider)
+func (d *DB) GetUserVectorStorage(userId uint32) (string, error) {
+	// Получаем активную модель
+	activeModel, err := d.GetActiveModel(userId)
+	if err != nil {
+		return "", err
+	}
+	if activeModel == nil {
+		return "", nil
+	}
+
+	// Читаем данные модели
+	_, vecIds, err := d.ReadUserModelByProvider(userId, activeModel.Provider)
+	if err != nil {
+		return "", err
+	}
+
+	if vecIds == nil || len(vecIds.VectorId) == 0 {
+		return "", nil
+	}
+
+	return vecIds.VectorId[0], nil
+}
+
+// GetOrSetUserStorageLimit получает или устанавливает лимит хранилища
+func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error) {
+	// Заглушка - возвращаем значения по умолчанию
+	// В реальной реализации здесь должен быть запрос к БД
+	return 1000000, 10000000, nil
 }
 
 // SaveUserModel сохраняет модель пользователя в БД (user_gpt) и создаёт связь в user_models
