@@ -13,7 +13,20 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
+	models "github.com/ikermy/AiR_Common/pkg/model/create"
 	"github.com/sashabaranov/go-openai"
+)
+
+// Экспортируем типы из пакета create для удобства использования
+type (
+	// UniversalModelData представляет универсальную структуру данных модели
+	UniversalModelData = models.UniversalModelData
+
+	// FileIDs представляет идентификатор файла с именем
+	FileIDs = models.Ids
+
+	// CreateProviderType - строковый тип провайдера для создания моделей
+	CreateProviderType = models.ProviderType
 )
 
 // Model интерфейс для работы с моделями Assistant
@@ -29,6 +42,22 @@ type Model interface {
 	TranscribeAudio(audioData []byte, fileName string) (string, error)
 	CleanUp() // Фоновая очистка устаревших записей
 	Shutdown()
+}
+
+// ModelManager интерфейс для управления моделями (создание, удаление, работа с файлами)
+// Расширяет базовый интерфейс Model дополнительными методами управления
+// Использует типы из пакета github.com/ikermy/AiR_Common/pkg/model/create (package models)
+type ModelManager interface {
+	Model // Встраиваем базовый интерфейс
+
+	// CreateModel создаёт новую модель у провайдера
+	// fileIDs должен быть типа []models.Ids из пакета pkg/model/create
+	CreateModel(userId uint32, provider ProviderType, gptName string, gptId uint8, modelName string, modelJSON []byte, fileIDs interface{}) (string, error)
+
+	// Методы для работы с файлами OpenAI (специфичные для OpenAI)
+	UploadFileToOpenAI(fileName string, fileData []byte) (string, error)
+	DeleteFileFromOpenAI(fileID string) error
+	AddFileFromOpenAI(userId uint32, fileID, fileName string) error
 }
 
 type DB interface {

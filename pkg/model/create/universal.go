@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -64,6 +65,33 @@ type Models struct {
 	mistralClient *MistralAgentClient // Клиент для работы с Mistral
 	authKey       string
 	db            DB
+}
+
+// New создаёт новый экземпляр Models для управления моделями
+// openaiKey - API ключ OpenAI (может быть пустым, если OpenAI не используется)
+// mistralKey - API ключ Mistral (может быть пустым, если Mistral не используется)
+func New(ctx context.Context, db DB, openaiKey, mistralKey string) *Models {
+	m := &Models{
+		ctx:     ctx,
+		db:      db,
+		authKey: openaiKey, // Сохраняем для совместимости
+	}
+
+	// Инициализируем OpenAI клиент, если ключ предоставлен
+	if openaiKey != "" {
+		m.client = openai.NewClient(openaiKey)
+	}
+
+	// Инициализируем Mistral клиент, если ключ предоставлен
+	if mistralKey != "" {
+		m.mistralClient = &MistralAgentClient{
+			apiKey: mistralKey,
+			url:    mode.MistralAgentsURL,
+			ctx:    ctx,
+		}
+	}
+
+	return m
 }
 
 // ProviderType определяет тип провайдера модели
