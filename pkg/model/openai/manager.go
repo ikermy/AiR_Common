@@ -23,7 +23,7 @@ func (m *OpenAIModel) CreateModel(userId uint32, provider model.ProviderType, gp
 		// Требуется адаптер для DB интерфейса
 	}
 
-	return modelsManager.CreateModel(userId, models.ProviderType(provider.String()), gptName, gptId, modelName, modelJSON, ids)
+	return modelsManager.CreateModel(userId, models.ProviderOpenAI, gptName, gptId, modelName, modelJSON, ids)
 }
 
 // UploadFileToOpenAI загружает файл в OpenAI

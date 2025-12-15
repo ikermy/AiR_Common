@@ -338,7 +338,9 @@ func (m *Models) createModel(
 		compressedData,
 		gptId,  // gpt-4o-mini (2)
 		allIds, // сохраняем также fileIDs в виде json.RawMessage
-		operator)
+		operator,
+		ProviderOpenAI, // Указываем провайдера OpenAI
+	)
 
 	if err != nil {
 		return fmt.Errorf("ошибка сохранения модели пользователя: %w", err)

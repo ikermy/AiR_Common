@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -451,9 +450,9 @@ func (d *DB) SaveChannelData(userId uint32, channelType string, data string, ena
 	}
 
 	if _, err := d.conn.ExecContext(ctx, "CALL SaveChannelData(?, ?, ?, ?)",
-		userId,      // p_UserId
-		channelType, // p_Type
-		jsonData,    // p_Data (теперь валидный JSON)
+		userId,                   // p_UserId
+		channelType,              // p_Type
+		jsonData,                 // p_Data (теперь валидный JSON)
 		enabledInt); err != nil { // p_Enabled
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -914,6 +913,221 @@ func (d *DB) SetActiveModel(userId uint32, modelId uint64) error {
 	}
 
 	// Фиксируем транзакцию
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ошибка фиксации транзакции: %w", err)
+	}
+
+	return nil
+}
+
+// SaveUserModel сохраняет модель пользователя в БД (user_gpt) и создаёт связь в user_models
+// Всё выполняется в одной транзакции для обеспечения атомарности
+//
+// Параметры:
+//   - userId: ID пользователя
+//   - name: Название модели
+//   - assistantId: ID ассистента (asst_xxx для OpenAI, ag_xxx для Mistral)
+//   - data: Сжатые данные модели (gzip)
+//   - model: Тип модели (числовой идентификатор)
+//   - ids: JSON с ID файлов и векторных хранилищ
+//   - operator: Флаг оператора (для обновления таблицы operators)
+//   - provider: Тип провайдера (1=OpenAI, 2=Mistral)
+//
+// Логика работы:
+//  1. Сохраняет/обновляет запись в user_gpt с указанием Provider
+//  2. Проверяет наличие связи в user_models для данного провайдера
+//  3. Если связи нет - создаёт её, автоматически устанавливая IsActive=1 для первой модели
+//  4. Обновляет статус оператора в таблице operators
+func (d *DB) SaveUserModel(
+	userId uint32,
+	name, assistantId string,
+	data []byte,
+	modType uint8,
+	ids json.RawMessage,
+	operator bool,
+	provider model.ProviderType,
+) error {
+	// Проверяю входные значения
+	if userId == 0 || name == "" || assistantId == "" {
+		return fmt.Errorf("получены некорректные значения: userId, name или assistantId пусты")
+	}
+	// Валидация провайдера
+	if provider != model.ProviderOpenAI && provider != model.ProviderMistral {
+		return fmt.Errorf("некорректный provider: %d (допустимы 1=OpenAI, 2=Mistral)", provider)
+	}
+
+	// Дочерний контекст с тайм-аутом на операцию
+	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
+	defer cancel()
+
+	// Начинаем транзакцию для атомарности операций
+	tx, err := d.Conn().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("ошибка начала транзакции: %w", err)
+	}
+	defer tx.Rollback()
+
+	// ===================================================================
+	// Шаг 1: Сохранение/обновление модели в user_gpt
+	// ===================================================================
+
+	// Проверяем, существует ли модель для данного пользователя и провайдера
+	var existingModelId sql.NullInt64
+	err = tx.QueryRowContext(ctx, `
+		SELECT ug.Id 
+		FROM user_gpt ug
+		INNER JOIN user_models um ON ug.Id = um.ModelId
+		WHERE um.UserId = ? AND um.Provider = ?
+		LIMIT 1
+	`, userId, provider).Scan(&existingModelId)
+
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при проверке существующей модели: %w", mode.SqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена: %w", err)
+		default:
+			return fmt.Errorf("ошибка проверки существующей модели: %w", err)
+		}
+	}
+
+	var modelId int64
+
+	if !existingModelId.Valid {
+		// ===================================================================
+		// Модели нет - создаём новую в user_gpt
+		// ===================================================================
+		result, err := tx.ExecContext(ctx, `
+			INSERT INTO user_gpt (Name, Model, Provider, AssistantId, Data, Ids)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, name, modType, provider, assistantId, data, ids)
+
+		if err != nil {
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				return fmt.Errorf("тайм-аут (%d с) при создании модели: %w", mode.SqlTimeToCancel, err)
+			case errors.Is(err, context.Canceled):
+				return fmt.Errorf("операция отменена при создании модели: %w", err)
+			default:
+				return fmt.Errorf("ошибка создания модели: %w", err)
+			}
+		}
+
+		// Получаем ID новой записи
+		modelId, err = result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("ошибка получения ID новой модели: %w", err)
+		}
+
+		// ===================================================================
+		// Шаг 2: Создание связи в user_models
+		// ===================================================================
+
+		// Проверяем, есть ли у пользователя другие модели
+		var modelCount int
+		err = tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) 
+			FROM user_models 
+			WHERE UserId = ?
+		`, userId).Scan(&modelCount)
+
+		if err != nil {
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				return fmt.Errorf("тайм-аут (%d с) при подсчёте моделей: %w", mode.SqlTimeToCancel, err)
+			case errors.Is(err, context.Canceled):
+				return fmt.Errorf("операция отменена при подсчёте моделей: %w", err)
+			default:
+				return fmt.Errorf("ошибка подсчёта моделей: %w", err)
+			}
+		}
+
+		// Если это первая модель - делаем её активной автоматически
+		isActive := 0
+		if modelCount == 0 {
+			isActive = 1
+		}
+
+		// Создаём связь в user_models
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO user_models (UserId, ModelId, Provider, IsActive)
+			VALUES (?, ?, ?, ?)
+		`, userId, modelId, provider, isActive)
+
+		if err != nil {
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				return fmt.Errorf("тайм-аут (%d с) при создании связи модели: %w", mode.SqlTimeToCancel, err)
+			case errors.Is(err, context.Canceled):
+				return fmt.Errorf("операция отменена при создании связи: %w", err)
+			default:
+				return fmt.Errorf("ошибка создания связи модели: %w", err)
+			}
+		}
+
+		logger.Info("Создана новая модель (provider: %d, modelId: %d, isActive: %v)", provider, modelId, isActive == 1, userId)
+
+	} else {
+		// ===================================================================
+		// Модель существует - обновляем её в user_gpt
+		// ===================================================================
+		modelId = existingModelId.Int64
+
+		_, err = tx.ExecContext(ctx, `
+			UPDATE user_gpt
+			SET Name = ?,
+				Model = ?,
+				AssistantId = ?,
+				Data = ?,
+				Ids = ?
+			WHERE Id = ?
+		`, name, modType, assistantId, data, ids, modelId)
+
+		if err != nil {
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				return fmt.Errorf("тайм-аут (%d с) при обновлении модели: %w", mode.SqlTimeToCancel, err)
+			case errors.Is(err, context.Canceled):
+				return fmt.Errorf("операция отменена при обновлении модели: %w", err)
+			default:
+				return fmt.Errorf("ошибка обновления модели: %w", err)
+			}
+		}
+
+		logger.Info("Обновлена существующая модель (provider: %d, modelId: %d)", provider, modelId, userId)
+	}
+
+	// ===================================================================
+	// Шаг 3: Обновление статуса оператора
+	// ===================================================================
+	enabledInt := 0
+	if operator {
+		enabledInt = 1
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		UPDATE operators
+		SET Telegram_enabled = ?,
+			Changed = 1,
+			Timechange = CURRENT_TIMESTAMP()
+		WHERE UserId = ?
+	`, enabledInt, userId)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при установке статуса оператора: %w", mode.SqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена при установке статуса оператора: %w", err)
+		default:
+			return fmt.Errorf("ошибка установки статуса оператора: %w", err)
+		}
+	}
+
+	// ===================================================================
+	// Финал: Фиксируем транзакцию
+	// ===================================================================
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("ошибка фиксации транзакции: %w", err)
 	}
