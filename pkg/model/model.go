@@ -17,15 +17,6 @@ import (
 	"github.com/sashabaranov/go-openai"
 )
 
-// Экспортируем типы из пакета create для удобства использования
-type (
-	// UniversalModelData представляет универсальную структуру данных модели
-	UniversalModelData = models.UniversalModelData
-
-	// FileIDs представляет идентификатор файла с именем
-	FileIDs = models.Ids
-)
-
 // Model интерфейс для работы с моделями Assistant
 type Model interface {
 	NewMessage(operator Operator, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message
