@@ -24,9 +24,6 @@ type (
 
 	// FileIDs представляет идентификатор файла с именем
 	FileIDs = models.Ids
-
-	// CreateProviderType - строковый тип провайдера для создания моделей
-	CreateProviderType = models.ProviderType
 )
 
 // Model интерфейс для работы с моделями Assistant

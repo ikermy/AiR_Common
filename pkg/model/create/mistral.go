@@ -46,19 +46,10 @@ func (m *Models) deleteMistralModel(userId uint32, modelData *UniversalModelData
 	}
 
 	if progressCallback != nil {
-		progressCallback("🔄 Удаление модели из базы данных...")
+		progressCallback("✅ Mistral агент удалён из API")
 	}
 
-	// Удаляем из БД
-	if err := m.db.DeleteUserGPT(userId); err != nil {
-		return fmt.Errorf("ошибка удаления модели из БД: %w", err)
-	}
-
-	if progressCallback != nil {
-		progressCallback("✅ Модель Mistral успешно удалена")
-	}
-
-	logger.Info("Mistral модель успешно удалена для пользователя %d", userId, userId)
+	logger.Info("Mistral модель успешно удалена из API для пользователя %d", userId, userId)
 	return nil
 }
 

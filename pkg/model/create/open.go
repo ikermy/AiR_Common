@@ -395,19 +395,10 @@ func (m *Models) deleteOpenAIModel(userId uint32, modelData *UniversalModelData,
 	}
 
 	if progressCallback != nil {
-		progressCallback("🔄 Удаление модели из базы данных...")
+		progressCallback("✅ OpenAI Assistant и файлы удалены из API")
 	}
 
-	// Удаляем модель из БД
-	if err := m.db.DeleteUserGPT(userId); err != nil {
-		return fmt.Errorf("ошибка удаления модели из БД: %w", err)
-	}
-
-	if progressCallback != nil {
-		progressCallback("✅ Модель OpenAI успешно удалена")
-	}
-
-	logger.Info("OpenAI модель успешно удалена для пользователя %d", userId, userId)
+	logger.Info("OpenAI модель успешно удалена из API для пользователя %d", userId, userId)
 	return nil
 }
 

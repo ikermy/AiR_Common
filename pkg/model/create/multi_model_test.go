@@ -1,10 +1,7 @@
 package models
 
 import (
-	"bytes"
-	"compress/gzip"
 	"encoding/json"
-	"io"
 	"testing"
 )
 
@@ -30,7 +27,7 @@ func NewMockDB() *MockDB {
 	}
 }
 
-func (db *MockDB) SaveUserModel(userId uint32, _ string, _ string, data []byte, _ uint8, ids json.RawMessage, _ bool) error {
+func (db *MockDB) SaveUserModel(userId uint32, _ string, _ string, data []byte, _ uint8, ids json.RawMessage, _ bool, provider ProviderType) error {
 	if db.models[userId] == nil {
 		db.models[userId] = make(map[ProviderType]*mockModelData)
 	}
@@ -40,51 +37,46 @@ func (db *MockDB) SaveUserModel(userId uint32, _ string, _ string, data []byte, 
 		_ = json.Unmarshal(ids, &vecIds)
 	}
 
-	// Определяем провайдера из распакованных данных
-	// Распаковываем данные чтобы понять провайдера
-	reader, err := gzip.NewReader(bytes.NewReader(data))
-	if err == nil {
-		defer func() { _ = reader.Close() }()
-		decompressed, _ := io.ReadAll(reader)
-		var modelData map[string]interface{}
-		if json.Unmarshal(decompressed, &modelData) == nil {
-			if providerStr, ok := modelData["provider"].(string); ok {
-				var provider ProviderType
-				if providerStr == "mistral" {
-					provider = ProviderMistral
-				} else {
-					provider = ProviderOpenAI
-				}
-
-				db.models[userId][provider] = &mockModelData{
-					data:   data,
-					vecIds: &vecIds,
-				}
-				return nil
-			}
-		}
-	}
-
-	// Fallback - OpenAI
-	db.models[userId][ProviderOpenAI] = &mockModelData{
+	// Сохраняем данные модели
+	db.models[userId][provider] = &mockModelData{
 		data:   data,
 		vecIds: &vecIds,
 	}
+
+	// Эмулируем создание связи в user_models (как в реальной БД)
+	existingRecord := false
+	for _, record := range db.userModels[userId] {
+		if record.Provider == provider {
+			existingRecord = true
+			break
+		}
+	}
+
+	// Если связи нет - создаём её
+	if !existingRecord {
+		// Генерируем новый ID модели
+		db.nextModelId++
+		modelId := db.nextModelId
+
+		// Проверяем, есть ли у пользователя другие модели
+		isFirstModel := len(db.userModels[userId]) == 0
+
+		// Создаём запись в user_models
+		record := UserModelRecord{
+			UserId:   userId,
+			ModelId:  modelId,
+			Provider: provider,
+			IsActive: isFirstModel, // Первая модель автоматически активная
+		}
+
+		db.userModels[userId] = append(db.userModels[userId], record)
+
+		if isFirstModel {
+			db.activeModels[userId] = modelId
+		}
+	}
+
 	return nil
-}
-
-func (db *MockDB) ReadUserModel(userId uint32) ([]byte, *VecIds, error) {
-	if db.models[userId] == nil {
-		return nil, nil, nil
-	}
-
-	// Возвращаем первую найденную модель (используется только для обратной совместимости)
-	// Новый код должен использовать GetActiveModel + ReadUserModelByProvider
-	for _, modelData := range db.models[userId] {
-		return modelData.data, modelData.vecIds, nil
-	}
-
-	return nil, nil, nil
 }
 
 func (db *MockDB) ReadUserModelByProvider(userId uint32, provider ProviderType) ([]byte, *VecIds, error) {
@@ -99,15 +91,46 @@ func (db *MockDB) ReadUserModelByProvider(userId uint32, provider ProviderType) 
 	return nil, nil, nil
 }
 
-func (db *MockDB) DeleteUserGPT(userId uint32) error {
-	delete(db.models, userId)
-	delete(db.userModels, userId)
-	delete(db.activeModels, userId)
-	return nil
-}
+func (db *MockDB) RemoveModelFromUser(userId uint32, modelId uint64) error {
+	// Удаляем связь из user_models
+	if models, exists := db.userModels[userId]; exists {
+		for i, m := range models {
+			if m.ModelId == modelId {
+				db.userModels[userId] = append(models[:i], models[i+1:]...)
+				break
+			}
+		}
+		// Если больше нет моделей - удаляем пользователя
+		if len(db.userModels[userId]) == 0 {
+			delete(db.userModels, userId)
+		}
+	}
 
-func (db *MockDB) GetUserGPT(_ uint32) (json.RawMessage, error) {
-	return json.RawMessage("{}"), nil
+	// Проверяем, используется ли модель другими пользователями
+	modelUsed := false
+	for _, models := range db.userModels {
+		for _, m := range models {
+			if m.ModelId == modelId {
+				modelUsed = true
+				break
+			}
+		}
+		if modelUsed {
+			break
+		}
+	}
+
+	// Если модель не используется - удаляем из models
+	if !modelUsed {
+		delete(db.models, userId)
+	}
+
+	// Удаляем из активных если была активной
+	if activeModelId, exists := db.activeModels[userId]; exists && activeModelId == modelId {
+		delete(db.activeModels, userId)
+	}
+
+	return nil
 }
 
 func (db *MockDB) GetUserVectorStorage(_ uint32) (string, error) {
@@ -145,23 +168,6 @@ func (db *MockDB) GetModelByProvider(userId uint32, provider ProviderType) (*Use
 	return nil, nil
 }
 
-func (db *MockDB) AddModelToUser(userId uint32, modelId uint64, provider ProviderType, isActive bool) error {
-	record := UserModelRecord{
-		UserId:   userId,
-		ModelId:  modelId,
-		Provider: provider,
-		IsActive: isActive,
-	}
-
-	db.userModels[userId] = append(db.userModels[userId], record)
-
-	if isActive {
-		db.activeModels[userId] = modelId
-	}
-
-	return nil
-}
-
 func (db *MockDB) SetActiveModel(userId uint32, modelId uint64) error {
 	// Снимаем IsActive со всех моделей
 	for i := range db.userModels[userId] {
@@ -178,29 +184,6 @@ func (db *MockDB) SetActiveModel(userId uint32, modelId uint64) error {
 	}
 
 	return nil
-}
-
-func (db *MockDB) RemoveModelFromUser(userId uint32, modelId uint64) error {
-	for i, record := range db.userModels[userId] {
-		if record.ModelId == modelId {
-			db.userModels[userId] = append(db.userModels[userId][:i], db.userModels[userId][i+1:]...)
-			break
-		}
-	}
-	return nil
-}
-
-func (db *MockDB) GetModelIdByUserAndProvider(userId uint32, provider ProviderType) (uint64, error) {
-	// Сначала ищем существующую модель по провайдеру
-	for _, record := range db.userModels[userId] {
-		if record.Provider == provider {
-			return record.ModelId, nil
-		}
-	}
-
-	// Если модели нет - создаём новый ID
-	db.nextModelId++
-	return db.nextModelId, nil
 }
 
 // TestAutoActiveModel проверяет автоматическую установку первой модели как активной
