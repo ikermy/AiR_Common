@@ -10,6 +10,7 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
+	models "github.com/ikermy/AiR_Common/pkg/model/create"
 
 	"github.com/sashabaranov/go-openai"
 )
@@ -151,7 +152,7 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 }
 
 // GetTools возвращает инструменты в формате нужного провайдера
-func (h *UniversalActionHandler) GetTools(provider ProviderType) interface{} {
+func (h *UniversalActionHandler) GetTools(provider models.ProviderType) interface{} {
 	// Определяем базовые функции
 	functions := []map[string]interface{}{
 		{
@@ -207,7 +208,7 @@ func (h *UniversalActionHandler) GetTools(provider ProviderType) interface{} {
 	}
 
 	// Для OpenAI конвертируем в формат openai.Tool
-	if provider == ProviderOpenAI {
+	if provider == models.ProviderOpenAI {
 		tools := make([]openai.Tool, len(functions))
 		for i, fn := range functions {
 			tools[i] = openai.Tool{
@@ -223,7 +224,7 @@ func (h *UniversalActionHandler) GetTools(provider ProviderType) interface{} {
 	}
 
 	// Для Mistral возвращаем в формате map с типом "function"
-	if provider == ProviderMistral {
+	if provider == models.ProviderMistral {
 		tools := make([]map[string]interface{}, len(functions))
 		for i, fn := range functions {
 			tools[i] = map[string]interface{}{

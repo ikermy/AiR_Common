@@ -134,14 +134,14 @@ func (r *ModelRouter) GetAvailableProviders() []string {
 }
 
 // getModel возвращает модель по типу провайдера
-func (r *ModelRouter) getModel(provider ProviderType) (Model, error) {
+func (r *ModelRouter) getModel(provider models.ProviderType) (Model, error) {
 	switch provider {
-	case ProviderOpenAI:
+	case models.ProviderOpenAI:
 		if r.openai == nil {
 			return nil, fmt.Errorf("модель OpenAI не инициализирована")
 		}
 		return r.openai, nil
-	case ProviderMistral:
+	case models.ProviderMistral:
 		if r.mistral == nil {
 			return nil, fmt.Errorf("модель Mistral не инициализирована")
 		}
@@ -243,17 +243,17 @@ func (r *ModelRouter) SaveAllContextDuringExit() {
 // Request направляет запрос к нужной модели на основе dialogId
 func (r *ModelRouter) Request(modelId string, dialogId uint64, text *string, files ...FileUpload) (AssistResponse, error) {
 	// Нужно определить провайдера по dialogId
-	var provider ProviderType
+	var provider models.ProviderType
 	if r.openai != nil {
 		_, err := r.openai.GetRespIdByDialogId(dialogId)
 		if err == nil {
-			provider = ProviderOpenAI
+			provider = models.ProviderOpenAI
 		}
 	}
 	if provider == 0 && r.mistral != nil {
 		_, err := r.mistral.GetRespIdByDialogId(dialogId)
 		if err == nil {
-			provider = ProviderMistral
+			provider = models.ProviderMistral
 			// Предупреждение: Mistral не поддерживает файлы
 			if len(files) > 0 {
 				return AssistResponse{}, fmt.Errorf("провайдер Mistral не поддерживает обработку файлов, используйте OpenAI для работы с файлами")
@@ -313,7 +313,7 @@ func (r *ModelRouter) CleanUp() {
 // CreateModel создаёт новую модель у указанного провайдера
 // Делегирует вызов к соответствующей модели на основе provider
 // fileIDs должен быть типа []models.Ids из пакета pkg/model/create
-func (r *ModelRouter) CreateModel(userId uint32, provider ProviderType, gptName string, gptId uint8, modelName string, modelJSON []byte, fileIDs interface{}) (string, error) {
+func (r *ModelRouter) CreateModel(userId uint32, provider models.ProviderType, gptName string, gptId uint8, modelName string, modelJSON []byte, fileIDs interface{}) (string, error) {
 	m, err := r.getModel(provider)
 	if err != nil {
 		return "", err
@@ -428,4 +428,20 @@ func (r *ModelRouter) GetActiveUserModel(userId uint32) (*models.UniversalModelD
 		return nil, fmt.Errorf("модельный менеджер не инициализирован")
 	}
 	return r.modelsManager.GetActiveUserModel(userId)
+}
+
+// SetActiveUserModel переключает активную модель пользователя (в транзакции)
+func (r *ModelRouter) SetActiveUserModel(userId uint32, modelId uint64) error {
+	if r.modelsManager == nil {
+		return fmt.Errorf("модельный менеджер не инициализирован")
+	}
+	return r.modelsManager.SetActiveUserModel(userId, modelId)
+}
+
+// GetUserModelByProvider получает модель пользователя по провайдеру
+func (r *ModelRouter) GetUserModelByProvider(userId uint32, provider models.ProviderType) (*models.UniversalModelData, error) {
+	if r.modelsManager == nil {
+		return nil, fmt.Errorf("модельный менеджер не инициализирован")
+	}
+	return r.modelsManager.GetUserModelByProvider(userId, provider)
 }

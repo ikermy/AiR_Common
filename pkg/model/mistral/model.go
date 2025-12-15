@@ -14,6 +14,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
+	models "github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
 // MistralModel реализует интерфейс model.Model для работы с Mistral AI
@@ -555,7 +556,7 @@ func (m *MistralModel) Request(modelId string, dialogId uint64, text *string, fi
 	// Получаем инструменты через ActionHandler
 	var tools interface{}
 	if m.actionHandler != nil {
-		tools = m.actionHandler.GetTools(model.ProviderMistral)
+		tools = m.actionHandler.GetTools(models.ProviderMistral)
 	}
 
 	// Вызываем Mistral API с инструментами

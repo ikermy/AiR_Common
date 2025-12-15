@@ -15,6 +15,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
+	models "github.com/ikermy/AiR_Common/pkg/model/create"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -51,10 +52,10 @@ const (
 
 // UserModelRecord представляет запись из таблицы user_models
 type UserModelRecord struct {
-	UserId   uint32             `json:"user_id"`
-	ModelId  uint64             `json:"model_id"`
-	Provider model.ProviderType `json:"provider"`
-	IsActive bool               `json:"is_active"`
+	UserId   uint32              `json:"user_id"`
+	ModelId  uint64              `json:"model_id"`
+	Provider models.ProviderType `json:"provider"`
+	IsActive bool                `json:"is_active"`
 }
 
 // Ids представляет идентификатор файла с именем
@@ -656,7 +657,7 @@ func (d *DB) GetNotificationChannel(userId uint32) (json.RawMessage, error) {
 
 // ReadUserModelByProvider получает данные модели пользователя по провайдеру
 // Возвращает сжатые данные модели, VecIds и ошибку
-func (d *DB) ReadUserModelByProvider(userId uint32, provider model.ProviderType) ([]byte, *VecIds, error) {
+func (d *DB) ReadUserModelByProvider(userId uint32, provider models.ProviderType) ([]byte, *VecIds, error) {
 	if userId == 0 {
 		return nil, nil, fmt.Errorf("получен пустой userId")
 	}
@@ -818,7 +819,7 @@ func (d *DB) GetActiveModel(userId uint32) (*UserModelRecord, error) {
 }
 
 // GetModelByProvider получает модель пользователя по провайдеру из таблицы user_models
-func (d *DB) GetModelByProvider(userId uint32, provider model.ProviderType) (*UserModelRecord, error) {
+func (d *DB) GetModelByProvider(userId uint32, provider models.ProviderType) (*UserModelRecord, error) {
 	if userId == 0 {
 		return nil, fmt.Errorf("получен пустой userId")
 	}
@@ -945,14 +946,14 @@ func (d *DB) SaveUserModel(
 	modType uint8,
 	ids json.RawMessage,
 	operator bool,
-	provider model.ProviderType,
+	provider models.ProviderType,
 ) error {
 	// Проверяю входные значения
 	if userId == 0 || name == "" || assistantId == "" {
 		return fmt.Errorf("получены некорректные значения: userId, name или assistantId пусты")
 	}
 	// Валидация провайдера
-	if provider != model.ProviderOpenAI && provider != model.ProviderMistral {
+	if provider != models.ProviderOpenAI && provider != models.ProviderMistral {
 		return fmt.Errorf("некорректный provider: %d (допустимы 1=OpenAI, 2=Mistral)", provider)
 	}
 

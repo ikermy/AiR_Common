@@ -9,6 +9,7 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model"
+	models "github.com/ikermy/AiR_Common/pkg/model/create"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -310,7 +311,7 @@ func (m *OpenAIModel) Request(modelId string, dialogId uint64, text *string, fil
 	}
 
 	if m.actionHandler != nil {
-		if tools := m.actionHandler.GetTools(model.ProviderOpenAI); tools != nil {
+		if tools := m.actionHandler.GetTools(models.ProviderOpenAI); tools != nil {
 			if openaiTools, ok := tools.([]openai.Tool); ok {
 				runRequest.Tools = openaiTools
 			}

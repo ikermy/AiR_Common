@@ -49,7 +49,7 @@ type ModelManager interface {
 
 	// CreateModel создаёт новую модель у провайдера
 	// fileIDs должен быть типа []models.Ids из пакета pkg/model/create
-	CreateModel(userId uint32, provider ProviderType, gptName string, gptId uint8, modelName string, modelJSON []byte, fileIDs interface{}) (string, error)
+	CreateModel(userId uint32, provider models.ProviderType, gptName string, gptId uint8, modelName string, modelJSON []byte, fileIDs interface{}) (string, error)
 
 	// Методы для работы с файлами OpenAI (специфичные для OpenAI)
 	UploadFileToOpenAI(fileName string, fileData []byte) (string, error)
@@ -99,7 +99,7 @@ type Assistant struct {
 	Events     Notifications
 	UserId     uint32
 	Limit      uint32
-	Provider   ProviderType // Тип провайдера модели (OpenAI, Mistral)
+	Provider   models.ProviderType // Тип провайдера модели (OpenAI, Mistral)
 	Espero     uint8
 	Ignore     bool
 }
@@ -254,7 +254,7 @@ type StartCh struct {
 // ActionHandler интерфейс для обработки функций ассистента
 type ActionHandler interface {
 	RunAction(ctx context.Context, functionName, arguments string) string
-	GetTools(provider ProviderType) interface{} // Возвращает инструменты для конкретного провайдера
+	GetTools(provider models.ProviderType) interface{} // Возвращает инструменты для конкретного провайдера
 }
 
 // getAssistantVectorStore получает векторное хранилище ассистента

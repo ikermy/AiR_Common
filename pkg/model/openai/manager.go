@@ -1,13 +1,12 @@
 package openai
 
 import (
-	"github.com/ikermy/AiR_Common/pkg/model"
 	models "github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
 // CreateModel создаёт новую модель OpenAI
 // Делегирует вызов к Models из пакета create
-func (m *OpenAIModel) CreateModel(userId uint32, provider model.ProviderType, gptName string, gptId uint8, modelName string, modelJSON []byte, fileIDs interface{}) (string, error) {
+func (m *OpenAIModel) CreateModel(userId uint32, provider models.ProviderType, gptName string, gptId uint8, modelName string, modelJSON []byte, fileIDs interface{}) (string, error) {
 	// Преобразуем fileIDs к нужному типу
 	var ids []models.Ids
 	if fileIDs != nil {
