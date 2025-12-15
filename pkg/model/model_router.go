@@ -435,7 +435,7 @@ func (r *ModelRouter) SetActiveUserModel(userId uint32, modelId uint64) error {
 	if r.modelsManager == nil {
 		return fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.SetActiveUserModel(userId, modelId)
+	return r.modelsManager.SetActiveModel(userId, modelId)
 }
 
 // GetUserModelByProvider получает модель пользователя по провайдеру

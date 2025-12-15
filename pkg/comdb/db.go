@@ -439,9 +439,9 @@ func (d *DB) SaveChannelData(userId uint32, channelType string, data string, ena
 	}
 
 	if _, err := d.conn.ExecContext(ctx, "CALL SaveChannelData(?, ?, ?, ?)",
-		userId,      // p_UserId
-		channelType, // p_Type
-		jsonData,    // p_Data (теперь валидный JSON)
+		userId,                   // p_UserId
+		channelType,              // p_Type
+		jsonData,                 // p_Data (теперь валидный JSON)
 		enabledInt); err != nil { // p_Enabled
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -644,14 +644,14 @@ func (d *DB) GetNotificationChannel(userId uint32) (json.RawMessage, error) {
 // ============================================================================
 
 // ReadUserModelByProvider получает данные модели пользователя по провайдеру
-// Возвращает сжатые данные модели, VecIds и ошибку
-func (d *DB) ReadUserModelByProvider(userId uint32, provider models.ProviderType) ([]byte, *VecIds, error) {
+// Возвращает сжатые данные модели, VecIds, AssistantId и ошибку
+func (d *DB) ReadUserModelByProvider(userId uint32, provider models.ProviderType) ([]byte, *VecIds, string, error) {
 	if userId == 0 {
-		return nil, nil, fmt.Errorf("получен пустой userId")
+		return nil, nil, "", fmt.Errorf("получен пустой userId")
 	}
 
 	if !provider.IsValid() {
-		return nil, nil, fmt.Errorf("некорректный provider: %d", provider)
+		return nil, nil, "", fmt.Errorf("некорректный provider: %d", provider)
 	}
 
 	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel)
@@ -668,34 +668,35 @@ func (d *DB) ReadUserModelByProvider(userId uint32, provider models.ProviderType
 	if err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-			return nil, nil, nil // Модель не найдена - это нормально
+			return nil, nil, "", nil // Модель не найдена - это нормально
 		case errors.Is(err, context.DeadlineExceeded):
-			return nil, nil, fmt.Errorf("тайм-аут (%d с) при получении modelId: %w", mode.SqlTimeToCancel, err)
+			return nil, nil, "", fmt.Errorf("тайм-аут (%d с) при получении modelId: %w", mode.SqlTimeToCancel, err)
 		case errors.Is(err, context.Canceled):
-			return nil, nil, fmt.Errorf("операция отменена: %w", err)
+			return nil, nil, "", fmt.Errorf("операция отменена: %w", err)
 		default:
-			return nil, nil, fmt.Errorf("ошибка получения modelId: %w", err)
+			return nil, nil, "", fmt.Errorf("ошибка получения modelId: %w", err)
 		}
 	}
 
-	// Получаем данные модели из user_gpt
+	// Получаем данные модели из user_gpt включая AssistantId
 	var compressedData []byte
 	var vecIdsJSON sql.NullString
+	var assistantId string
 
 	err = d.conn.QueryRowContext(ctx,
-		`SELECT Data, Ids FROM user_gpt WHERE Id = ?`,
-		modelId).Scan(&compressedData, &vecIdsJSON)
+		`SELECT Data, Ids, AssistantId FROM user_gpt WHERE Id = ?`,
+		modelId).Scan(&compressedData, &vecIdsJSON, &assistantId)
 
 	if err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
-			return nil, nil, fmt.Errorf("модель с Id=%d не найдена в user_gpt", modelId)
+			return nil, nil, "", fmt.Errorf("модель с Id=%d не найдена в user_gpt", modelId)
 		case errors.Is(err, context.DeadlineExceeded):
-			return nil, nil, fmt.Errorf("тайм-аут (%d с) при получении данных модели: %w", mode.SqlTimeToCancel, err)
+			return nil, nil, "", fmt.Errorf("тайм-аут (%d с) при получении данных модели: %w", mode.SqlTimeToCancel, err)
 		case errors.Is(err, context.Canceled):
-			return nil, nil, fmt.Errorf("операция отменена: %w", err)
+			return nil, nil, "", fmt.Errorf("операция отменена: %w", err)
 		default:
-			return nil, nil, fmt.Errorf("ошибка получения данных модели: %w", err)
+			return nil, nil, "", fmt.Errorf("ошибка получения данных модели: %w", err)
 		}
 	}
 
@@ -718,7 +719,7 @@ func (d *DB) ReadUserModelByProvider(userId uint32, provider models.ProviderType
 		}
 	}
 
-	return compressedData, vecIds, nil
+	return compressedData, vecIds, assistantId, nil
 }
 
 // GetUserModels получает все модели пользователя из таблицы user_models
@@ -894,7 +895,7 @@ func (d *DB) GetUserVectorStorage(userId uint32) (string, error) {
 	}
 
 	// Читаем данные модели
-	_, vecIds, err := d.ReadUserModelByProvider(userId, activeModel.Provider)
+	_, vecIds, _, err := d.ReadUserModelByProvider(userId, activeModel.Provider)
 	if err != nil {
 		return "", err
 	}

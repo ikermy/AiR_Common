@@ -47,7 +47,8 @@ type DB interface {
 	SaveUserModel(userId uint32, name, assistantId string, data []byte, model uint8, ids json.RawMessage, operator bool, provider ProviderType) error
 
 	// ReadUserModelByProvider получает сжатые данные модели по провайдеру
-	ReadUserModelByProvider(userId uint32, provider ProviderType) ([]byte, *VecIds, error)
+	// Возвращает: compressedData, vecIds, assistantId, error
+	ReadUserModelByProvider(userId uint32, provider ProviderType) ([]byte, *VecIds, string, error)
 
 	// GetUserVectorStorage получает ID векторного хранилища (deprecated: используйте ReadUserModelByProvider)
 	GetUserVectorStorage(userId uint32) (string, error)
@@ -122,19 +123,32 @@ func New(ctx context.Context, db DB, openaiKey, mistralKey string) *Models {
 	return m
 }
 
-// UniversalModelData представляет универсальную структуру данных модели
+// UniversalModelData представляет структуру данных модели для возврата клиенту
+// Объединяет данные из старого формата (ModelDataRequest) с метаданными из БД
 type UniversalModelData struct {
-	Provider     ProviderType           `json:"provider"`     // Тип провайдера (1=OpenAI, 2=Mistral)
-	ModelID      string                 `json:"model_id"`     // ID модели (assistant_id для OpenAI, agent_id для Mistral)
-	ModelName    string                 `json:"model_name"`   // Название модели
-	ModelType    uint8                  `json:"model_type"`   // Тип модели (числовой идентификатор)
-	Instructions string                 `json:"instructions"` // Инструкции для модели
-	FileIDs      []Ids                  `json:"file_ids"`     // ID файлов (для OpenAI)
-	VectorIDs    []string               `json:"vector_ids"`   // ID векторных хранилищ
-	IsOperator   bool                   `json:"is_operator"`  // Флаг оператора
-	Remaining    uint64                 `json:"remaining"`    // Оставшееся место в хранилище
-	TotalLimit   uint64                 `json:"total_limit"`  // Общий лимит хранилища
-	RawData      map[string]interface{} `json:"raw_data"`     // Дополнительные данные специфичные для провайдера
+	Provider     ProviderType           `json:"provider"`     // Из user_models (1=OpenAI, 2=Mistral)
+	AssistantId  string                 `json:"assistant_id"` // ID модели из API провайдера (из user_gpt.AssistantId)
+	Name         string                 `json:"name"`         // Из ModelDataRequest.Name
+	Model        string                 `json:"model"`        // Тип модели из GptType
+	Instructions string                 `json:"instructions"` // Из ModelDataRequest.Prompt (переименован)
+	MetaAction   string                 `json:"mact"`         // Из ModelDataRequest.MetaAction
+	Triggers     []string               `json:"trig"`         // Из ModelDataRequest.Triggers
+	FileIds      []Ids                  `json:"fileIds"`      // ID файлов из user_gpt.Ids
+	VectorIds    []string               `json:"vectorIds"`    // ID векторов из user_gpt.Ids (опционально)
+	S3Enabled    bool                   `json:"s3_enabled"`   // Флаг доступности S3 хранилища (remaining > 0)
+	Operator     bool                   `json:"operator"`     // Из ModelDataRequest.Operator
+	Search       bool                   `json:"search"`       // Из ModelDataRequest.Search
+	Interpreter  bool                   `json:"interpreter"`  // Из ModelDataRequest.Interpreter
+	S3           bool                   `json:"s3"`           // Из ModelDataRequest.S3
+	RawData      map[string]interface{} `json:"-"`            // Сырые данные модели (не отправляется клиенту)
+
+	// Алиасы для совместимости с методами записи (SaveModel, CreateModel)
+	ModelID    string   `json:"model_id,omitempty"`    // Алиас для AssistantId
+	ModelName  string   `json:"model_name,omitempty"`  // Алиас для Name
+	ModelType  uint8    `json:"model_type,omitempty"`  // Числовой тип модели
+	FileIDs    []Ids    `json:"file_ids,omitempty"`    // Алиас для FileIds
+	VectorIDs  []string `json:"vector_ids,omitempty"`  // Алиас для VectorIds
+	IsOperator bool     `json:"is_operator,omitempty"` // Алиас для Operator
 }
 
 // CreateModel создаёт новую модель (универсальный метод)
@@ -234,7 +248,7 @@ func (m *Models) ReadModel(userId uint32, provider *ProviderType) (*UniversalMod
 	}
 
 	// Получаем данные из БД по провайдеру
-	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
+	compressedData, vecIds, assistantId, err := m.db.ReadUserModelByProvider(userId, record.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения модели из БД: %w", err)
 	}
@@ -249,8 +263,9 @@ func (m *Models) ReadModel(userId uint32, provider *ProviderType) (*UniversalMod
 		return nil, err
 	}
 
-	// Устанавливаем провайдера из user_models
+	// Устанавливаем провайдера и AssistantId из БД
 	modelData.Provider = record.Provider
+	modelData.AssistantId = assistantId
 
 	logger.Info("Модель успешно загружена (Provider: %s, ID: %s, IsActive: %v)",
 		modelData.Provider, modelData.ModelID, record.IsActive, userId)
@@ -445,7 +460,7 @@ func (m *Models) GetUserModels(userId uint32) ([]UniversalModelData, error) {
 	models := make([]UniversalModelData, 0, len(records))
 	for _, record := range records {
 		// Читаем данные модели по провайдеру
-		compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
+		compressedData, vecIds, assistantId, err := m.db.ReadUserModelByProvider(userId, record.Provider)
 		if err != nil {
 			logger.Warn("Пропуск модели %d (Provider: %s): ошибка чтения данных: %v", record.ModelId, record.Provider, err, userId)
 			continue
@@ -463,8 +478,9 @@ func (m *Models) GetUserModels(userId uint32) ([]UniversalModelData, error) {
 			continue
 		}
 
-		// Обновляем провайдера из user_models
+		// Обновляем провайдера и AssistantId из БД
 		modelData.Provider = record.Provider
+		modelData.AssistantId = assistantId
 		models = append(models, *modelData)
 	}
 
@@ -485,7 +501,7 @@ func (m *Models) GetActiveUserModel(userId uint32) (*UniversalModelData, error) 
 	}
 
 	// Читаем данные модели по провайдеру
-	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
+	compressedData, vecIds, assistantId, err := m.db.ReadUserModelByProvider(userId, record.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения данных активной модели: %w", err)
 	}
@@ -499,8 +515,9 @@ func (m *Models) GetActiveUserModel(userId uint32) (*UniversalModelData, error) 
 		return nil, fmt.Errorf("ошибка распаковки активной модели: %w", err)
 	}
 
-	// Устанавливаем провайдера из user_models
+	// Устанавливаем провайдера и AssistantId из БД
 	modelData.Provider = record.Provider
+	modelData.AssistantId = assistantId
 
 	logger.Info("Загружена активная модель (Provider: %s, ID: %s)",
 		modelData.Provider, modelData.ModelID, userId)
@@ -521,7 +538,7 @@ func (m *Models) GetUserModelByProvider(userId uint32, provider ProviderType) (*
 	}
 
 	// Читаем данные модели по провайдеру
-	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
+	compressedData, vecIds, assistantId, err := m.db.ReadUserModelByProvider(userId, record.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения данных модели: %w", err)
 	}
@@ -535,7 +552,9 @@ func (m *Models) GetUserModelByProvider(userId uint32, provider ProviderType) (*
 		return nil, fmt.Errorf("ошибка распаковки модели: %w", err)
 	}
 
+	// Устанавливаем провайдера и AssistantId из БД
 	modelData.Provider = record.Provider
+	modelData.AssistantId = assistantId
 
 	logger.Info("Загружена модель провайдера %s (ID: %s)",
 		provider, modelData.ModelID, userId)
@@ -554,9 +573,10 @@ func (m *Models) SetActiveModel(userId uint32, modelId uint64) error {
 	return nil
 }
 
-// decompressModelData - вспомогательный метод для распаковки данных модели
+// decompressModelData - распаковывает данные модели из БД и преобразует в UniversalModelData
+// Данные в БД хранятся в формате ModelDataRequest (name, prompt, mact, trig, и т.д.)
 func (m *Models) decompressModelData(compressedData []byte, vecIds *VecIds, userId uint32) (*UniversalModelData, error) {
-	// Распаковываем
+	// Распаковываем gzip
 	reader, err := gzip.NewReader(bytes.NewReader(compressedData))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка распаковки данных модели: %w", err)
@@ -568,36 +588,74 @@ func (m *Models) decompressModelData(compressedData []byte, vecIds *VecIds, user
 		return nil, fmt.Errorf("ошибка чтения распакованных данных: %w", err)
 	}
 
-	// Десериализуем
-	var modelData UniversalModelData
-	if err := json.Unmarshal(decompressed, &modelData); err != nil {
+	// Парсим формат ModelDataRequest в map
+	var rawData map[string]interface{}
+	if err := json.Unmarshal(decompressed, &rawData); err != nil {
 		return nil, fmt.Errorf("ошибка десериализации данных модели: %w", err)
 	}
 
-	// **ОБРАТНАЯ СОВМЕСТИМОСТЬ**: если Provider пустой (0) - это старая OpenAI модель
-	if modelData.Provider == 0 {
-		modelData.Provider = ProviderOpenAI
+	// Создаём UniversalModelData из формата ModelDataRequest
+	modelData := &UniversalModelData{
+		RawData: rawData,
+	}
 
-		// Пробуем извлечь assistant_id из RawData
-		if modelData.RawData != nil {
-			if assistID, ok := modelData.RawData["assistant_id"].(string); ok {
-				modelData.ModelID = assistID
+	// Извлекаем поля из ModelDataRequest
+	if name, ok := rawData["name"].(string); ok {
+		modelData.Name = name
+	}
+	if prompt, ok := rawData["prompt"].(string); ok {
+		modelData.Instructions = prompt // prompt → instructions
+	}
+	if mact, ok := rawData["mact"].(string); ok {
+		modelData.MetaAction = mact
+	}
+	if operator, ok := rawData["operator"].(bool); ok {
+		modelData.Operator = operator
+	}
+	if search, ok := rawData["search"].(bool); ok {
+		modelData.Search = search
+	}
+	if interpreter, ok := rawData["interpreter"].(bool); ok {
+		modelData.Interpreter = interpreter
+	}
+	if s3, ok := rawData["s3"].(bool); ok {
+		modelData.S3 = s3
+	}
+
+	// Извлекаем triggers (массив строк)
+	if trig, ok := rawData["trig"].([]interface{}); ok {
+		triggers := make([]string, 0, len(trig))
+		for _, t := range trig {
+			if str, ok := t.(string); ok {
+				triggers = append(triggers, str)
 			}
+		}
+		modelData.Triggers = triggers
+	}
+
+	// Извлекаем gpttype для определения model
+	if gptType, ok := rawData["gpttype"].(map[string]interface{}); ok {
+		if model, ok := gptType["name"].(string); ok {
+			modelData.Model = model
 		}
 	}
 
-	// Добавляем ID файлов из БД
+	// AssistantId НЕ хранится в Data - он приходит из user_gpt.AssistantId
+	// Будет установлен позже из БД
+
+	// Добавляем fileIds и vectorIds из БД (поле Ids в user_gpt)
 	if vecIds != nil {
-		modelData.FileIDs = vecIds.FileIds
-		modelData.VectorIDs = vecIds.VectorId
+		modelData.FileIds = vecIds.FileIds
+		if len(vecIds.VectorId) > 0 {
+			modelData.VectorIds = vecIds.VectorId
+		}
 	}
 
-	// Получаем информацию о хранилище
-	remaining, totalLimit, err := m.db.GetOrSetUserStorageLimit(userId, 0)
-	if err == nil {
-		modelData.Remaining = remaining
-		modelData.TotalLimit = totalLimit
+	// Получаем информацию о хранилище и устанавливаем s3_enabled
+	remaining, _, err := m.db.GetOrSetUserStorageLimit(userId, 0)
+	if err == nil && remaining > 0 {
+		modelData.S3Enabled = true
 	}
 
-	return &modelData, nil
+	return modelData, nil
 }

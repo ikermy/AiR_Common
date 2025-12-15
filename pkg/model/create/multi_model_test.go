@@ -79,16 +79,17 @@ func (db *MockDB) SaveUserModel(userId uint32, _ string, _ string, data []byte, 
 	return nil
 }
 
-func (db *MockDB) ReadUserModelByProvider(userId uint32, provider ProviderType) ([]byte, *VecIds, error) {
+func (db *MockDB) ReadUserModelByProvider(userId uint32, provider ProviderType) ([]byte, *VecIds, string, error) {
 	if db.models[userId] == nil {
-		return nil, nil, nil
+		return nil, nil, "", nil
 	}
 
 	if modelData := db.models[userId][provider]; modelData != nil {
-		return modelData.data, modelData.vecIds, nil
+		assistantId := "asst_test_" + provider.String()
+		return modelData.data, modelData.vecIds, assistantId, nil
 	}
 
-	return nil, nil, nil
+	return nil, nil, "", nil
 }
 
 func (db *MockDB) RemoveModelFromUser(userId uint32, modelId uint64) error {
