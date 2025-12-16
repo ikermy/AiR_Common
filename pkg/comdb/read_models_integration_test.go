@@ -57,7 +57,6 @@ func TestReadUserModels_Integration(t *testing.T) {
 		for i, model := range userModels {
 			t.Logf("\n=== Модель #%d ===", i+1)
 			t.Logf("Provider: %s (%d)", model.Provider.String(), model.Provider)
-			t.Logf("AssistantId: %s", model.AssistantId)
 			t.Logf("Name: %s", model.Name)
 			t.Logf("Model: %s", model.Model)
 			t.Logf("Instructions: %.100s...", model.Instructions)
@@ -90,7 +89,6 @@ func TestReadUserModels_Integration(t *testing.T) {
 
 		t.Log("\n=== Активная модель ===")
 		t.Logf("Provider: %s (%d)", activeModel.Provider.String(), activeModel.Provider)
-		t.Logf("AssistantId: %s", activeModel.AssistantId)
 		t.Logf("Name: %s", activeModel.Name)
 		t.Logf("Model: %s", activeModel.Model)
 		t.Logf("Instructions: %.100s...", activeModel.Instructions)
@@ -111,7 +109,6 @@ func TestReadUserModels_Integration(t *testing.T) {
 
 		t.Log("\n=== Модель OpenAI ===")
 		t.Logf("Provider: %s", openaiModel.Provider.String())
-		t.Logf("AssistantId: %s", openaiModel.AssistantId)
 		t.Logf("Name: %s", openaiModel.Name)
 		t.Logf("Model: %s", openaiModel.Model)
 		t.Logf("Instructions: %.200s", openaiModel.Instructions)
@@ -130,7 +127,6 @@ func TestReadUserModels_Integration(t *testing.T) {
 
 		t.Log("\n=== Модель Mistral ===")
 		t.Logf("Provider: %s", mistralModel.Provider.String())
-		t.Logf("AssistantId: %s", mistralModel.AssistantId)
 		t.Logf("Name: %s", mistralModel.Name)
 		t.Logf("Model: %s", mistralModel.Model)
 	})
@@ -148,7 +144,6 @@ func TestReadUserModels_Integration(t *testing.T) {
 
 		t.Log("\n=== ReadModel (активная модель) ===")
 		t.Logf("Provider: %s", model.Provider.String())
-		t.Logf("AssistantId: %s", model.AssistantId)
 		t.Logf("Name: %s", model.Name)
 	})
 
@@ -225,7 +220,7 @@ func TestReadUserModels_DBMethods(t *testing.T) {
 	})
 
 	t.Run("ReadUserModelByProvider - OpenAI", func(t *testing.T) {
-		compressedData, vecIds, assistantId, err := db.ReadUserModelByProvider(testUserId, models.ProviderOpenAI)
+		compressedData, vecIds, err := db.ReadUserModelByProvider(testUserId, models.ProviderOpenAI)
 		if err != nil {
 			t.Fatalf("Ошибка ReadUserModelByProvider(OpenAI): %v", err)
 		}
@@ -236,7 +231,6 @@ func TestReadUserModels_DBMethods(t *testing.T) {
 		}
 
 		t.Logf("OpenAI модель данные:")
-		t.Logf("  - AssistantId: %s", assistantId)
 		t.Logf("  - CompressedData size: %d байт", len(compressedData))
 		if vecIds != nil {
 			t.Logf("  - FileIds count: %d", len(vecIds.FileIds))
@@ -257,7 +251,7 @@ func TestReadUserModels_DBMethods(t *testing.T) {
 	})
 
 	t.Run("ReadUserModelByProvider - Mistral", func(t *testing.T) {
-		compressedData, vecIds, assistantId, err := db.ReadUserModelByProvider(testUserId, models.ProviderMistral)
+		compressedData, vecIds, err := db.ReadUserModelByProvider(testUserId, models.ProviderMistral)
 		if err != nil {
 			t.Fatalf("Ошибка ReadUserModelByProvider(Mistral): %v", err)
 		}
@@ -268,7 +262,6 @@ func TestReadUserModels_DBMethods(t *testing.T) {
 		}
 
 		t.Logf("Mistral модель данные:")
-		t.Logf("  - AssistantId: %s", assistantId)
 		t.Logf("  - CompressedData size: %d байт", len(compressedData))
 		if vecIds != nil {
 			t.Logf("  - FileIds count: %d", len(vecIds.FileIds))

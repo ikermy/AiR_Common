@@ -17,7 +17,7 @@ import (
 	models "github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
-// MistralModel реализует интерфейс model.Model для работы с Mistral AI
+// MistralModel реализует интерфейс model.UniversalModel для работы с Mistral AI
 type MistralModel struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -101,7 +101,7 @@ func NewAsRouterOption() model.RouterOption {
 	}
 }
 
-// NewMessage создает новое сообщение (реализация model.Model)
+// NewMessage создает новое сообщение (реализация model.UniversalModel)
 func (m *MistralModel) NewMessage(operator model.Operator, msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message {
 	return model.Message{
 		Operator:  operator,
@@ -113,7 +113,7 @@ func (m *MistralModel) NewMessage(operator model.Operator, msgType string, conte
 	}
 }
 
-// GetFileAsReader загружает файл по URL (реализация model.Model)
+// GetFileAsReader загружает файл по URL (реализация model.UniversalModel)
 func (m *MistralModel) GetFileAsReader(url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
@@ -137,7 +137,7 @@ func (m *MistralModel) GetFileAsReader(url string) (io.Reader, error) {
 	return resp.Body, nil
 }
 
-// GetOrSetRespGPT получает или создает RespModel (реализация model.Model)
+// GetOrSetRespGPT получает или создает RespModel (реализация model.UniversalModel)
 func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId uint64, respName string) (*model.RespModel, error) {
 	// Используем respId как ключ
 	if val, ok := m.responders.Load(respId); ok {
@@ -219,7 +219,7 @@ func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId 
 	return m.convertToModelRespModel(user), nil
 }
 
-// GetCh получает канал для респондента (реализация model.Model)
+// GetCh получает канал для респондента (реализация model.UniversalModel)
 func (m *MistralModel) GetCh(respId uint64) (*model.Ch, error) {
 	waitChInterface, exists := m.waitChannels.Load(respId)
 	var waitCh chan struct{}
@@ -260,7 +260,7 @@ func (m *MistralModel) getTryCh(respId uint64) (*model.Ch, error) {
 	return respModel.Chan, nil
 }
 
-// GetRespIdByDialogId получает ID респондента по ID диалога (реализация model.Model)
+// GetRespIdByDialogId получает ID респондента по ID диалога (реализация model.UniversalModel)
 func (m *MistralModel) GetRespIdByDialogId(dialogId uint64) (uint64, error) {
 	// Ищем responder по dialogId в канале
 	var foundRespId uint64
@@ -287,7 +287,7 @@ func (m *MistralModel) GetRespIdByDialogId(dialogId uint64) (uint64, error) {
 	return foundRespId, nil
 }
 
-// SaveAllContextDuringExit сохраняет контекст при выходе (реализация model.Model)
+// SaveAllContextDuringExit сохраняет контекст при выходе (реализация model.UniversalModel)
 func (m *MistralModel) SaveAllContextDuringExit() {
 	logger.Info("MistralModel: сохранение всех контекстов диалогов")
 
@@ -331,7 +331,7 @@ func (m *MistralModel) SaveAllContextDuringExit() {
 	logger.Info("MistralModel: сохранение контекстов завершено")
 }
 
-// CleanDialogData очищает данные конкретного диалога (реализация model.Model)
+// CleanDialogData очищает данные конкретного диалога (реализация model.UniversalModel)
 func (m *MistralModel) CleanDialogData(dialogId uint64) {
 	// Ищем responder по dialogId в Chan
 	m.responders.Range(func(key, value interface{}) bool {
@@ -347,12 +347,12 @@ func (m *MistralModel) CleanDialogData(dialogId uint64) {
 	})
 }
 
-// TranscribeAudio транскрибирует аудио (реализация model.Model)
+// TranscribeAudio транскрибирует аудио (реализация model.UniversalModel)
 func (m *MistralModel) TranscribeAudio(audioData []byte, fileName string) (string, error) {
 	return "", fmt.Errorf("транскрибирование аудио не поддерживается для Mistral")
 }
 
-// CleanUp запускает фоновую очистку устаревших респондеров (реализация model.Model)
+// CleanUp запускает фоновую очистку устаревших респондеров (реализация model.UniversalModel)
 func (m *MistralModel) CleanUp() {
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
@@ -391,7 +391,7 @@ func (m *MistralModel) CleanUp() {
 	}
 }
 
-// Shutdown корректно завершает работу модели (реализация model.Model)
+// Shutdown корректно завершает работу модели (реализация model.UniversalModel)
 func (m *MistralModel) Shutdown() {
 	m.shutdownOnce.Do(func() {
 		logger.Info("Начинается процесс завершения работы модуля MistralModel")

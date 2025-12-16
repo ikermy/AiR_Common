@@ -24,6 +24,8 @@ type DB interface {
 	// Методы для работы с диалогами
 	SaveDialog(dialogId uint64, data json.RawMessage) error
 	ReadDialog(dialogId uint64) (model.DialogData, error)
+
+	GetUserVectorStorage(userId uint32) (string, error)
 }
 
 type OpenAIModel struct {

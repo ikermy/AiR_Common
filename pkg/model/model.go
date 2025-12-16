@@ -40,12 +40,12 @@ type ModelManager interface {
 
 	// CreateModel создаёт новую модель у провайдера
 	// fileIDs должен быть типа []models.Ids из пакета pkg/model/create
-	CreateModel(userId uint32, provider models.ProviderType, gptName string, gptId uint8, modelName string, modelJSON []byte, fileIDs interface{}) (string, error)
+	CreateModel(userId uint32, provider models.ProviderType, gptName string, modelName string, modelJSON []byte, fileIDs []models.Ids) (models.UMCR, error)
 
 	// Методы для работы с файлами OpenAI (специфичные для OpenAI)
-	UploadFileToOpenAI(fileName string, fileData []byte) (string, error)
-	DeleteFileFromOpenAI(fileID string) error
-	AddFileFromOpenAI(userId uint32, fileID, fileName string) error
+	UploadFileToProvider(fileName string, fileData []byte) (string, error)
+	DeleteFileFromProvider(fileID string) error
+	AddFileFromFromProvider(userId uint32, fileID, fileName string) error
 }
 
 type DB interface {
@@ -609,7 +609,7 @@ func (m *Models) getTryCh(respId uint64) (*Ch, error) {
 }
 
 func (m *Models) CleanDialogData(dialogId uint64) {
-	// Получаем RespModel из структуры Models
+	// Получаем RespModel из структуры UniversalModel
 	val, ok := m.responders.Load(dialogId)
 	if !ok {
 		logger.Warn("RespModel не найден для dialogId %d", dialogId)
@@ -903,7 +903,7 @@ func (m *Models) Shutdown() {
 	var shutdownErrors []string
 
 	m.shutdownOnce.Do(func() {
-		logger.Info("Начинается процесс завершения работы модуля Models")
+		logger.Info("Начинается процесс завершения работы модуля UniversalModel")
 
 		// Независимый контекст завершения с таймаутом
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -936,14 +936,14 @@ func (m *Models) Shutdown() {
 		// 6) Оч��щаем каналы ожидания
 		m.cleanupWaitChannels()
 
-		logger.Info("Процесс завершения работы модуля Models завершен")
+		logger.Info("Процесс завершения работы модуля UniversalModel завершен")
 	})
 
 	if len(shutdownErrors) > 0 {
 		logger.Error("ошибки при завершении работы: %s", strings.Join(shutdownErrors, "; "))
 	}
 
-	logger.Info("Модуль Models успешно завершил работу")
+	logger.Info("Модуль UniversalModel успешно завершил работу")
 }
 
 // cleanupAllResponders закрывает все каналы и очищает респондеры
@@ -994,7 +994,7 @@ func (m *Models) SaveAllContextDuringExit() {
 			logger.Error("`SaveAllContextDuringExit` некорректный тип ключа: %T, ожидался uint64", key)
 		}
 
-		// Получаем RespModel из структуры Models
+		// Получаем RespModel из структуры UniversalModel
 		val, ok := m.responders.Load(dialogId)
 		if !ok {
 			logger.Error("`SaveAllContextDuranteExit` RespModel не найден для dialogId %d", dialogId)

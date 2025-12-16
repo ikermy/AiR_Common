@@ -15,7 +15,7 @@ import (
 type ModelRouter struct {
 	openai        Model
 	mistral       Model
-	modelsManager *models.Models // Менеджер для создания/удаления моделей
+	modelsManager *models.UniversalModel // Менеджер для создания/удаления моделей
 	ctx           context.Context
 	conf          *conf.Conf
 	db            DB
@@ -312,66 +312,65 @@ func (r *ModelRouter) CleanUp() {
 
 // CreateModel создаёт новую модель у указанного провайдера
 // Делегирует вызов к соответствующей модели на основе provider
-// fileIDs должен быть типа []models.Ids из пакета pkg/model/create
-func (r *ModelRouter) CreateModel(userId uint32, provider models.ProviderType, gptName string, gptId uint8, modelName string, modelJSON []byte, fileIDs interface{}) (string, error) {
+func (r *ModelRouter) CreateModel(userId uint32, provider models.ProviderType, gptName string, modelName string, modelJSON []byte, fileIDs []models.Ids) (models.UMCR, error) {
 	m, err := r.getModel(provider)
 	if err != nil {
-		return "", err
+		return models.UMCR{}, err
 	}
 
 	// Проверяем, что модель поддерживает создание (реализует ModelManager)
 	if manager, ok := m.(ModelManager); ok {
-		return manager.CreateModel(userId, provider, gptName, gptId, modelName, modelJSON, fileIDs)
+		return manager.CreateModel(userId, provider, gptName, modelName, modelJSON, fileIDs)
 	}
 
-	return "", fmt.Errorf("провайдер %s не поддерживает создание моделей", provider)
+	return models.UMCR{}, fmt.Errorf("провайдер %s не поддерживает создание моделей", provider)
 }
 
 // UploadFileToOpenAI загружает файл в OpenAI (только для OpenAI провайдера)
-func (r *ModelRouter) UploadFileToOpenAI(fileName string, fileData []byte) (string, error) {
+func (r *ModelRouter) UploadFileToProvider(fileName string, fileData []byte) (string, error) {
 	if r.openai == nil {
 		return "", fmt.Errorf("OpenAI провайдер не инициализирован")
 	}
 
 	if manager, ok := r.openai.(ModelManager); ok {
-		return manager.UploadFileToOpenAI(fileName, fileData)
+		return manager.UploadFileToProvider(fileName, fileData)
 	}
 
 	return "", fmt.Errorf("OpenAI провайдер не поддерживает загрузку файлов")
 }
 
 // DeleteFileFromOpenAI удаляет файл из OpenAI (только для OpenAI провайдера)
-func (r *ModelRouter) DeleteFileFromOpenAI(fileID string) error {
+func (r *ModelRouter) DeleteFileFromProvider(fileID string) error {
 	if r.openai == nil {
 		return fmt.Errorf("OpenAI провайдер не инициализирован")
 	}
 
 	if manager, ok := r.openai.(ModelManager); ok {
-		return manager.DeleteFileFromOpenAI(fileID)
+		return manager.DeleteFileFromProvider(fileID)
 	}
 
 	return fmt.Errorf("OpenAI провайдер не поддерживает удаление файлов")
 }
 
 // AddFileFromOpenAI добавляет файл в векторное хранилище пользователя (только для OpenAI)
-func (r *ModelRouter) AddFileFromOpenAI(userId uint32, fileID, fileName string) error {
+func (r *ModelRouter) AddFileFromFromProvider(userId uint32, fileID, fileName string) error {
 	if r.openai == nil {
 		return fmt.Errorf("OpenAI провайдер не инициализирован")
 	}
 
 	if manager, ok := r.openai.(ModelManager); ok {
-		return manager.AddFileFromOpenAI(userId, fileID, fileName)
+		return manager.AddFileFromFromProvider(userId, fileID, fileName)
 	}
 
 	return fmt.Errorf("OpenAI провайдер не поддерживает добавление файлов")
 }
 
 // SaveModel сохраняет модель в БД в универсальном формате
-func (r *ModelRouter) SaveModel(userId uint32, data *models.UniversalModelData) error {
+func (r *ModelRouter) SaveModel(userId uint32, umcr models.UMCR, data *models.UniversalModelData) error {
 	if r.modelsManager == nil {
 		return fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.SaveModel(userId, data)
+	return r.modelsManager.SaveModel(userId, umcr, data)
 }
 
 // ReadModel читает модель пользователя по провайдеру
@@ -382,12 +381,12 @@ func (r *ModelRouter) ReadModel(userId uint32, provider *models.ProviderType) (*
 	return r.modelsManager.ReadModel(userId, provider)
 }
 
-// GetModelAsJSON получает модель в виде JSON
-func (r *ModelRouter) GetModelAsJSON(userId uint32, provider *models.ProviderType) ([]byte, error) {
+// GetAllModelAsJSON получает модель в виде JSON
+func (r *ModelRouter) GetAllModelAsJSON(userId uint32) ([]byte, error) {
 	if r.modelsManager == nil {
 		return nil, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.GetModelAsJSON(userId, provider)
+	return r.modelsManager.GetModelAsJSON(userId)
 }
 
 // DeleteModel удаляет модель пользователя
@@ -420,6 +419,14 @@ func (r *ModelRouter) GetUserModels(userId uint32) ([]models.UniversalModelData,
 		return nil, fmt.Errorf("модельный менеджер не инициализирован")
 	}
 	return r.modelsManager.GetUserModels(userId)
+}
+
+// GetUserModelsResponse получает все модели пользователя в формате для API
+func (r *ModelRouter) GetUserModelsResponse(userId uint32) (*models.UserModelsResponse, error) {
+	if r.modelsManager == nil {
+		return nil, fmt.Errorf("модельный менеджер не инициализирован")
+	}
+	return r.modelsManager.GetAllUserModelsResponse(userId)
 }
 
 // GetActiveUserModel получает активную модель пользователя

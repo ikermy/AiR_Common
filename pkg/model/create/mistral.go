@@ -20,22 +20,22 @@ type MistralAgentClient struct {
 }
 
 // deleteMistralModel удаляет Mistral Agent (с поддержкой WS сообщений)
-func (m *Models) deleteMistralModel(userId uint32, modelData *UniversalModelData, deleteFiles bool, progressCallback func(string)) error {
+func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelRecord, deleteFiles bool, progressCallback func(string)) error {
 	if progressCallback != nil {
 		progressCallback("🔄 Удаление Mistral агента...")
 	}
 
 	// Удаляем агента через API
 	if m.mistralClient != nil {
-		if err := m.mistralClient.deleteAgent(modelData.ModelID); err != nil {
-			logger.Error("ошибка удаления Mistral агента %s: %v", modelData.ModelID, err)
+		if err := m.mistralClient.deleteAgent(modelData.AssistId); err != nil {
+			logger.Error("ошибка удаления Mistral агента %s: %v", modelData.AssistId, err)
 			// Продолжаем удаление из БД даже если не удалось удалить из API
 			if progressCallback != nil {
 				progressCallback(fmt.Sprintf("⚠️ Не удалось удалить агент из Mistral API: %v", err))
 			}
 		} else {
 			if progressCallback != nil {
-				progressCallback(fmt.Sprintf("✅ Mistral агент %s удалён из API", modelData.ModelID))
+				progressCallback(fmt.Sprintf("✅ Mistral агент %s удалён из API", modelData.AssistId))
 			}
 		}
 	} else {
@@ -83,7 +83,7 @@ func (m *MistralAgentClient) deleteAgent(agentID string) error {
 }
 
 // updateMistralModelInPlace обновляет Mistral Agent
-func (m *Models) updateMistralModelInPlace(userId uint32, existing, updated *UniversalModelData, modelJSON []byte) error {
+func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, updated *UniversalModelData, modelJSON []byte) error {
 	if m.mistralClient == nil {
 		return fmt.Errorf("Mistral клиент не инициализирован")
 	}
@@ -91,78 +91,61 @@ func (m *Models) updateMistralModelInPlace(userId uint32, existing, updated *Uni
 	// Для Mistral нужно удалить старого агента и создать нового
 	// (Mistral API может не поддерживать PATCH/UPDATE агентов)
 
+	existingModelData, err := m.db.GetModelByProvider(userId, existing.Provider)
+	if err != nil || existingModelData == nil {
+		return fmt.Errorf("ошибка получения записи модели: %w", err)
+	}
+
 	// Удаляем старого агента
-	if err := m.mistralClient.deleteAgent(existing.ModelID); err != nil {
-		logger.Warn("Не удалось удалить старого Mistral агента %s: %v", existing.ModelID, err)
+	if err := m.mistralClient.deleteAgent(existingModelData.AssistId); err != nil {
+		logger.Warn("Не удалось удалить старого Mistral агента %s: %v", existingModelData.AssistId, err)
 	}
 
 	// Создаем нового агента с обновленными данными
-	newAgentID, err := m.mistralClient.createMistralAgent(
-		updated.ModelName,
-		fmt.Sprintf("mistral-%d", updated.ModelType), // Можно улучшить
+	umcr, err := m.mistralClient.createMistralAgent(
+		updated.Name,
+		updated.GptType.Name,
 		fmt.Sprintf("Agent для пользователя %d", userId),
-		updated.Instructions,
+		updated.Prompt,
 	)
 	if err != nil {
 		return fmt.Errorf("ошибка создания нового Mistral агента: %w", err)
 	}
 
-	// Обновляем ID агента
-	updated.ModelID = newAgentID
-
 	// Сохраняем в БД
-	if err := m.SaveModel(userId, updated); err != nil {
+	if err := m.SaveModel(userId, umcr, updated); err != nil {
 		return fmt.Errorf("ошибка сохранения обновленной модели в БД: %w", err)
 	}
 
-	logger.Info("Mistral Agent успешно обновлен для пользователя %d (новый ID: %s)", userId, newAgentID, userId)
+	logger.Info("Mistral Agent успешно обновлен для пользователя %d (новый ID: %s)", userId, umcr, userId)
 	return nil
 }
 
 // createMistralModel создаёт Mistral Agent (внутренний метод)
-func (m *Models) createMistralModel(userId uint32, gptName string, gptId uint8, modelName string, modelJSON []byte) (string, error) {
+func (m *UniversalModel) createMistralModel(userId uint32, gptName string, modelName string, modelJSON []byte) (UMCR, error) {
 	if m.mistralClient == nil {
-		return "", fmt.Errorf("Mistral клиент не инициализирован")
+		return UMCR{}, fmt.Errorf("Mistral клиент не инициализирован")
 	}
 	// Парсим JSON для извлечения инструкций
 	var modelData map[string]interface{}
 	if err := json.Unmarshal(modelJSON, &modelData); err != nil {
-		return "", fmt.Errorf("ошибка при разборе JSON модели: %w", err)
+		return UMCR{}, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
 	}
 	instructions, ok := modelData["prompt"].(string)
 	if !ok {
-		return "", fmt.Errorf("поле 'prompt' отсутствует или имеет неверный тип")
+		return UMCR{}, fmt.Errorf("поле 'prompt' отсутствует или имеет неверный тип")
 	}
 	description := fmt.Sprintf("Agent для пользователя %d", userId)
 	// Создаём агента через Mistral API
-	agentID, err := m.mistralClient.createMistralAgent(modelName, gptName, description, instructions)
+	umcr, err := m.mistralClient.createMistralAgent(modelName, gptName, description, instructions)
 	if err != nil {
-		return "", fmt.Errorf("ошибка создания Mistral агента: %w", err)
+		return UMCR{}, fmt.Errorf("ошибка создания Mistral агента: %w", err)
 	}
-	// Сохраняем в универсальном формате
-	operator, _ := modelData["operator"].(bool)
-	universalData := &UniversalModelData{
-		Provider:     ProviderMistral,
-		ModelID:      agentID,
-		ModelName:    modelName,
-		ModelType:    gptId,
-		Instructions: instructions,
-		FileIDs:      []Ids{}, // Mistral не поддерживает файлы
-		VectorIDs:    []string{},
-		IsOperator:   operator,
-		RawData:      modelData,
-	}
-	if err := m.SaveModel(userId, universalData); err != nil {
-		// Если не удалось сохранить в БД, удаляем агента
-		_ = m.mistralClient.deleteAgent(agentID)
-		return "", fmt.Errorf("ошибка сохранения модели в БД: %w", err)
-	}
-	logger.Info("Mistral Agent создан для пользователя %d (ID: %s)", userId, agentID, userId)
-	return agentID, nil
+	return umcr, nil
 }
 
 // createMistralAgent создает нового агента с указанными параметрами
-func (m *MistralAgentClient) createMistralAgent(name, model, description string, instructions string) (string, error) {
+func (m *MistralAgentClient) createMistralAgent(name, model, description string, instructions string) (UMCR, error) {
 	// Убираем /completions из URL для endpoint создания агента
 	baseURL := strings.Replace(m.url, "/completions", "", 1)
 
@@ -175,12 +158,12 @@ func (m *MistralAgentClient) createMistralAgent(name, model, description string,
 
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return "", fmt.Errorf("ошибка сериализации запроса: %v", err)
+		return UMCR{}, fmt.Errorf("ошибка сериализации запроса: %v", err)
 	}
 
 	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, baseURL, bytes.NewBuffer(body))
 	if err != nil {
-		return "", fmt.Errorf("ошибка создания POST запроса: %v", err)
+		return UMCR{}, fmt.Errorf("ошибка создания POST запроса: %v", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+m.apiKey)
@@ -188,28 +171,32 @@ func (m *MistralAgentClient) createMistralAgent(name, model, description string,
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("ошибка HTTP запроса: %v", err)
+		return UMCR{}, fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
 	defer resp.Body.Close()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("ошибка чтения ответа: %v", err)
+		return UMCR{}, fmt.Errorf("ошибка чтения ответа: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
+		return UMCR{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
 	}
 
 	var response map[string]interface{}
 	if err := json.Unmarshal(responseBody, &response); err != nil {
-		return "", fmt.Errorf("ошибка парсинга JSON: %v", err)
+		return UMCR{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
 	// Извлекаем ID созданного агента
 	if id, ok := response["id"].(string); ok {
-		return id, nil
+		return UMCR{
+			AssistID: id,
+			AllIds:   nil,
+			Provider: ProviderMistral,
+		}, nil
 	}
 
-	return "", fmt.Errorf("не удалось получить ID созданного агента")
+	return UMCR{}, fmt.Errorf("не удалось получить ID созданного агента")
 }

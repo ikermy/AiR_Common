@@ -1,8 +1,6 @@
 package models
 
 import (
-	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -57,7 +55,7 @@ const ModelShemaJSON = `{
 
 // вызывается во внешнем приложении при добавлении файла пользователем
 // UploadFileToOpenAI загружает файл в OpenAI и возвращает его ID
-func (m *Models) UploadFileToOpenAI(fileName string, fileData []byte) (string, error) {
+func (m *UniversalModel) UploadFileToOpenAI(fileName string, fileData []byte) (string, error) {
 	// Создаем запрос на загрузку файла из байтов
 	fileRequest := openai.FileBytesRequest{
 		Name:    fileName,
@@ -66,7 +64,7 @@ func (m *Models) UploadFileToOpenAI(fileName string, fileData []byte) (string, e
 	}
 
 	// Загружаем файл через API OpenAI
-	fileResponse, err := m.client.CreateFileBytes(m.ctx, fileRequest)
+	fileResponse, err := m.openaiClient.CreateFileBytes(m.ctx, fileRequest)
 	if err != nil {
 		return "", fmt.Errorf("ошибка загрузки файла через API OpenAI: %w", err)
 	}
@@ -76,9 +74,9 @@ func (m *Models) UploadFileToOpenAI(fileName string, fileData []byte) (string, e
 
 // вызывается во внешнем приложении при добавлении файла пользователем
 // AddFileFromOpenAI добавляет новый файл в существующее векторное хранилище пользователя
-func (m *Models) AddFileFromOpenAI(userId uint32, fileID, fileName string) error {
+func (m *UniversalModel) AddFileFromOpenAI(userId uint32, fileID, fileName string) error {
 	// Проверка наличия OpenAI клиента
-	if m.client == nil {
+	if m.openaiClient == nil {
 		return fmt.Errorf("OpenAI клиент не инициализирован")
 	}
 
@@ -89,7 +87,7 @@ func (m *Models) AddFileFromOpenAI(userId uint32, fileID, fileName string) error
 	}
 
 	// Добавляем файл в существующий Vector Store
-	_, err = m.client.CreateVectorStoreFile(m.ctx, vectorStoreID, openai.VectorStoreFileRequest{
+	_, err = m.openaiClient.CreateVectorStoreFile(m.ctx, vectorStoreID, openai.VectorStoreFileRequest{
 		FileID: fileID,
 	})
 	if err != nil {
@@ -101,9 +99,9 @@ func (m *Models) AddFileFromOpenAI(userId uint32, fileID, fileName string) error
 }
 
 // deleteFileFromOpenAI удаляет файл из OpenAI и связанного с ним Vector Store
-func (m *Models) deleteFileFromOpenAI(fileID string) error {
+func (m *UniversalModel) deleteFileFromOpenAI(fileID string) error {
 	// 1. Удаляем файл по его ID
-	if err := m.client.DeleteFile(m.ctx, fileID); err != nil {
+	if err := m.openaiClient.DeleteFile(m.ctx, fileID); err != nil {
 		// Если файл уже удален (not found), это не является критической ошибкой
 		if !strings.Contains(err.Error(), "not found") {
 			return fmt.Errorf("ошибка удаления файла из OpenAI: %w", err)
@@ -113,7 +111,7 @@ func (m *Models) deleteFileFromOpenAI(fileID string) error {
 
 	// 2. Ищем и удаляем связанный Vector Store
 	// Получаем список всех векторных хранилищ
-	vsList, err := m.client.ListVectorStores(m.ctx, openai.Pagination{})
+	vsList, err := m.openaiClient.ListVectorStores(m.ctx, openai.Pagination{})
 	if err != nil {
 		return fmt.Errorf("ошибка получения списка Vector Stores: %w", err)
 	}
@@ -121,7 +119,7 @@ func (m *Models) deleteFileFromOpenAI(fileID string) error {
 	// Ищем Vector Store, который содержит наш файл
 	for _, vs := range vsList.VectorStores {
 		// Получаем список файлов для каждого Vector Store
-		files, err := m.client.ListVectorStoreFiles(m.ctx, vs.ID, openai.Pagination{})
+		files, err := m.openaiClient.ListVectorStoreFiles(m.ctx, vs.ID, openai.Pagination{})
 		if err != nil {
 			logger.Error("Предупреждение: не удалось получить файлы для Vector Store %s: %v", vs.ID, err)
 			continue
@@ -129,7 +127,7 @@ func (m *Models) deleteFileFromOpenAI(fileID string) error {
 
 		// Если в хранилище только один файл и его ID совпадает с нашим, удаляем хранилище
 		if len(files.VectorStoreFiles) == 1 && files.VectorStoreFiles[0].ID == fileID {
-			_, err := m.client.DeleteVectorStore(m.ctx, vs.ID)
+			_, err := m.openaiClient.DeleteVectorStore(m.ctx, vs.ID)
 			if err != nil {
 				// Логируем ошибку, но не прерываем процесс, так как основной файл уже мог быть удален
 				logger.Error("Предупреждение: не удалось удалить Vector Store %s: %v", vs.ID, err)
@@ -144,20 +142,13 @@ func (m *Models) deleteFileFromOpenAI(fileID string) error {
 	return nil
 }
 
-// createModel Создаю новую модель пользователя
-func (m *Models) createModel(
-	userId uint32, gptName string, gptId uint8, modelName string, model []byte, fileIDs []Ids) error {
+// createModel Создаю новую модель OpenAI Assistant
+func (m *UniversalModel) createModel(
+	userId uint32, gptName string, modelName string, model []byte, fileIDs []Ids) (UMCR, error) {
 	// Извлекаем текстовые инструкции из JSON
 	var modelData map[string]interface{}
 	if err := json.Unmarshal(model, &modelData); err != nil {
-		return fmt.Errorf("ошибка при разборе JSON модели: %w", err)
-	}
-
-	// Проверяем, что gptName и gptId присутствуют (могут быть у dev user)
-	if gptName == "" && gptId == 0 {
-		// Если оба поля пустые, используем значение по умолчанию
-		gptName = "gpt-4.1-nano" // Значение по умолчанию для gptName
-		gptId = 5                // Значение по умолчанию для gpt-4.1-nano
+		return UMCR{}, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
 	}
 
 	// Создаем текст для системных инструкций
@@ -179,9 +170,9 @@ func (m *Models) createModel(
 			Name:    vsName,
 			FileIDs: ids,
 		}
-		vectorStore, err := m.client.CreateVectorStore(m.ctx, vsRequest)
+		vectorStore, err := m.openaiClient.CreateVectorStore(m.ctx, vsRequest)
 		if err != nil {
-			return fmt.Errorf("ошибка создания Vector Store: %w", err)
+			return UMCR{}, fmt.Errorf("ошибка создания Vector Store: %w", err)
 		}
 		vectorStoreIDs = append(vectorStoreIDs, vectorStore.ID)
 	}
@@ -278,7 +269,7 @@ func (m *Models) createModel(
 		}
 	}
 
-	assistant, err := m.client.CreateAssistant(m.ctx, assistantRequest)
+	assistant, err := m.openaiClient.CreateAssistant(m.ctx, assistantRequest)
 	if err != nil {
 		// Если были fileIDs, удаляю их из OpenAI
 		for _, fileID := range ids {
@@ -287,30 +278,8 @@ func (m *Models) createModel(
 			}
 		}
 
-		return fmt.Errorf("ошибка создания Assistant через OpenAI API: %w", err)
+		return UMCR{}, fmt.Errorf("ошибка создания Assistant через OpenAI API: %w", err)
 	}
-
-	// Получаем ID созданного Assistant
-	assistantId := assistant.ID
-
-	// Создаю буфер для сжатых данных
-	var compressedBuffer bytes.Buffer
-
-	// Создаю gzip writer
-	gzipWriter := gzip.NewWriter(&compressedBuffer)
-
-	// Записываю данные модели в gzip writer
-	if _, err := gzipWriter.Write(model); err != nil {
-		return fmt.Errorf("ошибка при сжатии данных модели: %w", err)
-	}
-
-	// Закрываю writer для сброса всех данных
-	if err := gzipWriter.Close(); err != nil {
-		return fmt.Errorf("ошибка при завершении сжатия: %w", err)
-	}
-
-	// Получаю сжатые данные
-	compressedData := compressedBuffer.Bytes()
 
 	type VecIds struct {
 		FileIds  []Ids
@@ -324,110 +293,124 @@ func (m *Models) createModel(
 	// Преобразую fileIDs в json.RawMessage
 	allIds, err := json.Marshal(vecIds)
 	if err != nil {
-		return fmt.Errorf("ошибка при преобразовании fileIDs в JSON: %w", err)
+		return UMCR{}, fmt.Errorf("ошибка при преобразовании fileIDs в JSON: %w", err)
 	}
 
-	logger.Debug("Создание модели, режим оператора: %v", modelData["operator"], userId)
-	operator, _ := modelData["operator"].(bool)
-
-	// Сохраняем модель в БД с ID созданного Assistant
-	err = m.db.SaveUserModel(
-		userId,
-		modelName,
-		assistantId, // используем ID созданного Assistant
-		compressedData,
-		gptId,  // gpt-4o-mini (2)
-		allIds, // сохраняем также fileIDs в виде json.RawMessage
-		operator,
-		ProviderOpenAI, // Указываем провайдера OpenAI
-	)
-
-	if err != nil {
-		return fmt.Errorf("ошибка сохранения модели пользователя: %w", err)
-	}
-
-	return nil
+	return UMCR{
+		AssistID: assistant.ID,
+		AllIds:   allIds,
+		Provider: ProviderOpenAI,
+	}, nil
 }
 
 // deleteOpenAIModel удаляет OpenAI Assistant (с поддержкой WS сообщений)
-func (m *Models) deleteOpenAIModel(userId uint32, modelData *UniversalModelData, deleteFiles bool, progressCallback func(string)) error {
+func (m *UniversalModel) deleteOpenAIModel(userId uint32, modelData *UserModelRecord, deleteFiles bool, progressCallback func(string)) error {
 	if progressCallback != nil {
 		progressCallback("🔄 Удаление ассистента из OpenAI...")
 	}
 
-	// Удаляем Assistant из OpenAI
-	_, err := m.client.DeleteAssistant(m.ctx, modelData.ModelID)
-	if err != nil {
-		if !strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("ошибка удаления ассистента: %w", err)
+	if m.openaiClient != nil {
+		// Удаляем Assistant из OpenAI
+		_, err := m.openaiClient.DeleteAssistant(m.ctx, modelData.AssistId)
+		if err != nil {
+			if !strings.Contains(err.Error(), "not found") {
+				return fmt.Errorf("ошибка удаления ассистента: %w", err)
+			}
+			logger.Error("Ассистент %s не найден в OpenAI", modelData.AssistId, userId)
 		}
-		logger.Error("Ассистент %s не найден в OpenAI", modelData.ModelID, userId)
-	}
 
-	// Удаляем файлы только если deleteFiles = true
-	if deleteFiles && len(modelData.FileIDs) > 0 {
+		// Удаляем файлы только если deleteFiles = true
+		if deleteFiles && len(modelData.FileIds) > 0 {
+			if progressCallback != nil {
+				progressCallback(fmt.Sprintf("🔄 Удаление файлов из OpenAI (%d файлов)...", len(modelData.FileIds)))
+			}
+
+			// Удаляем все файлы
+			for i, file := range modelData.FileIds {
+				if err := m.deleteFileFromOpenAI(file.ID); err != nil {
+					logger.Error("Ошибка удаления файла %s: %v", file.ID, err, userId)
+				}
+
+				// Отправляем прогресс каждые 5 файлов
+				if progressCallback != nil && (i+1)%5 == 0 {
+					progressCallback(fmt.Sprintf("🔄 Удалено %d из %d файлов...", i+1, len(modelData.FileIds)))
+				}
+			}
+		}
+	} else {
+		logger.Warn("OpenAI клиент не инициализирован, пропускаем удаление из API")
 		if progressCallback != nil {
-			progressCallback(fmt.Sprintf("🔄 Удаление файлов из OpenAI (%d файлов)...", len(modelData.FileIDs)))
-		}
-
-		// Удаляем все файлы
-		for i, file := range modelData.FileIDs {
-			if err := m.deleteFileFromOpenAI(file.ID); err != nil {
-				logger.Error("Ошибка удаления файла %s: %v", file.ID, err, userId)
-			}
-
-			// Отправляем прогресс каждые 5 файлов
-			if progressCallback != nil && (i+1)%5 == 0 {
-				progressCallback(fmt.Sprintf("🔄 Удалено %d из %d файлов...", i+1, len(modelData.FileIDs)))
-			}
+			progressCallback("⚠️ OpenAI клиент не инициализирован, удаляем только из БД")
 		}
 	}
 
 	// Удаляем векторные хранилища
-	if len(modelData.VectorIDs) > 0 {
-		if progressCallback != nil {
-			progressCallback("🔄 Удаление векторных хранилищ...")
-		}
-
-		for _, vectorId := range modelData.VectorIDs {
-			if _, err := m.client.DeleteVectorStore(m.ctx, vectorId); err != nil {
-				logger.Error("Ошибка удаления Vector Store %s: %v", vectorId, err, userId)
-			}
-		}
-	}
+	//if len(modelData.VectorIDs) > 0 {
+	//	if progressCallback != nil {
+	//		progressCallback("🔄 Удаление векторных хранилищ...")
+	//	}
+	//
+	//	for _, vectorId := range modelData.VectorIDs {
+	//		if _, err := m.openaiClient.DeleteVectorStore(m.ctx, vectorId); err != nil {
+	//			logger.Error("Ошибка удаления Vector Store %s: %v", vectorId, err, userId)
+	//		}
+	//	}
+	//}
 
 	if progressCallback != nil {
 		progressCallback("✅ OpenAI Assistant и файлы удалены из API")
 	}
 
-	logger.Info("OpenAI модель успешно удалена из API для пользователя %d", userId, userId)
+	err := m.db.RemoveModelFromUser(userId, modelData.ModelId)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления связи из user_models: %w", err)
+	}
+
+	// Если удалённая модель была активной - переключаем на оставшуюся
+	if modelData.IsActive {
+		remainingModels, err := m.db.GetAllUserModels(userId)
+		if err != nil {
+			logger.Warn("Ошибка получения оставшихся моделей: %v", err, userId)
+		} else if len(remainingModels) > 0 {
+			// Переключаем на первую оставшуюся модель
+			newActiveModelId := remainingModels[0].ModelId
+			err = m.db.SetActiveModel(userId, newActiveModelId)
+			if err != nil {
+				logger.Error("Ошибка автоматического переключения активной модели: %v", err, userId)
+			} else {
+				logger.Info("Активная модель автоматически переключена на ModelId=%d после удаления",
+					newActiveModelId, userId)
+				if progressCallback != nil {
+					progressCallback(fmt.Sprintf("✅ Активная модель переключена на оставшуюся (ID: %d)", newActiveModelId))
+				}
+			}
+		}
+	}
+
+	if progressCallback != nil {
+		progressCallback("✅ Модель пользователя успешно удалена")
+	}
+
+	logger.Info("OpenAI модель успешно удалена из API и БД", userId)
 	return nil
 }
 
 // createOpenAIModel создаёт OpenAI Assistant (внутренний метод)
-func (m *Models) createOpenAIModel(userId uint32, gptName string, gptId uint8, modelName string, modelJSON []byte, fileIDs []Ids) (string, error) {
-	if m.client == nil {
-		return "", fmt.Errorf("OpenAI клиент не инициализирован")
+func (m *UniversalModel) createOpenAIModel(userId uint32, gptName string, modelName string, modelJSON []byte, fileIDs []Ids) (UMCR, error) {
+	if m.openaiClient == nil {
+		return UMCR{}, fmt.Errorf("OpenAI клиент не инициализирован")
 	}
 	// Используем существующий метод createModel
-	err := m.createModel(userId, gptName, gptId, modelName, modelJSON, fileIDs)
+	umcr, err := m.createModel(userId, gptName, modelName, modelJSON, fileIDs)
 	if err != nil {
-		return "", err
+		return UMCR{}, err
 	}
-	// Получаем созданную модель для возврата assistant_id
-	provider := ProviderOpenAI
-	modelData, err := m.ReadModel(userId, &provider)
-	if err != nil {
-		return "", fmt.Errorf("ошибка получения созданной модели: %w", err)
-	}
-	if modelData == nil {
-		return "", fmt.Errorf("модель не найдена после создания")
-	}
-	return modelData.ModelID, nil
+
+	return umcr, nil
 }
 
 // updateOpenAIModelInPlace обновляет OpenAI Assistant
-func (m *Models) updateOpenAIModelInPlace(userId uint32, existing, updated *UniversalModelData, modelJSON []byte) error {
+func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updated *UniversalModelData, modelJSON []byte) error {
 	// Парсим JSON для извлечения дополнительных настроек
 	var modelData map[string]interface{}
 	if err := json.Unmarshal(modelJSON, &modelData); err != nil {
@@ -442,14 +425,19 @@ func (m *Models) updateOpenAIModelInPlace(userId uint32, existing, updated *Univ
 
 	// Проверяем, нужен ли file_search
 	searchEnabled, _ := modelData["search"].(bool)
-	needsFileSearch := searchEnabled && len(updated.FileIDs) > 0
+	needsFileSearch := searchEnabled && len(updated.FileIds) > 0
+
+	existingModelData, err := m.db.GetModelByProvider(userId, existing.Provider)
+	if err != nil || existingModelData == nil {
+		return fmt.Errorf("ошибка получения записи модели: %w", err)
+	}
 
 	if needsFileSearch {
 		// Проверяем, изменились ли файлы
-		if !filesEqual(existing.FileIDs, updated.FileIDs) {
+		if !filesEqual(existing.FileIds, updated.FileIds) {
 			// Создаем новое векторное хранилище
 			var ids []string
-			for _, fileID := range updated.FileIDs {
+			for _, fileID := range updated.FileIds {
 				if fileID.ID != "" {
 					ids = append(ids, fileID.ID)
 				}
@@ -460,40 +448,40 @@ func (m *Models) updateOpenAIModelInPlace(userId uint32, existing, updated *Univ
 				Name:    vsName,
 				FileIDs: ids,
 			}
-			vectorStore, err := m.client.CreateVectorStore(m.ctx, vsRequest)
+			vectorStore, err := m.openaiClient.CreateVectorStore(m.ctx, vsRequest)
 			if err != nil {
 				return fmt.Errorf("ошибка создания нового Vector Store: %w", err)
 			}
 			vectorStoreIDs = append(vectorStoreIDs, vectorStore.ID)
 
 			// Удаляем старые файлы и векторные хранилища
-			for _, file := range existing.FileIDs {
+			for _, file := range existing.FileIds {
 				if err := m.deleteFileFromOpenAI(file.ID); err != nil {
 					logger.Error("Ошибка удаления файла %s: %v", file.ID, err, userId)
 				}
 			}
 
-			for _, oldVectorId := range existing.VectorIDs {
-				if _, err := m.client.DeleteVectorStore(m.ctx, oldVectorId); err != nil {
+			for _, oldVectorId := range existing.VecIds.VectorId {
+				if _, err := m.openaiClient.DeleteVectorStore(m.ctx, oldVectorId); err != nil {
 					logger.Error("Ошибка удаления старого Vector Store %s: %v", oldVectorId, err, userId)
 				}
 			}
 		} else {
 			// Файлы не изменились
-			vectorStoreIDs = existing.VectorIDs
+			vectorStoreIDs = existing.VecIds.VectorId
 		}
 
 		tools = append(tools, openai.AssistantTool{Type: "file_search"})
 	} else {
 		// File search не нужен - удаляем все файлы и векторные хранилища
-		for _, file := range existing.FileIDs {
+		for _, file := range existing.FileIds {
 			if err := m.deleteFileFromOpenAI(file.ID); err != nil {
 				logger.Error("Ошибка удаления файла %s: %v", file.ID, err, userId)
 			}
 		}
 
-		for _, vectorId := range existing.VectorIDs {
-			if _, err := m.client.DeleteVectorStore(m.ctx, vectorId); err != nil {
+		for _, vectorId := range existing.VecIds.VectorId {
+			if _, err := m.openaiClient.DeleteVectorStore(m.ctx, vectorId); err != nil {
 				logger.Error("Ошибка удаления Vector Store %s: %v", vectorId, err, userId)
 			}
 		}
@@ -547,18 +535,19 @@ func (m *Models) updateOpenAIModelInPlace(userId uint32, existing, updated *Univ
 
 	// Создаем запрос на обновление
 	updateRequest := openai.AssistantRequest{
-		Name:         &updated.ModelName,
+		Name:         &updated.Name,
 		Description:  &description,
-		Instructions: &updated.Instructions,
-		Model:        fmt.Sprintf("gpt-%d", updated.ModelType), // Можно улучшить
+		Instructions: &updated.Prompt,
+		Model:        updated.GptType.Name,
 		Tools:        tools,
-	}
-
-	// Добавляем response format если есть в RawData
-	if updated.RawData != nil {
-		if responseFormat, ok := updated.RawData["response_format"]; ok {
-			updateRequest.ResponseFormat = responseFormat
-		}
+		ResponseFormat: &openai.ChatCompletionResponseFormat{
+			Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
+			JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
+				Name:   "response_with_action_files",
+				Strict: true,
+				Schema: json.RawMessage(ModelShemaJSON),
+			},
+		},
 	}
 
 	// Добавляем ToolResources только если есть векторы
@@ -571,16 +560,36 @@ func (m *Models) updateOpenAIModelInPlace(userId uint32, existing, updated *Univ
 	}
 
 	// Обновляем ассистента через OpenAI API
-	_, err := m.client.ModifyAssistant(m.ctx, updated.ModelID, updateRequest)
+	_, err = m.openaiClient.ModifyAssistant(m.ctx, existingModelData.AssistId, updateRequest)
 	if err != nil {
 		return fmt.Errorf("ошибка обновления Assistant: %w", err)
 	}
 
-	// Обновляем векторы в структуре
-	updated.VectorIDs = vectorStoreIDs
+	// Обновляем информацию о файлах и векторах
+	type VecIds struct {
+		FileIds  []Ids
+		VectorId []string
+	}
+
+	vecIds := VecIds{
+		FileIds:  updated.FileIds,
+		VectorId: vectorStoreIDs,
+	}
+
+	// Сериализуем vecIds в JSON
+	vecIdsJSON, err := json.Marshal(vecIds)
+	if err != nil {
+		return fmt.Errorf("failed to marshal vector IDs: %w", err)
+	}
+
+	umcr := UMCR{
+		AssistID: existingModelData.AssistId,
+		AllIds:   vecIdsJSON,
+		Provider: ProviderOpenAI,
+	}
 
 	// Сохраняем в БД
-	if err := m.SaveModel(userId, updated); err != nil {
+	if err := m.SaveModel(userId, umcr, updated); err != nil {
 		return fmt.Errorf("ошибка сохранения обновленной модели в БД: %w", err)
 	}
 

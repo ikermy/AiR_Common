@@ -79,17 +79,12 @@ func (db *MockDB) SaveUserModel(userId uint32, _ string, _ string, data []byte, 
 	return nil
 }
 
-func (db *MockDB) ReadUserModelByProvider(userId uint32, provider ProviderType) ([]byte, *VecIds, string, error) {
+func (db *MockDB) ReadUserModelByProvider(userId uint32, provider ProviderType) ([]byte, *VecIds, error) {
 	if db.models[userId] == nil {
-		return nil, nil, "", nil
+		return nil, nil, nil
 	}
 
-	if modelData := db.models[userId][provider]; modelData != nil {
-		assistantId := "asst_test_" + provider.String()
-		return modelData.data, modelData.vecIds, assistantId, nil
-	}
-
-	return nil, nil, "", nil
+	return nil, nil, nil
 }
 
 func (db *MockDB) RemoveModelFromUser(userId uint32, modelId uint64) error {
@@ -142,7 +137,7 @@ func (db *MockDB) GetOrSetUserStorageLimit(_ uint32, _ int64) (remaining uint64,
 	return 1000000, 10000000, nil
 }
 
-func (db *MockDB) GetUserModels(userId uint32) ([]UserModelRecord, error) {
+func (db *MockDB) GetAllUserModels(userId uint32) ([]UserModelRecord, error) {
 	return db.userModels[userId], nil
 }
 
@@ -190,13 +185,13 @@ func (db *MockDB) SetActiveModel(userId uint32, modelId uint64) error {
 // TestAutoActiveModel проверяет автоматическую установку первой модели как активной
 func TestAutoActiveModel(t *testing.T) {
 	mockDB := NewMockDB()
-	models := &Models{db: mockDB}
+	models := &UniversalModel{db: mockDB}
 
 	userId := uint32(1)
 	modelData := &UniversalModelData{
 		Provider:     ProviderOpenAI,
 		ModelID:      "asst_test123",
-		ModelName:    "Test Model",
+		ModelName:    "Test UniversalModel",
 		ModelType:    1,
 		Instructions: "Test instructions",
 	}
@@ -224,7 +219,7 @@ func TestAutoActiveModel(t *testing.T) {
 // TestSwitchActiveModel проверяет переключение активной модели
 func TestSwitchActiveModel(t *testing.T) {
 	mockDB := NewMockDB()
-	models := &Models{db: mockDB}
+	models := &UniversalModel{db: mockDB}
 
 	userId := uint32(2)
 
@@ -232,7 +227,7 @@ func TestSwitchActiveModel(t *testing.T) {
 	model1 := &UniversalModelData{
 		Provider:  ProviderOpenAI,
 		ModelID:   "asst_openai",
-		ModelName: "OpenAI Model",
+		ModelName: "OpenAI UniversalModel",
 		ModelType: 1,
 	}
 
@@ -245,11 +240,11 @@ func TestSwitchActiveModel(t *testing.T) {
 	model2 := &UniversalModelData{
 		Provider:  ProviderMistral,
 		ModelID:   "ag_mistral",
-		ModelName: "Mistral Model",
+		ModelName: "Mistral UniversalModel",
 		ModelType: 1,
 	}
 
-	// Используем Models.SaveModel для правильного сжатия данных
+	// Используем UniversalModel.SaveModel для правильного сжатия данных
 	err = models.SaveModel(userId, model2)
 	if err != nil {
 		t.Fatalf("Ошибка сохранения модели Mistral: %v", err)
@@ -279,7 +274,7 @@ func TestSwitchActiveModel(t *testing.T) {
 // TestGetUserModels проверяет получение всех моделей пользователя
 func TestGetUserModels(t *testing.T) {
 	mockDB := NewMockDB()
-	models := &Models{db: mockDB}
+	models := &UniversalModel{db: mockDB}
 
 	userId := uint32(3)
 
@@ -287,7 +282,7 @@ func TestGetUserModels(t *testing.T) {
 	model1 := &UniversalModelData{
 		Provider:  ProviderOpenAI,
 		ModelID:   "asst_1",
-		ModelName: "OpenAI Model",
+		ModelName: "OpenAI UniversalModel",
 		ModelType: 1,
 	}
 
@@ -300,7 +295,7 @@ func TestGetUserModels(t *testing.T) {
 	model2 := &UniversalModelData{
 		Provider:  ProviderMistral,
 		ModelID:   "ag_1",
-		ModelName: "Mistral Model",
+		ModelName: "Mistral UniversalModel",
 		ModelType: 1,
 	}
 
@@ -323,7 +318,7 @@ func TestGetUserModels(t *testing.T) {
 // TestReadModelWithProvider проверяет чтение модели по провайдеру
 func TestReadModelWithProvider(t *testing.T) {
 	mockDB := NewMockDB()
-	models := &Models{db: mockDB}
+	models := &UniversalModel{db: mockDB}
 
 	userId := uint32(4)
 
