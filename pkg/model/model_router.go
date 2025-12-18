@@ -70,8 +70,9 @@ func NewModelRouter(ctx context.Context, conf *conf.Conf, db DB, options ...Rout
 		if conf.GPT.MistralKey != "" {
 			mistralKey = conf.GPT.MistralKey
 		}
-
 		router.modelsManager = models.New(ctx, managerDB, openaiKey, mistralKey)
+	} else {
+		logger.Debug("DB не реализует models.DB, пропускаем инициализацию ModelManager")
 	}
 
 	return router
@@ -254,10 +255,8 @@ func (r *ModelRouter) Request(modelId string, dialogId uint64, text *string, fil
 		_, err := r.mistral.GetRespIdByDialogId(dialogId)
 		if err == nil {
 			provider = models.ProviderMistral
-			// Предупреждение: Mistral не поддерживает файлы
-			if len(files) > 0 {
-				return AssistResponse{}, fmt.Errorf("провайдер Mistral не поддерживает обработку файлов, используйте OpenAI для работы с файлами")
-			}
+			// Mistral поддерживает файлы через Document Library
+			// Файлы автоматически загружаются в библиотеку пользователя
 		}
 	}
 	if provider == 0 {
@@ -280,6 +279,7 @@ func (r *ModelRouter) CleanDialogData(dialogId uint64) {
 	}
 }
 
+// TODO mistral поддерживает транскрибацию аудио
 // TranscribeAudio делегирует к OpenAI (Mistral не поддерживает)
 // Возвращает ошибку, если OpenAI провайдер не инициализирован
 func (r *ModelRouter) TranscribeAudio(audioData []byte, fileName string) (string, error) {
@@ -311,58 +311,98 @@ func (r *ModelRouter) CleanUp() {
 }
 
 // CreateModel создаёт новую модель у указанного провайдера
-// Делегирует вызов к соответствующей модели на основе provider
+// Использует modelsManager для создания модели
 func (r *ModelRouter) CreateModel(userId uint32, provider models.ProviderType, gptName string, modelName string, modelJSON []byte, fileIDs []models.Ids) (models.UMCR, error) {
-	m, err := r.getModel(provider)
+	// Проверяем, что провайдер поддерживается
+	_, err := r.getModel(provider)
 	if err != nil {
 		return models.UMCR{}, err
 	}
 
-	// Проверяем, что модель поддерживает создание (реализует ModelManager)
-	if manager, ok := m.(ModelManager); ok {
-		return manager.CreateModel(userId, provider, gptName, modelName, modelJSON, fileIDs)
+	// Используем modelsManager для создания модели
+	if r.modelsManager == nil {
+		return models.UMCR{}, fmt.Errorf("модельный менеджер не инициализирован")
 	}
 
-	return models.UMCR{}, fmt.Errorf("провайдер %s не поддерживает создание моделей", provider)
+	return r.modelsManager.CreateModel(userId, provider, gptName, modelName, modelJSON, fileIDs)
 }
 
-// UploadFileToOpenAI загружает файл в OpenAI (только для OpenAI провайдера)
-func (r *ModelRouter) UploadFileToProvider(fileName string, fileData []byte) (string, error) {
-	if r.openai == nil {
-		return "", fmt.Errorf("OpenAI провайдер не инициализирован")
-	}
+// UploadFileToProvider загружает файл в указанный провайдер
+func (r *ModelRouter) UploadFileToProvider(userId uint32, provider models.ProviderType, fileName string, fileData []byte) (string, error) {
+	switch provider {
+	case models.ProviderOpenAI:
+		if r.openai == nil {
+			return "", fmt.Errorf("OpenAI провайдер не инициализирован")
+		}
+		if manager, ok := r.openai.(ModelManager); ok {
+			return manager.UploadFileToProvider(fileName, fileData) // userId не нужен для OpenAI привязывается к модели
+		}
+		return "", fmt.Errorf("OpenAI провайдер не поддерживает загрузку файлов")
 
-	if manager, ok := r.openai.(ModelManager); ok {
-		return manager.UploadFileToProvider(fileName, fileData)
-	}
+	case models.ProviderMistral:
+		if r.mistral == nil {
+			return "", fmt.Errorf("Mistral провайдер не инициализирован")
+		}
+		if manager, ok := r.mistral.(MistralModelManager); ok {
+			return manager.UploadFileToProvider(userId, fileName, fileData)
+		}
+		return "", fmt.Errorf("Mistral провайдер не поддерживает загрузку файлов")
 
-	return "", fmt.Errorf("OpenAI провайдер не поддерживает загрузку файлов")
+	default:
+		return "", fmt.Errorf("неизвестный провайдер: %s", provider)
+	}
 }
 
-// DeleteFileFromOpenAI удаляет файл из OpenAI (только для OpenAI провайдера)
-func (r *ModelRouter) DeleteFileFromProvider(fileID string) error {
-	if r.openai == nil {
-		return fmt.Errorf("OpenAI провайдер не инициализирован")
-	}
+// DeleteFileFromProvider удаляет файл из указанного провайдера
+func (r *ModelRouter) DeleteFileFromProvider(userId uint32, provider models.ProviderType, fileID string) error {
+	switch provider {
+	case models.ProviderOpenAI:
+		if r.openai == nil {
+			return fmt.Errorf("OpenAI провайдер не инициализирован")
+		}
+		if manager, ok := r.openai.(ModelManager); ok {
+			return manager.DeleteFileFromProvider(fileID)
+		}
+		return fmt.Errorf("OpenAI провайдер не поддерживает удаление файлов")
 
-	if manager, ok := r.openai.(ModelManager); ok {
-		return manager.DeleteFileFromProvider(fileID)
-	}
+	case models.ProviderMistral:
+		if r.mistral == nil {
+			return fmt.Errorf("Mistral провайдер не инициализирован")
+		}
+		if manager, ok := r.mistral.(MistralModelManager); ok {
+			return manager.DeleteDocumentFromLibrary(userId, fileID)
+		}
+		return fmt.Errorf("Mistral провайдер не поддерживает удаление файлов")
 
-	return fmt.Errorf("OpenAI провайдер не поддерживает удаление файлов")
+	default:
+		return fmt.Errorf("неизвестный провайдер: %s", provider)
+	}
 }
 
-// AddFileFromOpenAI добавляет файл в векторное хранилище пользователя (только для OpenAI)
-func (r *ModelRouter) AddFileFromFromProvider(userId uint32, fileID, fileName string) error {
-	if r.openai == nil {
-		return fmt.Errorf("OpenAI провайдер не инициализирован")
-	}
+// AddFileFromFromProvider добавляет файл в хранилище указанного провайдера
+func (r *ModelRouter) AddFileFromFromProvider(provider models.ProviderType, userId uint32, fileID, fileName string) error {
+	switch provider {
+	case models.ProviderOpenAI:
+		if r.openai == nil {
+			return fmt.Errorf("OpenAI провайдер не инициализирован")
+		}
+		if manager, ok := r.openai.(ModelManager); ok {
+			return manager.AddFileFromFromProvider(userId, fileID, fileName)
+		}
+		return fmt.Errorf("OpenAI провайдер не поддерживает добавление файлов")
 
-	if manager, ok := r.openai.(ModelManager); ok {
-		return manager.AddFileFromFromProvider(userId, fileID, fileName)
-	}
+	case models.ProviderMistral:
+		if r.mistral == nil {
+			return fmt.Errorf("Mistral провайдер не инициализирован")
+		}
+		if manager, ok := r.mistral.(MistralModelManager); ok {
+			return manager.AddFileToLibrary(userId, fileID, fileName)
+		}
+		return fmt.Errorf("Mistral провайдер не поддерживает добавление файлов")
 
-	return fmt.Errorf("OpenAI провайдер не поддерживает добавление файлов")
+	default:
+		return fmt.Errorf("неизвестный провайдер: %s", provider)
+	}
 }
 
 // SaveModel сохраняет модель в БД в универсальном формате
@@ -438,11 +478,11 @@ func (r *ModelRouter) GetActiveUserModel(userId uint32) (*models.UniversalModelD
 }
 
 // SetActiveUserModel переключает активную модель пользователя (в транзакции)
-func (r *ModelRouter) SetActiveUserModel(userId uint32, modelId uint64) error {
+func (r *ModelRouter) SetActiveUserModel(userId uint32, provider models.ProviderType) error {
 	if r.modelsManager == nil {
 		return fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.SetActiveModel(userId, modelId)
+	return r.modelsManager.SetActiveModelByProvider(userId, provider)
 }
 
 // GetUserModelByProvider получает модель пользователя по провайдеру

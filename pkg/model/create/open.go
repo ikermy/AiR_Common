@@ -372,16 +372,16 @@ func (m *UniversalModel) deleteOpenAIModel(userId uint32, modelData *UserModelRe
 		if err != nil {
 			logger.Warn("Ошибка получения оставшихся моделей: %v", err, userId)
 		} else if len(remainingModels) > 0 {
-			// Переключаем на первую оставшуюся модель
-			newActiveModelId := remainingModels[0].ModelId
-			err = m.db.SetActiveModel(userId, newActiveModelId)
+			// Переключаем на первую оставшуюся модель по провайдеру
+			newActiveProvider := remainingModels[0].Provider
+			err = m.db.SetActiveModelByProvider(userId, newActiveProvider)
 			if err != nil {
 				logger.Error("Ошибка автоматического переключения активной модели: %v", err, userId)
 			} else {
-				logger.Info("Активная модель автоматически переключена на ModelId=%d после удаления",
-					newActiveModelId, userId)
+				logger.Info("Активная модель автоматически переключена на провайдер %s после удаления",
+					newActiveProvider.String(), userId)
 				if progressCallback != nil {
-					progressCallback(fmt.Sprintf("✅ Активная модель переключена на оставшуюся (ID: %d)", newActiveModelId))
+					progressCallback(fmt.Sprintf("✅ Активная модель переключена на %s", newActiveProvider.String()))
 				}
 			}
 		}
@@ -598,6 +598,7 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 }
 
 // filesEqual сравнивает два слайса файлов
+// Используется для проверки изменились ли файлы при обновлении модели
 func filesEqual(a, b []Ids) bool {
 	if len(a) != len(b) {
 		return false

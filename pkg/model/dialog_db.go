@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
+	models "github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
 // CreatorType определяет тип создателя сообщения
@@ -14,7 +15,7 @@ const (
 	CreatorUser      CreatorType = 2
 )
 
-// DialogDB интерфейс для работы с диалогами в БД
+// DialogDB интерфейс для работы с диалогами и моделями в БД
 type DialogDB interface {
 	// SaveDialog сохраняет сообщение диалога
 	// p_DialogId - ID диалога
@@ -25,6 +26,10 @@ type DialogDB interface {
 	// Возвращает JSON объект с полями: Data, Type, Model, Responder, Date
 	// где Data - массив сообщений диалога
 	ReadDialog(dialogId uint64) (DialogData, error)
+
+	// Методы для работы с моделями пользователей (для Mistral библиотек)
+	GetAllUserModels(userId uint32) ([]models.UserModelRecord, error)
+	UpdateUserGPT(userId uint32, modelId uint64, assistId string, allIds []byte) error
 }
 
 // DialogData структура для десериализации данных диалога из БД

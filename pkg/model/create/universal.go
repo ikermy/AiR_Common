@@ -35,9 +35,30 @@ func (p ProviderType) String() string {
 	}
 }
 
+// ToProviderType преобразует uint8 в ProviderType
+func ToProviderType(value uint8) (ProviderType, error) {
+	p := ProviderType(value)
+	if !p.IsValid() {
+		return 0, fmt.Errorf("неизвестный провайдер: %d", value)
+	}
+	return p, nil
+}
+
 // FromUint8 преобразует uint8 в ProviderType
 func (p ProviderType) FromUint8(value uint8) ProviderType {
 	return ProviderType(value)
+}
+
+// FromString преобразует строку в ProviderType
+func FromString(s string) (ProviderType, error) {
+	switch s {
+	case "openai":
+		return ProviderOpenAI, nil
+	case "mistral":
+		return ProviderMistral, nil
+	default:
+		return 0, fmt.Errorf("неизвестный провайдер: %s", s)
+	}
 }
 
 // IsValid проверяет, является ли тип провайдера валидным
@@ -69,6 +90,8 @@ type DB interface {
 
 	// SetActiveModel переключает активную модель (в транзакции)
 	SetActiveModel(userId uint32, modelId uint64) error
+	// SetActiveModelByProvider устанавливает активную модель по провайдеру
+	SetActiveModelByProvider(userId uint32, provider ProviderType) error
 	// RemoveModelFromUser удаляет связь модель-пользователь
 	RemoveModelFromUser(userId uint32, modelId uint64) error
 }
@@ -80,6 +103,7 @@ type UserModelRecord struct {
 	ModelId  uint64       `json:"model_id"`
 	Provider ProviderType `json:"provider"`
 	IsActive bool         `json:"is_active"`
+	AllIds   []byte       `json:"all_ids"` // Raw JSON с FileIds и VectorId из БД
 }
 
 // Ids представляет идентификатор файла в OpenAI с его именем
@@ -143,19 +167,23 @@ type GptType struct {
 
 // UniversalModelData универсальная структура хранения данных моделей
 type UniversalModelData struct {
-	Name        string        `json:"name"`        // Из ModelDataRequest.Name
-	Prompt      string        `json:"prompt"`      // Алиас для Instructions (обратная совместимость)
-	MetaAction  string        `json:"mact"`        // Из ModelDataRequest.MetaAction
-	Triggers    []string      `json:"trig"`        // Из ModelDataRequest.Triggers
-	FileIds     []Ids         `json:"fileIds"`     // ID файлов из user_gpt.Ids
-	VecIds      VecIds        `json:"vecIds"`      // ID векторных хранилищ из user_gpt.Ids
-	Operator    bool          `json:"operator"`    // Из ModelDataRequest.Operator
-	Search      bool          `json:"search"`      // Из ModelDataRequest.Search
-	Interpreter bool          `json:"interpreter"` // Из ModelDataRequest.Interpreter
-	S3          bool          `json:"s3"`          // Из ModelDataRequest.S3
-	Espero      *EsperoConfig `json:"espero"`      // Настройки ожидания из ModelDataRequest.Espero
-	GptType     *GptType      `json:"gpttype"`
-	Provider    ProviderType  `json:"provider"` // "openai=1" или "mistral=2"
+	Name        string   `json:"name"`        // Имя модели только для удобства идентификации
+	Prompt      string   `json:"prompt"`      // Промпт модели
+	MetaAction  string   `json:"mact"`        // Заданая цель модели (уведомление о достижении целы) вызывается меткой в структуре ответа "target"
+	Triggers    []string `json:"trig"`        // Триггеры модели
+	FileIds     []Ids    `json:"fileIds"`     // ID файлов для загрзки в векторное хранилище?
+	VecIds      VecIds   `json:"vecIds"`      // ID файлов в векторном хранилище
+	Operator    bool     `json:"operator"`    // Вызов ответом от модели "operator" флаг переключения на оператора
+	Search      bool     `json:"search"`      // Поиск по векторному хранилищу, если загружены файлы для дообучения модели
+	Interpreter bool     `json:"interpreter"` // Генерация кода (Code Interpreter) для OpenAI
+	S3          bool     `json:"s3"`          // Работа моделей с файлами в S3-хранилище
+	// Mistral-специфичные возможности
+	Image     bool `json:"image"`      // Генерация изображений (Mistral)
+	WebSearch bool `json:"web_search"` // Веб-поиск (Mistral)
+	//////////////////////////////////
+	Espero   *EsperoConfig `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
+	GptType  *GptType      `json:"gpttype"`
+	Provider ProviderType  `json:"provider"` // "openai=1" или "mistral=2"
 }
 
 // EsperoConfig представляет настройки ожидания из ModelDataRequest
@@ -180,7 +208,7 @@ func (m *UniversalModel) CreateModel(
 	case ProviderOpenAI:
 		return m.createOpenAIModel(userId, gptName, modelName, modelJSON, fileIDs)
 	case ProviderMistral:
-		return m.createMistralModel(userId, gptName, modelName, modelJSON)
+		return m.createMistralModel(userId, gptName, modelName, modelJSON, fileIDs)
 	default:
 		return UMCR{}, fmt.Errorf("неизвестный провайдер: %s", provider)
 	}
@@ -254,7 +282,6 @@ func (m *UniversalModel) ReadModel(userId uint32, provider *ProviderType) (*Univ
 			logger.Debug("Модель провайдера %s не найдена", *provider, userId)
 			return nil, nil
 		}
-		logger.Debug("Получение модели провайдера %s", *provider, userId)
 	}
 
 	// Получаем данные из БД по провайдеру
@@ -333,7 +360,7 @@ func (m *UniversalModel) DeleteModel(userId uint32, provider ProviderType, delet
 		progressCallback("🔄 Получение информации о модели пользователя...")
 	}
 
-	// Получаем запись из user_models для проверки IsActive
+	// Получаем запись из user_models
 	modelRecord, err := m.db.GetModelByProvider(userId, provider)
 	if err != nil || modelRecord == nil {
 		return fmt.Errorf("ошибка получения записи модели: %w", err)
@@ -373,16 +400,16 @@ func (m *UniversalModel) DeleteModel(userId uint32, provider ProviderType, delet
 		if err != nil {
 			logger.Warn("Ошибка получения оставшихся моделей: %v", err, userId)
 		} else if len(remainingModels) > 0 {
-			// Переключаем на первую оставшуюся модель
-			newActiveModelId := remainingModels[0].ModelId
-			err = m.db.SetActiveModel(userId, newActiveModelId)
+			// Переключаем на первую оставшуюся модель по провайдеру
+			newActiveProvider := remainingModels[0].Provider
+			err = m.db.SetActiveModelByProvider(userId, newActiveProvider)
 			if err != nil {
 				logger.Error("Ошибка автоматического переключения активной модели: %v", err, userId)
 			} else {
-				logger.Info("Активная модель автоматически переключена на ModelId=%d после удаления",
-					newActiveModelId, userId)
+				logger.Info("Активная модель автоматически переключена на провайдер %s после удаления",
+					newActiveProvider.String(), userId)
 				if progressCallback != nil {
-					progressCallback(fmt.Sprintf("✅ Активная модель переключена на оставшуюся (ID: %d)", newActiveModelId))
+					progressCallback(fmt.Sprintf("✅ Активная модель переключена на %s", newActiveProvider.String()))
 				}
 			}
 		}
@@ -638,13 +665,13 @@ func (m *UniversalModel) GetUserModelByProvider(userId uint32, provider Provider
 }
 
 // SetActiveModel переключает активную модель пользователя (в транзакции)
-func (m *UniversalModel) SetActiveModel(userId uint32, modelId uint64) error {
-	err := m.db.SetActiveModel(userId, modelId)
+func (m *UniversalModel) SetActiveModelByProvider(userId uint32, provider ProviderType) error {
+	err := m.db.SetActiveModelByProvider(userId, provider)
 	if err != nil {
 		return fmt.Errorf("ошибка переключения активной модели: %w", err)
 	}
 
-	logger.Info("Активная модель переключена на ModelId=%d", modelId, userId)
+	logger.Info("Активная модель переключена на %d", provider, userId)
 	return nil
 }
 
@@ -690,6 +717,13 @@ func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecI
 	}
 	if interpreter, ok := rawData["interpreter"].(bool); ok {
 		modelData.Interpreter = interpreter
+	}
+	// Mistral-специфичные возможности
+	if image, ok := rawData["image"].(bool); ok {
+		modelData.Image = image
+	}
+	if webSearch, ok := rawData["web_search"].(bool); ok {
+		modelData.WebSearch = webSearch
 	}
 	if s3, ok := rawData["s3"].(bool); ok {
 		modelData.S3 = s3
@@ -737,9 +771,9 @@ func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecI
 		if len(vecIds.FileIds) > 0 {
 			modelData.FileIds = vecIds.FileIds
 		}
-		//if len(vecIds.VectorId) > 0 {
-		//	modelData.VectorIds = vecIds.VectorId
-		//}
+		if len(vecIds.VectorId) > 0 {
+			modelData.VecIds.VectorId = vecIds.VectorId
+		}
 	}
 
 	// Получаем информацию о хранилище и устанавливаем s3_enabled

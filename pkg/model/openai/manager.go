@@ -20,12 +20,25 @@ func (m *OpenAIModel) CreateModel(userId uint32, provider models.ProviderType, g
 
 // UploadFileToOpenAI загружает файл в OpenAI
 func (m *OpenAIModel) UploadFileToProvider(fileName string, fileData []byte) (string, error) {
-	// Создаем экземпляр UniversalModel для делегирования
-	modelsManager := &models.UniversalModel{
-		// Инициализация нужных полей
+	// Проверка клиента
+	if m.client == nil {
+		return "", fmt.Errorf("OpenAI клиент не инициализирован")
 	}
 
-	return modelsManager.UploadFileToOpenAI(fileName, fileData)
+	// Создаем запрос на загрузку файла из байтов
+	fileRequest := openai.FileBytesRequest{
+		Name:    fileName,
+		Bytes:   fileData,
+		Purpose: openai.PurposeAssistants,
+	}
+
+	// Загружаем файл через API OpenAI
+	fileResponse, err := m.client.CreateFileBytes(m.ctx, fileRequest)
+	if err != nil {
+		return "", fmt.Errorf("ошибка загрузки файла через API OpenAI: %w", err)
+	}
+
+	return fileResponse.ID, nil
 }
 
 // DeleteFileFromOpenAI удаляет файл из OpenAI
@@ -94,7 +107,5 @@ func (m *OpenAIModel) AddFileFromFromProvider(userId uint32, fileID, fileName st
 	if err != nil {
 		return fmt.Errorf("ошибка добавления файла в Vector Store: %w", err)
 	}
-
-	logger.Debug("Файл %s успешно добавлен в Vector Store", fileName, userId)
 	return nil
 }

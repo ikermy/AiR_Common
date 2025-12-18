@@ -32,14 +32,15 @@ type MistralModel struct {
 }
 
 type RespModel struct {
-	Ctx      context.Context
-	Cancel   context.CancelFunc
-	Chan     *model.Ch      // Один канал для этого респондента
-	Context  *DialogContext // Один текущий контекст диалога
-	TTL      time.Time
-	Assist   model.Assistant
-	RespName string
-	Services Services
+	Ctx       context.Context
+	Cancel    context.CancelFunc
+	Chan      *model.Ch      // Один канал для этого респондента
+	Context   *DialogContext // Один текущий контекст диалога
+	TTL       time.Time
+	Assist    model.Assistant
+	RespName  string
+	Services  Services
+	LibraryId string // ID библиотеки Mistral для document_library (кэш из БД)
 }
 
 // DialogContext хранит историю сообщений диалога в памяти
@@ -206,6 +207,14 @@ func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId 
 
 	// Сохраняем контекст
 	user.Context = dialogContext
+
+	// Загружаем LibraryId ОДИН РАЗ при создании (избегаем запросов к БД при каждом сообщении)
+	if libraryID, err := m.loadLibraryIdFromDB(assist.UserId); err == nil {
+		user.LibraryId = libraryID
+		logger.Debug("LibraryId загружен для пользователя %d: %s", assist.UserId, libraryID, assist.UserId)
+	} else {
+		logger.Debug("LibraryId не найден для пользователя %d (будет создан при загрузке файлов)", assist.UserId, assist.UserId)
+	}
 
 	// Используем respId как ключ (один пользователь может иметь несколько диалогов)
 	m.responders.Store(respId, user)
@@ -553,16 +562,49 @@ func (m *MistralModel) Request(modelId string, dialogId uint64, text *string, fi
 		})
 	}
 
+	// Получаем library_id пользователя для document_library tool (из кэша)
+	var libraryIds []string
+	if respModel.LibraryId != "" {
+		libraryIds = []string{respModel.LibraryId}
+		logger.Debug("Library ID для пользователя %d (из кэша): %s", respModel.Assist.UserId, respModel.LibraryId, respModel.Assist.UserId)
+	}
+
 	// Получаем инструменты через ActionHandler
 	var tools interface{}
 	if m.actionHandler != nil {
 		tools = m.actionHandler.GetTools(models.ProviderMistral)
 	}
 
-	// Вызываем Mistral API с инструментами
-	response, err := m.client.ChatWithAgent(modelId, messages, tools)
-	if err != nil {
-		return emptyResponse, fmt.Errorf("ошибка запроса к Mistral: %w", err)
+	// Вызываем Mistral API с файлами (временная передача) или без них
+	var response Response
+	var err error
+
+	if len(files) > 0 {
+		// Временная передача файлов непосредственно в запросе (не через библиотеку)
+		logger.Debug("Получено %d файлов для временной загрузки в запросе Mistral", len(files), respModel.Assist.UserId)
+
+		// Конвертируем файлы в формат для ChatWithAgentFiles
+		fileReaders := make([]io.Reader, 0, len(files))
+		fileNames := make([]string, 0, len(files))
+
+		for _, file := range files {
+			fileReaders = append(fileReaders, file.Content)
+			fileNames = append(fileNames, file.Name)
+		}
+
+		// Вызываем с временными файлами
+		response, err = m.client.ChatWithAgentFiles(modelId, messages, fileReaders, fileNames, tools, libraryIds...)
+		if err != nil {
+			return emptyResponse, fmt.Errorf("ошибка запроса к Mistral с файлами: %w", err)
+		}
+
+		logger.Info("Запрос к Mistral выполнен с %d временными файлами", len(files), respModel.Assist.UserId)
+	} else {
+		// Обычный запрос без файлов
+		response, err = m.client.ChatWithAgent(modelId, messages, tools, libraryIds...)
+		if err != nil {
+			return emptyResponse, fmt.Errorf("ошибка запроса к Mistral: %w", err)
+		}
 	}
 
 	// Обрабатываем ответ
@@ -641,4 +683,32 @@ func (m *MistralModel) processResponse(response Response) model.AssistResponse {
 	}
 
 	return assistResponse
+}
+
+// loadLibraryIdFromDB загружает ID библиотеки из БД ОДИН РАЗ при создании RespModel
+// Избегает повторных запросов к БД при каждом сообщении
+func (m *MistralModel) loadLibraryIdFromDB(userId uint32) (string, error) {
+	// Получаем все модели пользователя
+	userModels, err := m.db.GetAllUserModels(userId)
+	if err != nil {
+		return "", fmt.Errorf("не удалось получить модели пользователя: %w", err)
+	}
+
+	// Ищем модель Mistral
+	for i := range userModels {
+		if userModels[i].Provider == models.ProviderMistral {
+			// Десериализуем AllIds для получения VectorId
+			if len(userModels[i].AllIds) > 0 {
+				var vecIds models.VecIds
+				if err := json.Unmarshal(userModels[i].AllIds, &vecIds); err != nil {
+					return "", fmt.Errorf("не удалось распарсить AllIds: %w", err)
+				}
+				if len(vecIds.VectorId) > 0 {
+					return vecIds.VectorId[0], nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("библиотека не найдена для пользователя %d", userId)
 }

@@ -47,7 +47,8 @@ type Response struct {
 }
 
 // ChatWithAgent отправляет массив сообщений конкретному агенту с указанными инструментами
-func (m *MistralAgentClient) ChatWithAgent(agentID string, messages []MistralMessage, tools interface{}) (Response, error) {
+// libraryIds - опциональный список ID библиотек для document_library tool
+func (m *MistralAgentClient) ChatWithAgent(agentID string, messages []MistralMessage, tools interface{}, libraryIds ...string) (Response, error) {
 	payload := map[string]interface{}{
 		"agent_id": agentID,
 		"messages": messages,
@@ -56,6 +57,18 @@ func (m *MistralAgentClient) ChatWithAgent(agentID string, messages []MistralMes
 	// Добавляем инструменты если они переданы
 	if tools != nil {
 		payload["tools"] = tools
+	}
+
+	// Добавляем library_ids если есть (для document_library tool)
+	if len(libraryIds) > 0 {
+		payload["library_ids"] = libraryIds
+	}
+
+	// Добавляем response_format для структурированных ответов
+	// Примечание: формат может быть установлен при создании агента,
+	// но также можно передавать в каждом запросе для гибкости
+	payload["response_format"] = map[string]interface{}{
+		"type": "json_object",
 	}
 
 	body, _ := json.Marshal(payload)
@@ -225,13 +238,151 @@ func (m *MistralAgentClient) ChatWithModel(model string, messages []MistralMessa
 	return "", fmt.Errorf("пустой ответ от модели")
 }
 
-// ChatWithAgentFiles отправляет массив сообщений агенту с поддержкой файлов
-func (m *MistralAgentClient) ChatWithAgentFiles(agentID string, messages []MistralMessage, files []io.Reader, fileNames []string, tools interface{}) (Response, error) {
-	// Пока Mistral API не поддерживает напрямую файлы в запросах к агентам
-	// Можно реализовать загрузку файлов отдельно или передавать их содержимое в сообщениях
-	// Для простоты используем базовый ChatWithAgent
-	// В будущем можно расширить функциональность
-	return m.ChatWithAgent(agentID, messages, tools)
+// ChatWithAgentFiles отправляет массив сообщений агенту с временной загрузкой файлов
+// Файлы передаются в теле запроса через multipart/form-data
+// libraryIds - опциональный список ID библиотек для document_library tool
+// Документация: https://docs.mistral.ai/agents/tools/built-in/document_library
+func (m *MistralAgentClient) ChatWithAgentFiles(agentID string, messages []MistralMessage, files []io.Reader, fileNames []string, tools interface{}, libraryIds ...string) (Response, error) {
+	if len(files) == 0 || len(files) != len(fileNames) {
+		// Если файлов нет или массивы не совпадают, используем обычный запрос
+		return m.ChatWithAgent(agentID, messages, tools, libraryIds...)
+	}
+
+	// Создаём multipart форму
+	body := &bytes.Buffer{}
+	boundary := "----MistralFormBoundary"
+
+	// Добавляем agent_id
+	fmt.Fprintf(body, "--%s\r\n", boundary)
+	fmt.Fprintf(body, "Content-Disposition: form-data; name=\"agent_id\"\r\n\r\n")
+	fmt.Fprintf(body, "%s\r\n", agentID)
+
+	// Добавляем messages как JSON
+	messagesJSON, err := json.Marshal(messages)
+	if err != nil {
+		return Response{}, fmt.Errorf("ошибка сериализации сообщений: %v", err)
+	}
+	fmt.Fprintf(body, "--%s\r\n", boundary)
+	fmt.Fprintf(body, "Content-Disposition: form-data; name=\"messages\"\r\n")
+	fmt.Fprintf(body, "Content-Type: application/json\r\n\r\n")
+	body.Write(messagesJSON)
+	fmt.Fprintf(body, "\r\n")
+
+	// Добавляем tools если есть
+	if tools != nil {
+		toolsJSON, err := json.Marshal(tools)
+		if err == nil {
+			fmt.Fprintf(body, "--%s\r\n", boundary)
+			fmt.Fprintf(body, "Content-Disposition: form-data; name=\"tools\"\r\n")
+			fmt.Fprintf(body, "Content-Type: application/json\r\n\r\n")
+			body.Write(toolsJSON)
+			fmt.Fprintf(body, "\r\n")
+		}
+	}
+
+	// Добавляем library_ids если есть
+	if len(libraryIds) > 0 {
+		libraryIdsJSON, err := json.Marshal(libraryIds)
+		if err == nil {
+			fmt.Fprintf(body, "--%s\r\n", boundary)
+			fmt.Fprintf(body, "Content-Disposition: form-data; name=\"library_ids\"\r\n")
+			fmt.Fprintf(body, "Content-Type: application/json\r\n\r\n")
+			body.Write(libraryIdsJSON)
+			fmt.Fprintf(body, "\r\n")
+		}
+	}
+
+	// Добавляем файлы
+	for i, file := range files {
+		fmt.Fprintf(body, "--%s\r\n", boundary)
+		fmt.Fprintf(body, "Content-Disposition: form-data; name=\"files\"; filename=\"%s\"\r\n", fileNames[i])
+		fmt.Fprintf(body, "Content-Type: application/octet-stream\r\n\r\n")
+
+		// Копируем содержимое файла
+		if _, err := io.Copy(body, file); err != nil {
+			return Response{}, fmt.Errorf("ошибка копирования файла %s: %v", fileNames[i], err)
+		}
+		fmt.Fprintf(body, "\r\n")
+	}
+
+	// Закрываем multipart
+	fmt.Fprintf(body, "--%s--\r\n", boundary)
+
+	// Создаём запрос
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, m.url, body)
+	if err != nil {
+		return Response{}, fmt.Errorf("ошибка создания запроса: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Content-Type", fmt.Sprintf("multipart/form-data; boundary=%s", boundary))
+
+	// Выполняем запрос
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return Response{}, fmt.Errorf("ошибка HTTP запроса: %v", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody := new(bytes.Buffer)
+	responseBody.ReadFrom(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return Response{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, responseBody.String())
+	}
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(responseBody.Bytes(), &response); err != nil {
+		return Response{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
+	}
+
+	// Парсим ответ (используем ту же логику что и в ChatWithAgent)
+	if choices, ok := response["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if msg, ok := choice["message"].(map[string]interface{}); ok {
+				// Проверяем tool_calls
+				if toolCalls, ok := msg["tool_calls"].([]interface{}); ok && len(toolCalls) > 0 {
+					if toolCall, ok := toolCalls[0].(map[string]interface{}); ok {
+						if function, ok := toolCall["function"].(map[string]interface{}); ok {
+							name, _ := function["name"].(string)
+							args, _ := function["arguments"].(string)
+
+							return Response{
+								Message:  "",
+								FuncName: name,
+								FuncArgs: args,
+								HasFunc:  true,
+							}, nil
+						}
+					}
+				}
+
+				// Обычный текстовый ответ
+				if contentArray, ok := msg["content"].([]interface{}); ok {
+					var fullText strings.Builder
+					for _, item := range contentArray {
+						if contentObj, ok := item.(map[string]interface{}); ok {
+							if text, exists := contentObj["text"].(string); exists && text != "" {
+								fullText.WriteString(text)
+							}
+						}
+					}
+
+					fullMessage := fullText.String()
+					if fullMessage != "" {
+						return Response{Message: fullMessage, HasFunc: false}, nil
+					}
+				}
+
+				// Fallback - content как строка
+				if content, ok := msg["content"].(string); ok && content != "" {
+					return Response{Message: content, HasFunc: false}, nil
+				}
+			}
+		}
+	}
+
+	return Response{}, fmt.Errorf("не удалось извлечь ответ от агента")
 }
 
 // Shutdown корректно завершает работу клиента
@@ -239,4 +390,207 @@ func (m *MistralAgentClient) Shutdown() {
 	if m.cancel != nil {
 		m.cancel()
 	}
+}
+
+// ============================================================================
+// LIBRARY MANAGEMENT - Методы для работы с библиотеками документов
+// Документация: https://docs.mistral.ai/agents/tools/built-in/document_library
+// ============================================================================
+
+// MistralLibrary представляет библиотеку документов
+type MistralLibrary struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"` // API возвращает строку, а не int64
+}
+
+// MistralDocument представляет документ в библиотеке
+type MistralDocument struct {
+	ID        string `json:"id"`
+	FileName  string `json:"file_name"`
+	Status    string `json:"status,omitempty"`     // processing, processed, failed
+	CreatedAt string `json:"created_at,omitempty"` // API возвращает строку, а не int64
+}
+
+// CreateLibrary создаёт новую библиотеку документов
+// POST /v1/libraries
+func (m *MistralAgentClient) CreateLibrary(name, description string) (*MistralLibrary, error) {
+	const librariesURL = "https://api.mistral.ai/v1/libraries"
+
+	payload := map[string]interface{}{
+		"name": name,
+	}
+	if description != "" {
+		payload["description"] = description
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка сериализации запроса: %v", err)
+	}
+
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, librariesURL, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("ошибка создания POST запроса: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения ответа: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
+	}
+
+	var library MistralLibrary
+	if err := json.Unmarshal(responseBody, &library); err != nil {
+		return nil, fmt.Errorf("ошибка парсинга JSON: %v", err)
+	}
+
+	return &library, nil
+}
+
+// DeleteLibrary удаляет библиотеку
+// DELETE /v1/libraries/{library_id}
+func (m *MistralAgentClient) DeleteLibrary(libraryID string) error {
+	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s", libraryID)
+
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("ошибка создания DELETE запроса: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("ошибка HTTP запроса: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		responseBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
+	}
+
+	return nil
+}
+
+// UploadDocumentToLibrary загружает документ в библиотеку
+// POST /v1/libraries/{library_id}/documents
+func (m *MistralAgentClient) UploadDocumentToLibrary(libraryID, fileName string, fileData []byte) (string, error) {
+	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents", libraryID)
+
+	// Создаём multipart форму
+	body := &bytes.Buffer{}
+	boundary := "----MistralBoundary"
+
+	// Записываем файл
+	fmt.Fprintf(body, "--%s\r\n", boundary)
+	fmt.Fprintf(body, "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n", fileName)
+	fmt.Fprintf(body, "Content-Type: application/octet-stream\r\n\r\n")
+	body.Write(fileData)
+	fmt.Fprintf(body, "\r\n--%s--\r\n", boundary)
+
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, url, body)
+	if err != nil {
+		return "", fmt.Errorf("ошибка создания POST запроса: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Content-Type", fmt.Sprintf("multipart/form-data; boundary=%s", boundary))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ошибка HTTP запроса: %v", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("ошибка чтения ответа: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
+	}
+
+	var document MistralDocument
+	if err := json.Unmarshal(responseBody, &document); err != nil {
+		return "", fmt.Errorf("ошибка парсинга JSON: %v", err)
+	}
+
+	return document.ID, nil
+}
+
+// DeleteDocumentFromLibrary удаляет документ из библиотеки
+// DELETE /v1/libraries/{library_id}/documents/{document_id}
+func (m *MistralAgentClient) DeleteDocumentFromLibrary(libraryID, documentID string) error {
+	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents/%s", libraryID, documentID)
+
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return fmt.Errorf("ошибка создания DELETE запроса: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("ошибка HTTP запроса: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		responseBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
+	}
+
+	return nil
+}
+
+// GetDocumentStatus получает статус документа
+// GET /v1/libraries/{library_id}/documents/{document_id}
+func (m *MistralAgentClient) GetDocumentStatus(libraryID, documentID string) (string, error) {
+	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents/%s", libraryID, documentID)
+
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("ошибка создания GET запроса: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ошибка HTTP запроса: %v", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("ошибка чтения ответа: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
+	}
+
+	var document MistralDocument
+	if err := json.Unmarshal(responseBody, &document); err != nil {
+		return "", fmt.Errorf("ошибка парсинга JSON: %v", err)
+	}
+
+	return document.Status, nil
 }

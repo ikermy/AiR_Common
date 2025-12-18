@@ -48,12 +48,29 @@ type ModelManager interface {
 	AddFileFromFromProvider(userId uint32, fileID, fileName string) error
 }
 
+// MistralModelManager расширяет Model для Mistral-специфичных методов работы с библиотеками
+type MistralModelManager interface {
+	Model // Встраиваем базовый интерфейс
+
+	// CreateModel создаёт новую модель у провайдера
+	CreateModel(userId uint32, provider models.ProviderType, gptName string, modelName string, modelJSON []byte, fileIDs []models.Ids) (models.UMCR, error)
+
+	// Методы для работы с библиотеками и документами Mistral
+	// Один пользователь = одна библиотека
+	UploadFileToProvider(userId uint32, fileName string, fileData []byte) (string, error)
+	DeleteDocumentFromLibrary(userId uint32, documentID string) error
+	AddFileToLibrary(userId uint32, fileID, fileName string) error
+}
+
 type DB interface {
 	ReadContext(dialogId uint64) (json.RawMessage, error)
 	SaveContext(treadId uint64, context json.RawMessage) error
 	// Методы для работы с диалогами (из DialogDB)
 	SaveDialog(dialogId uint64, data json.RawMessage) error
 	ReadDialog(dialogId uint64) (DialogData, error)
+	// Методы для работы с моделями пользователей
+	GetAllUserModels(userId uint32) ([]models.UserModelRecord, error)
+	UpdateUserGPT(userId uint32, modelId uint64, assistId string, allIds []byte) error
 }
 
 type Models struct {
