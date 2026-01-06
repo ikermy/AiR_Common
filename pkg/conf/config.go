@@ -30,6 +30,7 @@ type TgConfig struct {
 type GPTConfig struct {
 	OpenAIKey  string `mapstructure:"openai_key"`
 	MistralKey string `mapstructure:"mistral_key"`
+	GoogleKey string `mapstructure:"google_key"`
 }
 
 type WebConfig struct {

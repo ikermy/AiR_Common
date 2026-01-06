@@ -638,3 +638,171 @@ func (d *DB) GetNotificationChannel(userId uint32) (json.RawMessage, error) {
 
 	return json.RawMessage(data.String), nil
 }
+
+// GetUserModels получает все модели пользователя из таблицы user_models
+func (d *DB) GetAllUserModels(userId uint32) ([]models.UserModelRecord, error) {
+	if userId == 0 {
+		return nil, fmt.Errorf("получен пустой userId")
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel*time.Second)
+	defer cancel()
+
+	rows, err := d.conn.QueryContext(ctx,
+		`SELECT 
+            um.ModelId,
+            um.Provider,
+            um.IsActive,
+            ug.AssistantId,
+            ug.Ids
+        FROM user_models um
+        JOIN user_gpt ug ON um.ModelId = ug.Id
+        WHERE um.UserId = ?
+        ORDER BY um.IsActive DESC, um.CreatedAt DESC`, userId)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, fmt.Errorf("тайм-аут (%d с) при получении моделей: %w", mode.SqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return nil, fmt.Errorf("операция отменена: %w", err)
+		default:
+			return nil, fmt.Errorf("ошибка получения моделей: %w", err)
+		}
+	}
+	defer rows.Close()
+
+	var records []models.UserModelRecord
+	for rows.Next() {
+		var record models.UserModelRecord
+		var isActive int8
+		var idsRaw sql.NullString
+
+		if err := rows.Scan(&record.ModelId, &record.Provider, &isActive, &record.AssistId, &idsRaw); err != nil {
+			logger.Warn("Ошибка сканирования записи user_models: %v", err, userId)
+			continue
+		}
+
+		record.IsActive = isActive == 1
+
+		// Парсим JSON из поля Ids
+		if idsRaw.Valid && idsRaw.String != "" {
+			// Сохраняем raw JSON в AllIds для доступа к VectorId
+			record.AllIds = []byte(idsRaw.String)
+
+			// Парсим FileIds для обратной совместимости
+			var data struct {
+				FileIds  []models.Ids `json:"FileIds"`
+				VectorId []string     `json:"VectorId"`
+			}
+			if err := json.Unmarshal([]byte(idsRaw.String), &data); err != nil {
+				logger.Warn("Ошибка парсинга FileIds для ModelId %d: %v", record.ModelId, err, userId)
+			} else {
+				record.FileIds = data.FileIds
+			}
+		}
+
+		records = append(records, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ошибка при итерации по записям: %w", err)
+	}
+
+	return records, nil
+}
+
+// UpdateUserGPT обновляет поле Ids (AllIds) в таблице user_gpt
+// Используется для обновления информации о файлах и векторных хранилищах/библиотеках
+func (d *DB) UpdateUserGPT(userId uint32, modelId uint64, assistId string, allIds []byte) error {
+	if userId == 0 {
+		return fmt.Errorf("получен пустой userId")
+	}
+	if modelId == 0 {
+		return fmt.Errorf("получен пустой modelId")
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel)
+	defer cancel()
+
+	// Подготавливаем значение для БД
+	// Если allIds == nil, то сохраняем SQL NULL, иначе строку
+	var idsValue interface{}
+	if allIds == nil || len(allIds) == 0 {
+		idsValue = nil // SQL NULL
+	} else {
+		idsValue = string(allIds)
+	}
+
+	// Обновляем поле Ids в user_gpt
+	_, err := d.conn.ExecContext(ctx, `
+		UPDATE user_gpt 
+		SET Ids = ? 
+		WHERE Id = ? AND AssistantId = ?
+	`, idsValue, modelId, assistId)
+
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("тайм-аут (%d с) при обновлении user_gpt: %w", mode.SqlTimeToCancel, err)
+		}
+		if errors.Is(err, context.Canceled) {
+			return fmt.Errorf("операция отменена: %w", err)
+		}
+		return fmt.Errorf("ошибка обновления user_gpt: %w", err)
+	}
+
+	// Обновляем timestamp пользователя
+	_, err = d.Conn().ExecContext(ctx, `
+		UPDATE users 
+		SET changed = 1, Timechange = CURRENT_TIMESTAMP() 
+		WHERE Id = ?
+	`, userId)
+
+	if err != nil {
+		// Логируем, но не возвращаем ошибку - основное обновление прошло успешно
+		logger.Warn("Не удалось обновить timestamp пользователя %d: %v", userId, err, userId)
+	}
+
+	return nil
+}
+
+func (d *DB) GetUserVectorStorage(userId uint32) (string, error) {
+	// Проверяем входное значение
+	if userId == 0 {
+		return "", fmt.Errorf("получен некорректный userId")
+	}
+
+	// Дочерний контекст с тайм-аутом на операцию
+	ctx, cancel := context.WithTimeout(d.ctx, mode.SqlTimeToCancel)
+	defer cancel()
+
+	// SQL запрос для получения первого элемента VectorId из JSON активной модели
+	// Используем новую структуру через user_models
+	query := `
+  SELECT JSON_UNQUOTE(JSON_EXTRACT(ug.Ids, '$.VectorId[0]'))
+  FROM user_models um
+  JOIN user_gpt ug ON um.ModelId = ug.Id
+  WHERE um.UserId = ? AND um.IsActive = 1
+  LIMIT 1`
+
+	var data sql.NullString
+	err := d.conn.QueryRowContext(ctx, query, userId).Scan(&data)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return "", fmt.Errorf("тайм-аут (%d с) при получении VectorStorage: %w", mode.SqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return "", fmt.Errorf("операция отменена: %w", err)
+		case errors.Is(err, sql.ErrNoRows):
+			return "", nil // Данные не найдены, но это не ошибка
+		default:
+			return "", fmt.Errorf("ошибка получения VectorStorage: %w", err)
+		}
+	}
+
+	if !data.Valid {
+		return "", nil // Возвращаем пустую строку если данные NULL
+	}
+
+	return data.String, nil
+}
