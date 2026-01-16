@@ -20,6 +20,17 @@ import (
 //	DisableOperatorMode(userId uint32, dialogId uint64) error
 //}
 
+// Inter - интерфейс для отправки сообщений от и для операторов
+type Inter interface {
+	AskOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) (model.Message, error)
+	SendToOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) error
+	ReceiveFromOperator(ctx context.Context, userID uint32, dialogID uint64) <-chan model.Message // Канал для получения ответов
+	DeleteSession(userID uint32, dialogID uint64) error
+	GetConnectionErrors(ctx context.Context, userID uint32, dialogID uint64) <-chan string
+
+	CloseOperatorSSE(ctx context.Context, userID uint32, dialogID uint64) error
+}
+
 type OperatorCh struct {
 	Respondent any
 	TxCh       chan model.Message
