@@ -28,20 +28,13 @@ func (m *OpenAIModel) CleanUp() {
 			m.responders.Range(func(key, value interface{}) bool {
 				responder := value.(*RespModel)
 				checkedRespCount++
-
-				ttl := responder.TTL
 				ttlExpired := responder.TTL.Before(now)
-				hasThread := responder.Thread != nil
 
 				respId, ok := key.(uint64)
 				if !ok {
 					logger.Error("Некорректный тип ключа: %T, ожидался uint64", key)
 					return true
 				}
-
-				// Логируем состояние для диагностики
-				timeUntilExpiry := ttl.Sub(now)
-				respId, timeUntilExpiry.Round(time.Second), hasThread, ttlExpired)
 
 				if ttlExpired {
 					// Отменяем активные runs перед удалением
