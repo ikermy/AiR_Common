@@ -38,6 +38,7 @@ type Exterior interface {
 	GetAllUserModels(userId uint32) ([]create.UserModelRecord, error)
 	UpdateUserGPT(userId uint32, modelId uint64, assistId string, allIds []byte) error
 	GetUserVectorStorage(userId uint32) (string, error)
+	SetChannelEnabled(userId uint32, chName string, status bool) error
 
 	// User Model Management - методы для управления моделями пользователя (для create.DB)
 	ReadUserModelByProvider(userId uint32, provider create.ProviderType) ([]byte, *create.VecIds, error)
