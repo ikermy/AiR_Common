@@ -1419,3 +1419,144 @@ func (d *DB) GetContactsInBothProviders(userID uint32, provider1, provider2 stri
 
 	return contacts, nil
 }
+
+// RemoveModelFromUser удаляет связь между пользователем и моделью в таблице user_models
+// Также удаляет саму модель из user_gpt, если это была последняя связь с этой моделью
+func (d *DB) RemoveModelFromUser(userId uint32, modelId uint64) error {
+	// Проверяем входные значения
+	if userId == 0 || modelId == 0 {
+		return fmt.Errorf("получены некорректные значения: userId или modelId равны 0")
+	}
+
+	// Дочерний контекст с тайм-аутом на операцию
+	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	// Начинаем транзакцию для атомарности операций
+	tx, err := d.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("ошибка начала транзакции: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Проверяем, существует ли связь пользователя с моделью
+	var exists bool
+	err = tx.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM user_models WHERE UserId = ? AND ModelId = ?)",
+		userId, modelId).Scan(&exists)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при проверке связи пользователя с моделью: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена при проверке связи: %w", err)
+		default:
+			return fmt.Errorf("ошибка проверки связи пользователя с моделью: %w", err)
+		}
+	}
+
+	if !exists {
+		return fmt.Errorf("связь между пользователем %d и моделью %d не найдена", userId, modelId)
+	}
+
+	// Проверяем, была ли эта модель активной
+	var wasActive bool
+	err = tx.QueryRowContext(ctx,
+		"SELECT IsActive FROM user_models WHERE UserId = ? AND ModelId = ?",
+		userId, modelId).Scan(&wasActive)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при проверке активности модели: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена при проверке активности: %w", err)
+		default:
+			return fmt.Errorf("ошибка проверки активности модели: %w", err)
+		}
+	}
+
+	// Удаляем связь между пользователем и моделью
+	_, err = tx.ExecContext(ctx,
+		"DELETE FROM user_models WHERE UserId = ? AND ModelId = ?",
+		userId, modelId)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при удалении связи: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена при удалении связи: %w", err)
+		default:
+			return fmt.Errorf("ошибка удаления связи пользователя с моделью: %w", err)
+		}
+	}
+
+	// Проверяем, есть ли у этой модели другие связи с пользователями
+	var otherUsersCount int
+	err = tx.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM user_models WHERE ModelId = ?",
+		modelId).Scan(&otherUsersCount)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при проверке других связей модели: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена при проверке других связей: %w", err)
+		default:
+			return fmt.Errorf("ошибка проверки других связей модели: %w", err)
+		}
+	}
+
+	// Если других связей нет, удаляем саму модель из user_gpt
+	if otherUsersCount == 0 {
+		_, err = tx.ExecContext(ctx, "DELETE FROM user_gpt WHERE Id = ?", modelId)
+		if err != nil {
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				return fmt.Errorf("тайм-аут (%d с) при удалении модели: %w", sqlTimeToCancel, err)
+			case errors.Is(err, context.Canceled):
+				return fmt.Errorf("операция отменена при удалении модели: %w", err)
+			default:
+				return fmt.Errorf("ошибка удаления модели: %w", err)
+			}
+		}
+	}
+
+	// Если удалённая модель была активной, нужно активировать другую модель (если есть)
+	if wasActive {
+		// Получаем первую доступную модель пользователя
+		var nextModelId sql.NullInt64
+		err = tx.QueryRowContext(ctx,
+			"SELECT ModelId FROM user_models WHERE UserId = ? LIMIT 1",
+			userId).Scan(&nextModelId)
+
+		// Если есть другая модель, делаем её активной
+		if err == nil && nextModelId.Valid {
+			_, err = tx.ExecContext(ctx,
+				"UPDATE user_models SET IsActive = 1 WHERE UserId = ? AND ModelId = ?",
+				userId, nextModelId.Int64)
+			if err != nil {
+				return fmt.Errorf("ошибка активации следующей модели: %w", err)
+			}
+		} else if errors.Is(err, sql.ErrNoRows) {
+			// Если других моделей нет - отключаем все каналы пользователя
+			// Фиксируем транзакцию перед вызовом DisableAllUserChannel
+			if err := tx.Commit(); err != nil {
+				return fmt.Errorf("ошибка фиксации транзакции: %w", err)
+			}
+
+			// Отключаем все каналы, так как у пользователя больше нет моделей
+			if err := d.DisableAllUserChannel(userId); err != nil {
+				return fmt.Errorf("ошибка отключения каналов пользователя: %w", err)
+			}
+
+			return nil
+		}
+	}
+
+	// Фиксируем транзакцию
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ошибка фиксации транзакции: %w", err)
+	}
+
+	return nil
+}
