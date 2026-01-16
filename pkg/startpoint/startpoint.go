@@ -7,10 +7,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/endpoint"
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
+	"github.com/ikermy/AiR_Common/pkg/operator"
 )
 
 // sendError безопасно отправляет ошибку в errCh без блокировки.
@@ -964,9 +966,9 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 			switch quest.VoiceQuestion {
 			case false: // Вопрос задан текстом
 				// Нужно создать отдельный канал слушателя для сохранения диалога для использования асинхронного сохранения
-				s.End.SaveDialog(db.User, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
+				s.End.SaveDialog(comdb.User, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			case true: // Вопрос задан голосом
-				s.End.SaveDialog(db.UserVoice, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
+				s.End.SaveDialog(comdb.UserVoice, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			}
 		case resp := <-answerCh: // Пришёл ответ ассистента/оператора
 			assistMsg := s.Mod.NewMessage(resp.Operator, "assist", &resp.Answer, &u.Assist.AssistName)
@@ -979,9 +981,9 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 			// Сохраняем диалог после успешной отправки
 			switch resp.Operator.Operator {
 			case false:
-				s.End.SaveDialog(db.AI, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
+				s.End.SaveDialog(comdb.AI, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			case true:
-				s.End.SaveDialog(db.Operator, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
+				s.End.SaveDialog(comdb.Operator, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			}
 		}
 	}
