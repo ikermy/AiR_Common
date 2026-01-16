@@ -76,6 +76,10 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/logger"
 )
 
+type Inter interface {
+	Init(userID uint32) (*User, error)
+}
+
 const (
 	Type               = "amocrm"
 	DefaultRespTimeout = 10 * time.Second
