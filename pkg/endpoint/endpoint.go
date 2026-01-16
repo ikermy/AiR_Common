@@ -252,7 +252,7 @@ func (e *Endpoint) GetDialogHistory(dialogId uint64, limit int) ([]Message, erro
 
 	if len(batch) > 0 {
 		// Есть сообщения в памяти
-		logger.Debug("Endpoint: найдено %d сообщений в памяти для диалога %d", len(batch), dialogId)
+		//logger.Debug("Endpoint: найдено %d сообщений в памяти для диалога %d", len(batch), dialogId)
 
 		// Ограничиваем количество сообщений
 		startIdx := 0
@@ -266,7 +266,7 @@ func (e *Endpoint) GetDialogHistory(dialogId uint64, limit int) ([]Message, erro
 	}
 
 	// Если в памяти нет, читаем из БД
-	logger.Debug("Endpoint: сообщения для диалога %d не найдены в памяти, читаем из БД", dialogId)
+	//logger.Debug("Endpoint: сообщения для диалога %d не найдены в памяти, читаем из БД", dialogId)
 
 	// Разблокируем мьютекс на время операции с БД
 	e.mu.Unlock()
@@ -278,7 +278,7 @@ func (e *Endpoint) GetDialogHistory(dialogId uint64, limit int) ([]Message, erro
 	}
 
 	if jsonData == nil || len(jsonData) == 0 {
-		logger.Debug("Endpoint: диалог %d не найден в БД", dialogId)
+		//logger.Debug("Endpoint: диалог %d не найден в БД", dialogId)
 		return nil, nil
 	}
 
@@ -288,7 +288,7 @@ func (e *Endpoint) GetDialogHistory(dialogId uint64, limit int) ([]Message, erro
 		return nil, fmt.Errorf("ошибка парсинга данных диалога из БД: %w", err)
 	}
 
-	logger.Debug("Endpoint: прочитано %d сообщений из БД для диалога %d", len(messages), dialogId)
+	//logger.Debug("Endpoint: прочитано %d сообщений из БД для диалога %d", len(messages), dialogId)
 	return messages, nil
 }
 

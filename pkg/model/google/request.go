@@ -55,10 +55,10 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 	if cachedHistory, found := m.getDialogHistoryFromCache(dialogId); found {
 		// Используем историю из кэша
 		history = cachedHistory
-		logger.Debug("Использована история из кэша для диалога %d", dialogId)
+		//logger.Debug("Использована история из кэша для диалога %d", dialogId)
 	} else {
 		// Кэш не найден - загружаем из БД (первичная загрузка)
-		logger.Debug("Кэш не найден, загружаю историю из БД для диалога %d", dialogId)
+		//logger.Debug("Кэш не найден, загружаю историю из БД для диалога %d", dialogId)
 
 		// Получаем или создаём респондента (загружает конфигурацию)
 		resp, err := m.GetOrCreateResponder(dialogId, userId)
@@ -77,7 +77,7 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 			history = []GoogleContent{}
 		} else {
 			history = dbHistory
-			logger.Debug("Загружено %d сообщений из БД для диалога %d", len(history), dialogId)
+			//logger.Debug("Загружено %d сообщений из БД для диалога %d", len(history), dialogId)
 		}
 
 		// Применяем ограничение на количество сообщений
@@ -85,8 +85,8 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 		if len(history) > maxMessages {
 			// Оставляем только последние maxMessages сообщений
 			history = history[len(history)-maxMessages:]
-			logger.Debug("Ограничено количество сообщений в истории диалога %d до %d (было %d)",
-				dialogId, maxMessages, len(history))
+			//logger.Debug("Ограничено количество сообщений в истории диалога %d до %d (было %d)",
+			//	dialogId, maxMessages, len(history))
 		}
 
 		// Сохраняем в кэш (getOrCreateDialogCache обновит ExpireAt)
@@ -107,8 +107,8 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 	// Если есть VectorIds - используем SearchSimilarDocuments для обогащения контекста
 	enhancedText := text
 	if resp.AgentConfig.HasVector && len(resp.AgentConfig.VectorIds) > 0 && text != "" {
-		logger.Debug("RAG активирован: найдено %d векторных хранилищ для modelId=%d",
-			len(resp.AgentConfig.VectorIds), resp.AgentConfig.ModelId, userId)
+		//logger.Debug("RAG активирован: найдено %d векторных хранилищ для modelId=%d",
+		//	len(resp.AgentConfig.VectorIds), resp.AgentConfig.ModelId, userId)
 
 		// Выполняем semantic search через MariaDB Vector Store
 		// 1. Генерируем эмбеддинг запроса через Google Embedding API
@@ -139,9 +139,6 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 
 				logger.Info("RAG: добавлено %d документов из Vector Store (итого %d символов контекста)",
 					len(relevantDocs), len(contextText), userId)
-			} else {
-				logger.Debug("SearchSimilarEmbeddings не нашел релевантных документов для modelId=%d",
-					resp.AgentConfig.ModelId, userId)
 			}
 		}
 	}
@@ -177,19 +174,19 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 		if genConfig, ok := payload["generationConfig"].(map[string]interface{}); ok {
 			delete(genConfig, "response_schema")
 			delete(genConfig, "response_mime_type")
-			logger.Debug("[Googlecreate.Request] Удалены response_schema и response_mime_type из-за наличия tools")
+			//logger.Debug("[Googlecreate.Request] Удалены response_schema и response_mime_type из-за наличия tools")
 		}
 
 		// ВАЖНО: Добавляем напоминание о JSON формате в начало истории диалога
 		// Поскольку response_schema удален, модель может забыть про JSON
 		// Вставляем системное сообщение с напоминанием в начало истории
-		jsonReminderText := "⚠️ ВАЖНО: Все твои ответы ДОЛЖНЫ быть строго в JSON формате согласно схеме:\n" + create.GoogleSchemaJSON + "\n\nНикогда не отвечай обычным текстом!"
+		jsonReminderText := "ВАЖНО: Все твои ответы ДОЛЖНЫ быть строго в JSON формате согласно схеме:\n" + create.GoogleSchemaJSON + "\n\nНикогда не отвечай обычным текстом!"
 
 		// Проверяем наличие google_search и добавляем инструкцию
 		hasGoogleSearch := false
 		if resp.AgentConfig.WebSearch {
 			hasGoogleSearch = true
-			jsonReminderText += "\n\n🔍 У ТЕБЯ ЕСТЬ ДОСТУП К GOOGLE SEARCH!\n" +
+			jsonReminderText += "\n\nУ ТЕБЯ ЕСТЬ ДОСТУП К GOOGLE SEARCH!\n" +
 				"- Когда пользователь спрашивает о ТЕКУЩИХ событиях, погоде, новостях - ОБЯЗАТЕЛЬНО используй google_search!\n" +
 				"- НЕ ОТКАЗЫВАЙ говоря 'у меня нет доступа к интернету' - это НЕПРАВДА, у тебя есть google_search!\n" +
 				"- Просто вызови функцию google_search с запросом и получишь результаты из интернета."
@@ -226,11 +223,7 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 			// Вставляем в самое начало
 			history = append([]GoogleContent{jsonReminderMessage, jsonReminderResponse}, history...)
 		}
-		logger.Debug("[Googlecreate.Request] Добавлено напоминание о JSON формате в начало истории")
 
-		// ОТЛАДКА: Логируем содержимое tools
-		toolsJSON, _ := json.Marshal(resp.AgentConfig.Tools)
-		logger.Debug("[Googlecreate.Request] Добавлены tools в payload: %s", string(toolsJSON))
 	} else {
 		// Если нет tools, можно безопасно использовать response_schema для гарантированного JSON
 		if payload["generationConfig"] == nil {
@@ -240,7 +233,6 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 		genConfig := payload["generationConfig"].(map[string]interface{})
 		genConfig["response_mime_type"] = "application/json"
 		genConfig["response_schema"] = create.ParseGoogleSchemaJSON()
-		logger.Debug("[Googlecreate.Request] Нет tools, добавлена response_schema для строгого JSON формата")
 	}
 
 	// Устанавливаем contents ПОСЛЕ всех модификаций history
@@ -280,7 +272,7 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 
 	// 8. История сохраняется автоматически через Endpoint.SaveDialog
 	// (вызывается из startpoint)
-	logger.Debug("assistResponse %+v", assistResponse)
+	//logger.Debug("assistResponse %+v", assistResponse)
 	return assistResponse, nil
 }
 
@@ -509,11 +501,11 @@ func (m *GoogleModel) parseGeminiResponse(responseBody []byte) (model.AssistResp
 		}
 	}
 
-	logger.Debug("parseGeminiResponseWithFunctionHandling: собрано %d текстовых частей и %d функций", len(textParts), len(functionCalls))
+	//logger.Debug("parseGeminiResponseWithFunctionHandling: собрано %d текстовых частей и %d функций", len(textParts), len(functionCalls))
 
 	// Если есть function calls, обрабатываем их
 	if len(functionCalls) > 0 {
-		logger.Debug("Получено %d function calls для обработки", len(functionCalls))
+		//logger.Debug("Получено %d function calls для обработки", len(functionCalls))
 
 		for _, fc := range functionCalls {
 			result, err := m.handleFunctionCall(fc)
@@ -575,8 +567,7 @@ func (m *GoogleModel) parseGeminiResponse(responseBody []byte) (model.AssistResp
 		// Парсим action если есть
 		if actionData, ok := rawResp["action"].(map[string]interface{}); ok {
 			if sendFiles, ok := actionData["send_files"].([]interface{}); ok {
-				logger.Debug("Найдено %d файлов в JSON action.send_files", len(sendFiles))
-				for i, fileIface := range sendFiles {
+				for _, fileIface := range sendFiles {
 					if fileMap, ok := fileIface.(map[string]interface{}); ok {
 						file := model.File{
 							Type:     model.FileType(getStringField(fileMap, "type")),
@@ -584,11 +575,9 @@ func (m *GoogleModel) parseGeminiResponse(responseBody []byte) (model.AssistResp
 							FileName: getStringField(fileMap, "file_name"),
 							Caption:  getStringField(fileMap, "caption"),
 						}
-						logger.Debug("Файл %d: type=%s, url=%s, fileName=%s", i, file.Type, file.URL, file.FileName)
 						assistResp.Action.SendFiles = append(assistResp.Action.SendFiles, file)
 					}
 				}
-				logger.Debug("Всего добавлено файлов в assistResp: %d", len(assistResp.Action.SendFiles))
 			}
 		}
 
@@ -636,7 +625,7 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 		return emptyResponse, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
-	logger.Debug("parseGeminiResponseWithFunctionHandling: получено %d candidates от Google Gemini API", len(apiResp.Candidates))
+	//logger.Debug("parseGeminiResponseWithFunctionHandling: получено %d candidates от Google Gemini API", len(apiResp.Candidates))
 
 	if len(apiResp.Candidates) == 0 || len(apiResp.Candidates[0].Content.Parts) == 0 {
 		return emptyResponse, fmt.Errorf("получен пустой ответ от модели")
@@ -655,12 +644,10 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 		}
 	}
 
-	logger.Debug("parseGeminiResponseWithFunctionHandling: собрано %d текстовых частей и %d функций", len(textParts), len(functionCalls))
+	//logger.Debug("parseGeminiResponseWithFunctionHandling: собрано %d текстовых частей и %d функций", len(textParts), len(functionCalls))
 
 	// Если есть function calls БЕЗ текста - отправляем результаты модели для продолжения
 	if len(functionCalls) > 0 && len(textParts) == 0 {
-		logger.Debug("Модель вызвала функцию без текста, обрабатываем и отправляем результат обратно")
-
 		// Добавляем model response в историю со ВСЕМИ функциями
 		modelResponseParts := make([]map[string]interface{}, len(functionCalls))
 		for i, fc := range functionCalls {
@@ -708,7 +695,7 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 
 	// Если есть function calls И текст - обрабатываем функции (но текст используем как ответ)
 	if len(functionCalls) > 0 && len(textParts) > 0 {
-		logger.Debug("Модель вернула текст и вызвала функции")
+		//logger.Debug("Модель вернула текст и вызвала функции")
 		for _, fc := range functionCalls {
 			result, err := m.handleFunctionCall(fc)
 			if err != nil {
@@ -742,14 +729,12 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 		err := json.Unmarshal([]byte(textParts[0]), &rawResp)
 		if err == nil {
 			parsedJSON = true
-			logger.Debug("Первая текстовая часть распарсена как JSON")
 		} else {
 			// Пытаемся найти JSON в markdown блоке первой части
 			jsonText := extractJSONFromMarkdown(textParts[0])
 			err = json.Unmarshal([]byte(jsonText), &rawResp)
 			if err == nil {
 				parsedJSON = true
-				logger.Debug("JSON извлечен из markdown в первой текстовой части")
 			}
 		}
 	}
@@ -764,7 +749,6 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 		}
 		if err == nil {
 			parsedJSON = true
-			logger.Debug("JSON распарсен из полного текста")
 		}
 	}
 
@@ -778,8 +762,7 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 		// Парсим action если есть
 		if actionData, ok := rawResp["action"].(map[string]interface{}); ok {
 			if sendFiles, ok := actionData["send_files"].([]interface{}); ok {
-				logger.Debug("Найдено %d файлов в JSON action.send_files", len(sendFiles))
-				for i, fileIface := range sendFiles {
+				for _, fileIface := range sendFiles {
 					if fileMap, ok := fileIface.(map[string]interface{}); ok {
 						file := model.File{
 							Type:     model.FileType(getStringField(fileMap, "type")),
@@ -787,16 +770,11 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 							FileName: getStringField(fileMap, "file_name"),
 							Caption:  getStringField(fileMap, "caption"),
 						}
-						logger.Debug("Файл %d: type=%s, url=%s, fileName=%s", i, file.Type, file.URL, file.FileName)
 						assistResp.Action.SendFiles = append(assistResp.Action.SendFiles, file)
 					}
 				}
-				logger.Debug("Всего добавлено файлов в assistResp: %d", len(assistResp.Action.SendFiles))
-			} else {
-				logger.Debug("action.send_files не найдено или не является массивом")
+				//logger.Debug("Всего добавлено файлов в assistResp: %d", len(assistResp.Action.SendFiles))
 			}
-		} else {
-			logger.Debug("action не найден в JSON или не является объектом")
 		}
 
 		// Парсим target и operator
@@ -850,7 +828,7 @@ func (m *GoogleModel) handleFunctionCall(functionCall map[string]interface{}) (m
 			}
 		}
 
-		logger.Debug("Function %s выполнена, результат: %s", functionName, result)
+		//logger.Debug("Function %s выполнена, результат: %s", functionName, result)
 		return resultMap, nil
 	}
 

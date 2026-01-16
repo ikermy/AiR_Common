@@ -1,7 +1,6 @@
 package create
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -558,10 +557,10 @@ func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelDat
 	}
 
 	// Форматируем JSON для читабельности
-	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, schemaJSON, "", "  "); err == nil {
-		logger.Debug("Сгенерированная JSON Schema:\n%s", prettyJSON.String(), userId)
-	}
+	//var prettyJSON bytes.Buffer
+	//if err := json.Indent(&prettyJSON, schemaJSON, "", "  "); err == nil {
+	//	logger.Debug("Сгенерированная JSON Schema:\n%s", prettyJSON.String(), userId)
+	//}
 	// Создаем базовый AssistantRequest с улучшенными инструкциями
 	assistantRequest := openai.AssistantRequest{
 		Name:         &modelData.Name,

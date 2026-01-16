@@ -25,7 +25,7 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 	switch functionName {
 
 	case "lead_target":
-		logger.Debug("ActionHandler: вызов функции lead_target с аргументами: %s", arguments)
+		//logger.Debug("ActionHandler: вызов функции lead_target с аргументами: %s", arguments)
 		var params struct {
 			RespId int64 `json:"resp_id"`
 		}
@@ -62,19 +62,19 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		defer resp.Body.Close()
 
 		// Читаем ответ
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			logger.Error("ActionHandler: ошибка чтения ответа Meta API: %v", err)
-		} else {
-			logger.Debug("ActionHandler: ответ Meta API: %s", string(body))
-		}
+		//body, err := io.ReadAll(resp.Body)
+		//if err != nil {
+		//	logger.Error("ActionHandler: ошибка чтения ответа Meta API: %v", err)
+		//} else {
+		//	logger.Debug("ActionHandler: ответ Meta API: %s", string(body))
+		//}
 
 		// Возвращаем подтверждение что цель достигнута
 		result, _ := json.Marshal(map[string]bool{"target": true})
 		return string(result)
 
 	case "get_s3_files":
-		logger.Debug("ActionHandler: вызов функции get_s3_files с аргументами: %s", arguments)
+		//logger.Debug("ActionHandler: вызов функции get_s3_files с аргументами: %s", arguments)
 		var params struct {
 			UserID string `json:"user_id"`
 		}
@@ -82,7 +82,7 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		if err := json.Unmarshal([]byte(arguments), &params); err != nil {
 			return `{"error": "неверные параметры"}`
 		}
-		logger.Debug("url %s", fmt.Sprintf("%s/gets3?id=%s", mode.RealHost, params.UserID))
+		//logger.Debug("url %s", fmt.Sprintf("%s/gets3?id=%s", mode.RealHost, params.UserID))
 		// Выполняем HTTP-запрос
 		req, err := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/gets3?id=%s", mode.RealHost, params.UserID), nil)
 		if err != nil {
@@ -110,14 +110,14 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 			return string(result)
 		}
 
-		logger.Debug("get_s3_files ответ сервера: %s", string(body))
+		//logger.Debug("get_s3_files ответ сервера: %s", string(body))
 
 		// Возвращаем результат
 		result, _ := json.Marshal(map[string]string{"output": string(body)})
 		return string(result)
 
 	case "create_file":
-		logger.Debug("ActionHandler: вызов функции create_file с аргументами: %s", arguments)
+		//logger.Debug("ActionHandler: вызов функции create_file с аргументами: %s", arguments)
 		var params struct {
 			UserID   string `json:"user_id"`
 			Content  string `json:"content"`
@@ -173,7 +173,7 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		}
 
 		responseStr := strings.TrimSpace(string(body))
-		logger.Debug("create_file ответ сервера", responseStr)
+		//logger.Debug("create_file ответ сервера", responseStr)
 
 		// ИСПРАВЛЕНИЕ: Сервер возвращает URL с ошибкой форматирования %!d(string=23)
 		// Заменяем на правильный user_id
@@ -187,7 +187,7 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 					// Заменяем весь паттерн на params.UserID
 					badPattern := responseStr[start : start+end+1]
 					responseStr = strings.ReplaceAll(responseStr, badPattern, params.UserID)
-					logger.Debug("create_file: исправлен битый URL, заменено '%s' на '%s'", badPattern, params.UserID)
+					//logger.Debug("create_file: исправлен битый URL, заменено '%s' на '%s'", badPattern, params.UserID)
 				}
 			}
 		}
@@ -195,7 +195,7 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		return responseStr
 
 	case "save_image_data":
-		logger.Debug("ActionHandler: вызов функции save_image_data")
+		//logger.Debug("ActionHandler: вызов функции save_image_data")
 		var params struct {
 			UserID    string `json:"user_id"`    // ID пользователя для сохранения
 			ImageData string `json:"image_data"` // base64-кодированное изображение
@@ -214,8 +214,8 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 			return string(result)
 		}
 
-		logger.Debug("save_image_data: декодировано %d байт изображения", len(imageData), params.UserID)
-		logger.Debug("save_image_data: передаём file_name='%s' на сервер", params.FileName)
+		//logger.Debug("save_image_data: декодировано %d байт изображения", len(imageData), params.UserID)
+		//logger.Debug("save_image_data: передаём file_name='%s' на сервер", params.FileName)
 
 		// Формируем multipart request для отправки на сервер
 		var requestBody bytes.Buffer
@@ -276,7 +276,7 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		}
 
 		responseStr := strings.TrimSpace(string(saveBody))
-		logger.Debug("save_image_data: успешно сохранено: %s", params.UserID, responseStr)
+		//logger.Debug("save_image_data: успешно сохранено: %s", params.UserID, responseStr)
 
 		return responseStr
 

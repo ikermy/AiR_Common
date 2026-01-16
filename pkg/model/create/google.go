@@ -871,7 +871,7 @@ func (m *GoogleAgentClient) TranscribeAudio(audioData []byte, mimeType string) (
 		return "", fmt.Errorf("получен пустой текст транскрибации")
 	}
 
-	logger.Debug("Успешная транскрибация аудио, длина текста: %d символов", len(transcription))
+	//logger.Debug("Успешная транскрибация аудио, длина текста: %d символов", len(transcription))
 
 	return transcription, nil
 }
@@ -1130,7 +1130,7 @@ func generateGoogleEmbedding(ctx context.Context, apiKey, text string) ([]float3
 		return nil, fmt.Errorf("API вернул пустой эмбеддинг")
 	}
 
-	logger.Debug("generateGoogleEmbedding: создан эмбеддинг размерности %d", len(embedResp.Embedding.Values))
+	//logger.Debug("generateGoogleEmbedding: создан эмбеддинг размерности %d", len(embedResp.Embedding.Values))
 	return embedResp.Embedding.Values, nil
 }
 
@@ -1199,8 +1199,6 @@ func (m *UniversalModel) updateGoogleModelInPlace(userId uint32, existing, updat
 
 			// 2.1. Удаляем все старые эмбеддинги модели
 			if len(existing.FileIds) > 0 {
-				logger.Debug("Удаляем старые эмбеддинги из БД для modelId=%d", modelId)
-
 				if err := m.db.DeleteAllModelEmbeddings(modelId); err != nil {
 					logger.Warn("Не удалось удалить эмбеддинги для modelId=%d: %v", modelId, err)
 				}

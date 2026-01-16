@@ -330,10 +330,10 @@ func (m *UniversalModel) ReadModel(userId uint32, provider *ProviderType) (*Univ
 			return nil, fmt.Errorf("ошибка получения активной модели: %w", err)
 		}
 		if record == nil {
-			logger.Debug("Активная модель не найдена", userId)
+			//logger.Debug("Активная модель не найдена", userId)
 			return nil, nil
 		}
-		logger.Debug("Получение активной модели (Provider: %s)", record.Provider, userId)
+		//logger.Debug("Получение активной модели (Provider: %s)", record.Provider, userId)
 	} else {
 		// Получаем модель конкретного провайдера
 		record, err = m.db.GetModelByProvider(userId, *provider)
@@ -341,7 +341,7 @@ func (m *UniversalModel) ReadModel(userId uint32, provider *ProviderType) (*Univ
 			return nil, fmt.Errorf("ошибка получения модели провайдера %s: %w", *provider, err)
 		}
 		if record == nil {
-			logger.Debug("Модель провайдера %s не найдена", *provider, userId)
+			//logger.Debug("Модель провайдера %s не найдена", *provider, userId)
 			return nil, nil
 		}
 	}
@@ -751,7 +751,7 @@ func (m *UniversalModel) GetUserModelByProvider(userId uint32, provider Provider
 	}
 
 	if record == nil {
-		logger.Debug("Модель провайдера %s не найдена", provider, userId)
+		//logger.Debug("Модель провайдера %s не найдена", provider, userId)
 		return nil, nil
 	}
 

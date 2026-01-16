@@ -168,7 +168,6 @@ func (m *MistralModel) getUserLibraryID(userId uint32) (string, error) {
 	}
 
 	libraryID := vecIds.VectorId[0]
-	logger.Debug("Получен library_id: %s", libraryID, userId)
 
 	return libraryID, nil
 }
@@ -180,7 +179,6 @@ func (m *MistralModel) getOrCreateUserLibrary(userId uint32) (string, error) {
 	libraryID, err := m.getUserLibraryID(userId)
 	if err == nil {
 		// Библиотека найдена
-		logger.Debug("Найдена существующая библиотека %s", libraryID, userId)
 		return libraryID, nil
 	}
 

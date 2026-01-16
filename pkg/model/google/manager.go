@@ -113,11 +113,11 @@ func (m *GoogleModel) SearchSimilarDocuments(userId uint32, query string, limit 
 
 	if count == 0 {
 		// Нет эмбеддингов для поиска - возвращаем пустой массив без вызова API
-		logger.Debug("SearchSimilarDocuments: нет эмбеддингов для modelId=%d, пропуск поиска", modelId)
+		//logger.Debug("SearchSimilarDocuments: нет эмбеддингов для modelId=%d, пропуск поиска", modelId)
 		return []create.VectorDocument{}, nil
 	}
 
-	logger.Debug("SearchSimilarDocuments: найдено %d эмбеддингов для modelId=%d, выполняем поиск", count, modelId)
+	//logger.Debug("SearchSimilarDocuments: найдено %d эмбеддингов для modelId=%d, выполняем поиск", count, modelId)
 
 	// Генерируем эмбеддинг для поискового запроса
 	queryEmbedding, err := m.GenerateEmbedding(query)
@@ -171,13 +171,12 @@ func (m *GoogleModel) getActiveModelId(userId uint32) (uint64, error) {
 
 	if model == nil {
 		logger.Error("getActiveModelId: Google модель не найдена", userId)
-		logger.Debug("getActiveModelId: всего моделей", len(allModels))
-		for i, m := range allModels {
-			logger.Debug("  Модель %d: ID=%d, Provider=%d, IsActive=%v", i+1, m.ModelId, m.Provider, m.IsActive)
-		}
+		//for i, m := range allModels {
+		//	logger.Debug("  Модель %d: ID=%d, Provider=%d, IsActive=%v", i+1, m.ModelId, m.Provider, m.IsActive)
+		//}
 		return 0, fmt.Errorf("Google модель не найдена", userId)
 	}
 
-	logger.Debug("getActiveModelId: найдена Google модель с ModelId=%d", model.ModelId)
+	//logger.Debug("getActiveModelId: найдена Google модель с ModelId=%d", model.ModelId)
 	return model.ModelId, nil
 }

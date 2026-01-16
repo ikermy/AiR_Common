@@ -417,15 +417,14 @@ func (m *MistralAgentClient) StartConversation(agentID string, inputs interface{
 		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, responseBody.String())
 	}
 
-	// Логируем сырой ответ для отладки
-	logger.Debug("StartConversation: сырой ответ от API: %s", responseBody.String())
+	// RAW ответ для отладки
+	//logger.Debug("StartConversation: сырой ответ от API: %s", responseBody.String())
 
 	var result ConversationResponse
 	if err := json.Unmarshal(responseBody.Bytes(), &result); err != nil {
 		return ConversationResponse{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
-	logger.Debug("StartConversation: создан conversation_id=%s", result.ConversationID)
 	return result, nil
 }
 
@@ -465,8 +464,8 @@ func (m *MistralAgentClient) ContinueConversation(conversationID string, inputs 
 		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, responseBody.String())
 	}
 
-	// Логируем сырой ответ для отладки
-	logger.Debug("ContinueConversation: сырой ответ от API: %s", responseBody.String())
+	// RAW ответ для отладки
+	//logger.Debug("ContinueConversation: сырой ответ от API: %s", responseBody.String())
 
 	var result ConversationResponse
 	if err := json.Unmarshal(responseBody.Bytes(), &result); err != nil {
@@ -523,14 +522,14 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, responseBody.String())
 	}
 
-	logger.Debug("SendFunctionResult: сырой ответ от API: %s", responseBody.String())
+	//logger.Debug("SendFunctionResult: сырой ответ от API: %s", responseBody.String())
 
 	var result ConversationResponse
 	if err := json.Unmarshal(responseBody.Bytes(), &result); err != nil {
 		return ConversationResponse{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
-	logger.Debug("SendFunctionResult: результат функции для tool_call_id=%s отправлен, conversation_id=%s", toolCallID, result.ConversationID)
+	//logger.Debug("SendFunctionResult: результат функции для tool_call_id=%s отправлен, conversation_id=%s", toolCallID, result.ConversationID)
 	return result, nil
 }
 
@@ -662,7 +661,7 @@ func ParseConversationResponse(convResp ConversationResponse) Response {
 	if lastOutput.Type == "function.call" {
 		// Это вызов функции - name и arguments уже распарсены в структуре
 		if lastOutput.Name != "" {
-			logger.Debug("ParseConversationResponse: обнаружен вызов функции %s с аргументами: %s, tool_call_id: %s", lastOutput.Name, lastOutput.Arguments, lastOutput.ToolCallID)
+			//logger.Debug("ParseConversationResponse: обнаружен вызов функции %s с аргументами: %s, tool_call_id: %s", lastOutput.Name, lastOutput.Arguments, lastOutput.ToolCallID)
 			return Response{
 				Message:    "",
 				FuncName:   lastOutput.Name,
@@ -704,7 +703,7 @@ func ParseConversationResponse(convResp ConversationResponse) Response {
 							FileName: content.FileName,
 							FileType: content.FileType,
 						})
-						logger.Debug("ParseConversationResponse: обнаружено изображение file_id=%s, tool=%s", content.FileID, content.Tool)
+						//logger.Debug("ParseConversationResponse: обнаружено изображение file_id=%s, tool=%s", content.FileID, content.Tool)
 					}
 				}
 			}

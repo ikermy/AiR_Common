@@ -82,7 +82,7 @@ func (m *MistralModel) Request(userId uint32, modelId string, dialogId uint64, t
 			},
 		}
 
-		logger.Debug("Создание нового conversation для агента %s", modelId, userId)
+		//logger.Debug("Создание нового conversation для агента %s", modelId, userId)
 		convResp, err = m.client.StartConversation(modelId, inputs)
 		if err != nil {
 			return emptyResponse, fmt.Errorf("ошибка создания conversation: %w", err)
@@ -90,7 +90,7 @@ func (m *MistralModel) Request(userId uint32, modelId string, dialogId uint64, t
 
 		// Сохраняем conversation_id в RespModel
 		respModel.ConversationId = convResp.ConversationID
-		logger.Debug("Conversation создан, ID=%s", respModel.ConversationId, userId)
+		//logger.Debug("Conversation создан, ID=%s", respModel.ConversationId, userId)
 
 		// Сохраняем conversation_id в БД сразу
 		m.saveConversationId(respModel.Chan.DialogId, respModel.ConversationId)
@@ -186,7 +186,7 @@ func (m *MistralModel) Request(userId uint32, modelId string, dialogId uint64, t
 	// Обновляем conversation_id если API вернул новый
 	if convResp.ConversationID != "" && convResp.ConversationID != respModel.ConversationId {
 		respModel.ConversationId = convResp.ConversationID
-		logger.Debug("Conversation ID обновлён: %s", respModel.ConversationId, userId)
+		//logger.Debug("Conversation ID обновлён: %s", respModel.ConversationId, userId)
 		// Сохраняем обновлённый conversation_id в БД
 		m.saveConversationId(respModel.Chan.DialogId, respModel.ConversationId)
 	}
@@ -199,7 +199,7 @@ func (m *MistralModel) Request(userId uint32, modelId string, dialogId uint64, t
 
 	// Если была вызвана функция, выполняем её и получаем финальный ответ от агента
 	if response.HasFunc && m.actionHandler != nil && response.FuncName != "" {
-		logger.Debug("Обнаружен вызов функции: %s", response.FuncName, userId)
+		//logger.Debug("Обнаружен вызов функции: %s", response.FuncName, userId)
 
 		funcResult := m.actionHandler.RunAction(m.ctx, response.FuncName, response.FuncArgs)
 
@@ -214,7 +214,7 @@ func (m *MistralModel) Request(userId uint32, modelId string, dialogId uint64, t
 
 		// Отправляем результат функции обратно в conversation
 		// Используем чистый результат без дополнительного форматирования
-		logger.Debug("Отправляем результат функции %s агенту", response.FuncName, userId)
+		//logger.Debug("Отправляем результат функции %s агенту", response.FuncName, userId)
 
 		var finalResponse Response
 		if respModel.ConversationId != "" {
@@ -237,7 +237,7 @@ func (m *MistralModel) Request(userId uint32, modelId string, dialogId uint64, t
 			// Обновляем conversation_id (может измениться)
 			if convResp.ConversationID != respModel.ConversationId {
 				respModel.ConversationId = convResp.ConversationID
-				logger.Debug("Conversation ID обновлён после функции: %s", respModel.ConversationId, userId)
+				//logger.Debug("Conversation ID обновлён после функции: %s", respModel.ConversationId, userId)
 				// Сохраняем обновлённый conversation_id в БД
 				m.saveConversationId(respModel.Chan.DialogId, respModel.ConversationId)
 			}
@@ -263,7 +263,7 @@ func (m *MistralModel) Request(userId uint32, modelId string, dialogId uint64, t
 				finalResponse = Response{}
 			} else {
 				respModel.ConversationId = newConvResp.ConversationID
-				logger.Debug("Создан новый conversation после функции, ID=%s", respModel.ConversationId, userId)
+				//logger.Debug("Создан новый conversation после функции, ID=%s", respModel.ConversationId, userId)
 				m.saveConversationId(respModel.Chan.DialogId, respModel.ConversationId)
 
 				finalResponse = ParseConversationResponse(newConvResp)
@@ -272,16 +272,10 @@ func (m *MistralModel) Request(userId uint32, modelId string, dialogId uint64, t
 
 		// Обновляем response и assistResponse ТОЛЬКО если получен финальный ответ
 		if finalResponse.Message != "" || finalResponse.HasFunc {
-			logger.Debug("Сырой ответ агента: Message='%s', HasFunc=%v, FuncName='%s'", finalResponse.Message, finalResponse.HasFunc, finalResponse.FuncName, userId)
+			//logger.Debug("RAW ответ агента: Message='%s', HasFunc=%v, FuncName='%s'", finalResponse.Message, finalResponse.HasFunc, finalResponse.FuncName, userId)
 
 			response = finalResponse
 			assistResponse = m.processResponse(finalResponse, respModel.RealUserId)
-
-			if !response.HasFunc {
-				logger.Debug("✅ Финальный ответ получен", userId)
-			}
-		} else {
-			logger.Debug("Финальный ответ не получен (ошибка), используем текущий assistResponse", userId)
 		}
 	} // Конец обработки функций
 
@@ -319,7 +313,7 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 			messageText = messageText[:idx]
 			messageText = strings.TrimSpace(messageText)
 		}
-		logger.Debug("processResponse: удалён markdown блок, извлечён чистый JSON")
+		//logger.Debug("processResponse: удалён markdown блок, извлечён чистый JSON")
 	}
 
 	// Попытка распарсить ответ как JSON для получения красивых имён файлов
@@ -339,9 +333,9 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 					userFileNames = append(userFileNames, file.FileName)
 				}
 			}
-			if len(userFileNames) > 0 {
-				logger.Debug("processResponse: извлечено %d имён файлов из JSON: %v", len(userFileNames), userFileNames)
-			}
+			//if len(userFileNames) > 0 {
+			//	logger.Debug("processResponse: извлечено %d имён файлов из JSON: %v", len(userFileNames), userFileNames)
+			//}
 		}
 	}
 
@@ -349,7 +343,7 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 	var savedFiles []model.File // Сохранённые файлы для замены URL в send_files
 
 	if len(response.GeneratedImages) > 0 {
-		logger.Debug("processResponse: обнаружено %d сгенерированных изображений", len(response.GeneratedImages))
+		//logger.Debug("processResponse: обнаружено %d сгенерированных изображений", len(response.GeneratedImages))
 
 		// Проверяем наличие realUserId
 		if realUserId == 0 {
@@ -370,7 +364,7 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 				continue
 			}
 
-			logger.Debug("processResponse: скачано изображение %s (%d байт)", img.FileName, len(imageData))
+			//logger.Debug("processResponse: скачано изображение %s (%d байт)", img.FileName, len(imageData))
 
 			// Формируем УНИКАЛЬНОЕ имя файла с правильным расширением
 			var fileName string
@@ -384,7 +378,7 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 			// ПРИОРИТЕТ 1: Используем красивое имя из JSON send_files если доступно
 			if idx < len(userFileNames) && userFileNames[idx] != "" {
 				fileName = userFileNames[idx]
-				logger.Debug("processResponse: используем имя из JSON send_files: %s", fileName)
+				//logger.Debug("processResponse: используем имя из JSON send_files: %s", fileName)
 			} else if img.FileName != "" && !strings.HasPrefix(img.FileName, "image_generated") {
 				// ПРИОРИТЕТ 2: Оригинальное имя от Mistral (если не generic)
 				baseName := img.FileName
@@ -424,9 +418,7 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 					Caption:  "", // Caption будет взят из JSON send_files при замене URL
 				})
 
-				logger.Debug("processResponse: изображение сохранено, URL=%s", saveResult.URL)
-			} else {
-				logger.Error("processResponse: ошибка сохранения изображения: %s", saveResult.Error)
+				//logger.Debug("processResponse: изображение сохранено, URL=%s", saveResult.URL)
 			}
 		}
 
@@ -444,7 +436,7 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 	// Попытка распарсить ответ как JSON (агенты Mistral могут возвращать структурированные ответы)
 	// messageText уже обработан (убран markdown) в начале функции
 	if messageText != "" && (strings.HasPrefix(messageText, "{") || strings.HasPrefix(messageText, "[")) {
-		logger.Debug("processResponse: обнаружен JSON в ответе, пытаемся распарсить")
+		//logger.Debug("processResponse: обнаружен JSON в ответе, пытаемся распарсить")
 
 		// Удаляем реальные переносы строк и табуляции (НЕ экранированные)
 		messageText = strings.ReplaceAll(messageText, "\n", "")
@@ -466,8 +458,8 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 
 		if err := json.Unmarshal([]byte(messageText), &structuredResponse); err == nil {
 			// Успешно распарсили JSON - извлекаем данные
-			logger.Debug("processResponse: JSON успешно распарсен, message='%s', target=%v, operator=%v, files=%d",
-				structuredResponse.Message, structuredResponse.Target, structuredResponse.Operator, len(structuredResponse.Action.SendFiles))
+			//logger.Debug("processResponse: JSON успешно распарсен, message='%s', target=%v, operator=%v, files=%d",
+			//	structuredResponse.Message, structuredResponse.Target, structuredResponse.Operator, len(structuredResponse.Action.SendFiles))
 
 			// ВАЖНО: Используем ТОЛЬКО извлечённое message, а не весь JSON!
 			assistResponse := model.AssistResponse{
@@ -510,30 +502,24 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 					// Ищем сохранённый файл по имени или базовому имени
 					if savedFile, found := savedFilesByName[fileFromJSON.FileName]; found {
 						// Файл найден по полному имени
-						logger.Debug("processResponse: заменяем URL для файла %s: %s -> %s",
-							fileFromJSON.FileName, fileFromJSON.URL, savedFile.URL)
 						fileFromJSON.URL = savedFile.URL
 						// Используем имя из JSON, но URL реальный
 					} else if savedFile, found := savedFilesByName[searchName]; found {
 						// Файл найден по базовому имени
-						logger.Debug("processResponse: заменяем URL для файла %s (найдено по базовому имени %s): %s -> %s",
-							fileFromJSON.FileName, searchName, fileFromJSON.URL, savedFile.URL)
 						fileFromJSON.URL = savedFile.URL
 					} else if fileFromJSON.Type == model.Photo && len(savedFiles) > 0 {
 						// Это photo и есть сохранённые файлы - используем первый сохранённый
-						logger.Debug("processResponse: заменяем URL для photo %s: %s -> %s",
-							fileFromJSON.FileName, fileFromJSON.URL, savedFiles[0].URL)
 						fileFromJSON.URL = savedFiles[0].URL
 						// Оставляем file_name из JSON для красивого отображения
 					}
 				}
 
 				assistResponse.Action.SendFiles = structuredResponse.Action.SendFiles
-				logger.Debug("processResponse: добавлено %d файлов в Action", len(structuredResponse.Action.SendFiles))
+				//logger.Debug("processResponse: добавлено %d файлов в Action", len(structuredResponse.Action.SendFiles))
 			} else if len(savedFiles) > 0 {
 				// В JSON нет send_files, но есть сохранённые изображения - используем их
 				assistResponse.Action.SendFiles = savedFiles
-				logger.Debug("processResponse: использованы сохранённые файлы (%d шт)", len(savedFiles))
+				//logger.Debug("processResponse: использованы сохранённые файлы (%d шт)", len(savedFiles))
 			}
 
 			return assistResponse
@@ -543,7 +529,6 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 		// Если парсинг не удался, продолжаем обработку как обычный текст
 	}
 
-	logger.Debug("processResponse: обрабатываем как обычный текст")
 	// Обычный текстовый ответ (не JSON)
 	assistResponse := model.AssistResponse{
 		Message:  response.Message,

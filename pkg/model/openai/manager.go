@@ -74,8 +74,6 @@ func (m *OpenAIModel) DeleteFileFromVectorStorage(fileID string) error {
 			if err != nil {
 				// Логируем ошибку, но не прерываем процесс, так как основной файл уже мог быть удален
 				logger.Error("Предупреждение: не удалось удалить Vector Store %s: %v", vs.ID, err)
-			} else {
-				logger.Debug("Vector Store %s, связанный с файлом %s, успешно удален: %v", vs.ID, fileID, err)
 			}
 			// Прерываем цикл, так как нашли и обработали нужное хранилище
 			break

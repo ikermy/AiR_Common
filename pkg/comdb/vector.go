@@ -48,7 +48,6 @@ func (d *DB) SaveEmbedding(userId uint32, modelId uint64, docID, docName, conten
 		return fmt.Errorf("ошибка сохранения эмбеддинга: %w", err)
 	}
 
-	logger.Debug("SaveEmbedding: сохранён эмбеддинг для modelId=%d, docID=%s, размерность=%d", modelId, docID, len(embedding))
 	return nil
 }
 
@@ -94,7 +93,6 @@ func (d *DB) DeleteEmbedding(modelId uint64, docID string) error {
 		return fmt.Errorf("эмбеддинг не найден для удаления: docID=%s", docID)
 	}
 
-	logger.Debug("DeleteEmbedding: удалён эмбеддинг modelId=%d, docID=%s", modelId, docID)
 	return nil
 }
 
@@ -104,13 +102,11 @@ func (d *DB) DeleteAllModelEmbeddings(modelId uint64) error {
 	defer cancel()
 
 	query := `DELETE FROM vector_embeddings WHERE model_id = ?`
-	result, err := d.Conn().ExecContext(ctx, query, modelId)
+	_, err := d.Conn().ExecContext(ctx, query, modelId)
 	if err != nil {
 		return fmt.Errorf("ошибка удаления эмбеддингов модели: %w", err)
 	}
 
-	rowsAffected, _ := result.RowsAffected()
-	logger.Debug("DeleteAllModelEmbeddings: удалено %d эмбеддингов для modelId=%d", rowsAffected, modelId)
 	return nil
 }
 
@@ -245,7 +241,6 @@ func (d *DB) SearchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, l
 		documents = append(documents, doc)
 	}
 
-	logger.Debug("SearchSimilarEmbeddings: найдено %d похожих документов для modelId=%d (используя VEC_Distance_Cosine)", len(documents), modelId)
 	return documents, nil
 }
 

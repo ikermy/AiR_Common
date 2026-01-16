@@ -208,13 +208,11 @@ func (m *OpenAIModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId u
 		logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, assist.UserId)
 	} else if compressedData != nil {
 		// Используем функцию из пакета db для распаковки и извлечения всех параметров
-		_, _, _, image, webSearch, video, haunter, err := comdb.DecompressAndExtractMetadata(compressedData)
+		_, _, _, _, _, _, haunter, err := comdb.DecompressAndExtractMetadata(compressedData)
 		if err != nil {
 			logger.Warn("Ошибка распаковки параметров модели: %v", err, assist.UserId)
 		} else {
 			user.Haunter = haunter
-			logger.Debug("Загружены параметры модели: Image=%v, WebSearch=%v, Video=%v, Haunter=%v",
-				image, webSearch, video, haunter, assist.UserId)
 		}
 	}
 
@@ -304,7 +302,6 @@ func (m *OpenAIModel) CleanDialogData(dialogId uint64) {
 		if respModel.Chan != nil && respModel.Chan.DialogId == dialogId {
 			// Очищаем thread этого диалога
 			respModel.Thread = nil
-			logger.Debug("Очищен thread диалога %d из памяти", dialogId)
 			return false
 		}
 		return true
@@ -333,8 +330,6 @@ func (m *OpenAIModel) SaveAllContextDuringExit() {
 			err = m.db.SaveContext(dialogId, create.ProviderOpenAI, threadsJSON)
 			if err != nil {
 				logger.Error("Ошибка сохранения thread для dialogId %d: %v", dialogId, err)
-			} else {
-				logger.Debug("Сохранен thread для dialogId %d", dialogId)
 			}
 		}
 

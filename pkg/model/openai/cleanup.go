@@ -41,8 +41,7 @@ func (m *OpenAIModel) CleanUp() {
 
 				// Логируем состояние для диагностики
 				timeUntilExpiry := ttl.Sub(now)
-				logger.Debug("RespId %d: TTL через %v, thread: %v, истёк: %v",
-					respId, timeUntilExpiry.Round(time.Second), hasThread, ttlExpired)
+				respId, timeUntilExpiry.Round(time.Second), hasThread, ttlExpired)
 
 				if ttlExpired {
 					// Отменяем активные runs перед удалением

@@ -185,8 +185,6 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 		return fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
 
-	logger.Debug("Получено %d моделей пользователя", len(userModels), userId)
-
 	// Ищем активную модель Google
 	var activeModel *create.UserModelRecord
 	for i := range userModels {
@@ -221,8 +219,6 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 			agentConfig.WebSearch = webSearch
 			agentConfig.Video = video
 			agentConfig.Haunter = haunter
-			logger.Debug("Загружены параметры модели: Image=%v, WebSearch=%v, Video=%v, Haunter=%v",
-				image, webSearch, video, haunter, userId)
 		}
 	}
 
@@ -232,7 +228,6 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 		agentConfig.Tools = append(agentConfig.Tools, map[string]interface{}{
 			"google_search": map[string]interface{}{},
 		})
-		logger.Debug("Добавлен инструмент google_search в Tools", userId)
 	}
 
 	// Пытаемся распарсить AllIds если он не пуст (для обратной совместимости)
@@ -252,7 +247,6 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 			if len(tempConfig.Tools) > 0 {
 				agentConfig.Tools = append(agentConfig.Tools, tempConfig.Tools...)
 			}
-			logger.Debug("Дополнена конфигурация из AllIds", userId)
 		}
 	}
 
@@ -274,16 +268,14 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 		for id := range vectorIdsMap {
 			agentConfig.VectorIds = append(agentConfig.VectorIds, id)
 		}
-	} else {
-		logger.Debug("Эмбеддинги не найдены для modelId=%d", activeModel.ModelId, userId)
 	}
 
 	respModel.AgentConfig = &agentConfig
 	respModel.Assist.AssistId = activeModel.AssistId
 
-	logger.Debug("Загружена конфигурация Google агента: model=%s, tools=%d, hasVector=%v, vectorIds=%d, Image=%v, WebSearch=%v, Video=%v, Haunter=%v",
-		agentConfig.ModelName, len(agentConfig.Tools), agentConfig.HasVector, len(agentConfig.VectorIds),
-		agentConfig.Image, agentConfig.WebSearch, agentConfig.Video, agentConfig.Haunter)
+	//logger.Debug("Загружена конфигурация Google агента: model=%s, tools=%d, hasVector=%v, vectorIds=%d, Image=%v, WebSearch=%v, Video=%v, Haunter=%v",
+	//	agentConfig.ModelName, len(agentConfig.Tools), agentConfig.HasVector, len(agentConfig.VectorIds),
+	//	agentConfig.Image, agentConfig.WebSearch, agentConfig.Video, agentConfig.Haunter)
 
 	return nil
 }
@@ -466,7 +458,6 @@ func (m *GoogleModel) GetRespIdByDialogId(dialogId uint64) (uint64, error) {
 func (m *GoogleModel) SaveAllContextDuringExit() {
 	// Google не использует SaveContext (история в БД через ReadDialog)
 	// Поэтому этот метод пустой
-	logger.Debug("GoogleModel: SaveAllContextDuringExit - нет контекстов для сохранения, так и должно быть")
 }
 
 // CleanDialogData очищает данные диалога
@@ -474,7 +465,6 @@ func (m *GoogleModel) CleanDialogData(dialogId uint64) {
 	// Получаем respId по dialogId
 	respId, err := m.GetRespIdByDialogId(dialogId)
 	if err != nil {
-		logger.Debug("Диалог %d не найден: %v", dialogId, err)
 		return
 	}
 
@@ -573,11 +563,9 @@ func (m *GoogleModel) addMessageToCache(dialogId uint64, content GoogleContent) 
 	if len(cache.Contents) > maxMessages {
 		// Удаляем старые сообщения, оставляя только последние maxMessages
 		cache.Contents = cache.Contents[len(cache.Contents)-maxMessages:]
-		logger.Debug("Достигнут лимит сообщений в кэше диалога %d (%d), удалены старые сообщения",
-			dialogId, maxMessages)
+		//logger.Debug("Достигнут лимит сообщений в кэше диалога %d (%d), удалены старые сообщения",
+		//	dialogId, maxMessages)
 	}
-
-	logger.Debug("Добавлено сообщение в кэш диалога %d, всего сообщений: %d", dialogId, len(cache.Contents))
 }
 
 // getDialogHistoryFromCache получает историю диалога из кэша
@@ -589,11 +577,11 @@ func (m *GoogleModel) getDialogHistoryFromCache(dialogId uint64) ([]GoogleConten
 		contents := make([]GoogleContent, len(cache.Contents))
 		copy(contents, cache.Contents)
 
-		logger.Debug("Получена история из кэша диалога %d, сообщений: %d", dialogId, len(contents))
+		//logger.Debug("Получена история из кэша диалога %d, сообщений: %d", dialogId, len(contents))
 		return contents, true
 	}
 
-	logger.Debug("Кэш не найден для диалога %d", dialogId)
+	//logger.Debug("Кэш не найден для диалога %d", dialogId)
 	return nil, false
 }
 
@@ -614,7 +602,7 @@ func (m *GoogleModel) periodicFlush() {
 
 				if now.After(cache.ExpireAt) {
 					m.dialogCache.Delete(dialogId)
-					logger.Debug("Удален кэш диалога %d из-за истечения ExpireAt", dialogId)
+					//logger.Debug("Удален кэш диалога %d из-за истечения ExpireAt", dialogId)
 					expiredCount++
 				}
 
@@ -622,11 +610,11 @@ func (m *GoogleModel) periodicFlush() {
 			})
 
 			if expiredCount > 0 {
-				logger.Debug("periodicFlush: удалено %d кэшей диалогов", expiredCount)
+				//logger.Debug("periodicFlush: удалено %d кэшей диалогов", expiredCount)
 			}
 
 		case <-m.ctx.Done():
-			logger.Debug("periodicFlush остановлен")
+			//logger.Debug("periodicFlush остановлен")
 			return
 		}
 	}
@@ -635,5 +623,5 @@ func (m *GoogleModel) periodicFlush() {
 // clearDialogCache очищает кэш конкретного диалога
 func (m *GoogleModel) clearDialogCache(dialogId uint64) {
 	m.dialogCache.Delete(dialogId)
-	logger.Debug("Очищен кэш диалога %d", dialogId)
+	//logger.Debug("Очищен кэш диалога %d", dialogId)
 }

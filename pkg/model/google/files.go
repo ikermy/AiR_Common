@@ -29,7 +29,7 @@ func (m *GoogleModel) DeleteTempFile(fileID string) error {
 		logger.Warn("DeleteTempFile: ошибка удаления файла %s: %v", fileID, err)
 		return err
 	}
-	logger.Debug("DeleteTempFile: файл %s успешно удалён", fileID)
+	//logger.Debug("DeleteTempFile: файл %s успешно удалён", fileID)
 	return nil
 }
 
@@ -82,7 +82,7 @@ func (m *GoogleModel) downloadFileFromGoogle(fileURI string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения содержимого: %v", err)
 	}
-	logger.Debug("Файл скачан из Google File API, размер: %d bytes", len(content))
+	//logger.Debug("Файл скачан из Google File API, размер: %d bytes", len(content))
 	return content, nil
 }
 

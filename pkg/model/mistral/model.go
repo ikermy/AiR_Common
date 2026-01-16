@@ -183,13 +183,13 @@ func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId 
 	contextData, err := m.db.ReadContext(dialogId, create.ProviderMistral)
 	if err != nil {
 		if strings.Contains(err.Error(), "получены пустые данные") {
-			logger.Debug("Инициализация нового диалога %d", dialogId, assist.UserId)
+			//logger.Debug("Инициализация нового диалога %d", dialogId, assist.UserId)
 			// ConversationId будет создан при первом запросе
 		} else {
 			logger.Error("Ошибка чтения контекста для dialogId %d: %v", dialogId, err)
 		}
 	} else if contextData != nil {
-		logger.Debug("Контекст загружен для dialogId %d: %s", dialogId, string(contextData), assist.UserId)
+		//logger.Debug("Контекст загружен для dialogId %d: %s", dialogId, string(contextData), assist.UserId)
 
 		var contextObj struct {
 			ConversationID string `json:"conversation_id"`
@@ -212,7 +212,7 @@ func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId 
 
 		if contextObj.ConversationID != "" {
 			user.ConversationId = contextObj.ConversationID
-			logger.Debug("Загружен conversation_id: %s", contextObj.ConversationID, assist.UserId)
+			//logger.Debug("Загружен conversation_id: %s", contextObj.ConversationID, assist.UserId)
 		}
 	}
 
@@ -230,13 +230,11 @@ func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId 
 		logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, assist.UserId)
 	} else if compressedData != nil {
 		// Используем функцию из пакета db для распаковки и извлечения всех параметров
-		_, _, _, image, webSearch, video, haunter, err := comdb.DecompressAndExtractMetadata(compressedData)
+		_, _, _, _, _, _, haunter, err := comdb.DecompressAndExtractMetadata(compressedData)
 		if err != nil {
 			logger.Warn("Ошибка распаковки параметров модели: %v", err, assist.UserId)
 		} else {
 			user.Haunter = haunter
-			logger.Debug("Загружены параметры модели: Image=%v, WebSearch=%v, Video=%v, Haunter=%v",
-				image, webSearch, video, haunter, assist.UserId)
 		}
 	}
 
@@ -351,8 +349,6 @@ func (m *MistralModel) SaveAllContextDuringExit() {
 					err = m.db.SaveContext(dialogId, create.ProviderMistral, contextJSON)
 					if err != nil {
 						logger.Error("Ошибка сохранения conversation_id для dialogId %d: %v", dialogId, err)
-					} else {
-						logger.Debug("Сохранен conversation_id для dialogId %d: %s", dialogId, respModel.ConversationId)
 					}
 				}
 			}
@@ -366,8 +362,6 @@ func (m *MistralModel) SaveAllContextDuringExit() {
 				} else {
 					if err := m.db.SaveDialog(dialogId, jsonData); err != nil {
 						logger.Error("Не удалось сохранить контекст диалога %d: %v", dialogId, err)
-					} else {
-						logger.Debug("Сохранен контекст диалога %d (%d сообщений)", dialogId, len(respModel.Context.Messages))
 					}
 				}
 			}
@@ -388,7 +382,6 @@ func (m *MistralModel) CleanDialogData(dialogId uint64) {
 		if respModel.Chan != nil && respModel.Chan.DialogId == dialogId {
 			// Очищаем контекст этого диалога
 			respModel.Context = nil
-			logger.Debug("Очищен контекст диалога %d из памяти", dialogId)
 			return false // Прекращаем поиск
 		}
 		return true // Продолжаем поиск
@@ -412,8 +405,6 @@ func (m *MistralModel) saveConversationId(dialogId uint64, conversationId string
 		err = m.db.SaveContext(dialogId, create.ProviderMistral, contextJSON)
 		if err != nil {
 			logger.Error("Ошибка удаления conversation_id для dialogId %d: %v", dialogId, err)
-		} else {
-			logger.Debug("Сброшен conversation_id для dialogId %d", dialogId)
 		}
 		return
 	}
@@ -431,8 +422,6 @@ func (m *MistralModel) saveConversationId(dialogId uint64, conversationId string
 	err = m.db.SaveContext(dialogId, create.ProviderMistral, contextJSON)
 	if err != nil {
 		logger.Error("Ошибка сохранения conversation_id для dialogId %d: %v", dialogId, err)
-	} else {
-		logger.Debug("Сохранен conversation_id для dialogId %d: %s", dialogId, conversationId)
 	}
 }
 
@@ -522,7 +511,7 @@ func (m *MistralModel) transcribeAudioFile(audioData []byte, fileName string) (s
 		return "", fmt.Errorf("Mistral вернул пустой текст транскрипции")
 	}
 
-	logger.Debug("TranscribeAudio: успешно транскрибировано аудио, длина текста: %d символов", len(result.Text))
+	//logger.Debug("TranscribeAudio: успешно транскрибировано аудио, длина текста: %d символов", len(result.Text))
 	return result.Text, nil
 }
 
@@ -543,7 +532,7 @@ func (m *MistralModel) DeleteTempFile(fileID string) error {
 		return err
 	}
 
-	logger.Debug("DeleteTempFile: файл %s успешно удалён", fileID)
+	//logger.Debug("DeleteTempFile: файл %s успешно удалён", fileID)
 	return nil
 }
 

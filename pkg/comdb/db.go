@@ -380,7 +380,6 @@ func (d *DB) DeleteDialog(dialogId uint64) error {
 		return fmt.Errorf("диалога не найден для удаления: %d", dialogId)
 	}
 
-	logger.Debug("DeleteDialog: удалён диалог=%d", dialogId)
 	return nil
 }
 
