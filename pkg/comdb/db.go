@@ -39,6 +39,9 @@ type Exterior interface {
 	UpdateUserGPT(userId uint32, modelId uint64, assistId string, allIds []byte) error
 	GetUserVectorStorage(userId uint32) (string, error)
 	SetChannelEnabled(userId uint32, chName string, status bool) error
+	SaveUserModel(userId uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint8, ids json.RawMessage, operator bool) error
+	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
+	ReadUserModel(userId uint32) ([]byte, *create.VecIds, error)
 
 	// User Model Management - методы для управления моделями пользователя (для create.DB)
 	ReadUserModelByProvider(userId uint32, provider create.ProviderType) ([]byte, *create.VecIds, error)
