@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.40.3"
-git tag -a v1.40.3 -m "model router"
+git commit -m "v1.40.4"
+git tag -a v1.40.4 -m "model router"
 git push origin master
-git push origin v1.40.3
+git push origin v1.40.4

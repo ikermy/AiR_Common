@@ -1561,3 +1561,332 @@ func (d *DB) RemoveModelFromUser(userId uint32, modelId uint64) error {
 
 	return nil
 }
+
+func (d *DB) SaveUserModel(
+	userId uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint8, ids json.RawMessage, operator bool) error {
+	// Проверяю входные значения
+	if userId == 0 || name == "" || assistantId == "" {
+		return fmt.Errorf("получены некорректные значения: userId, name или assistantId пусты")
+	}
+	// Валидация провайдера
+	if provider != create.ProviderOpenAI && provider != create.ProviderMistral && provider != create.ProviderGoogle {
+		return fmt.Errorf("некорректный provider: %d (допустимы 1=OpenAI, 2=Mistral, 3=Google)", provider)
+	}
+
+	// Дочерний контекст с тайм-аутом на операцию
+	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	// Начинаем транзакцию для атомарности операций
+	tx, err := d.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("ошибка начала транзакции: %w", err)
+	}
+	defer tx.Rollback()
+
+	// ===================================================================
+	// Шаг 1: Сохранение/обновление модели в user_gpt
+	// ===================================================================
+
+	// Проверяем, существует ли модель для данного пользователя и провайдера
+	var existingModelId sql.NullInt64
+	err = tx.QueryRowContext(ctx, `
+		SELECT ug.Id 
+		FROM user_gpt ug
+		INNER JOIN user_models um ON ug.Id = um.ModelId
+		WHERE um.UserId = ? AND um.Provider = ?
+		LIMIT 1
+	`, userId, provider).Scan(&existingModelId)
+
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при проверке существующей модели: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена: %w", err)
+		default:
+			return fmt.Errorf("ошибка проверки существующей модели: %w", err)
+		}
+	}
+
+	var modelId int64
+
+	if !existingModelId.Valid {
+		// ===================================================================
+		// Модели нет - создаём новую в user_gpt
+		// ===================================================================
+		result, err := tx.ExecContext(ctx, `
+			INSERT INTO user_gpt (Name, Model, Provider, AssistantId, Data, Ids)
+			VALUES (?, ?, ?, ?, ?, ?)
+		`, name, modType, provider, assistantId, data, ids)
+
+		if err != nil {
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				return fmt.Errorf("тайм-аут (%d с) при создании модели: %w", sqlTimeToCancel, err)
+			case errors.Is(err, context.Canceled):
+				return fmt.Errorf("операция отменена при создании модели: %w", err)
+			default:
+				return fmt.Errorf("ошибка создания модели: %w", err)
+			}
+		}
+
+		// Получаем ID новой записи
+		modelId, err = result.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("ошибка получения ID новой модели: %w", err)
+		}
+
+		// ===================================================================
+		// Шаг 2: Создание связи в user_models
+		// ===================================================================
+
+		// Проверяем, есть ли у пользователя другие модели
+		var modelCount int
+		err = tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) 
+			FROM user_models 
+			WHERE UserId = ?
+		`, userId).Scan(&modelCount)
+
+		if err != nil {
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				return fmt.Errorf("тайм-аут (%d с) при подсчёте моделей: %w", sqlTimeToCancel, err)
+			case errors.Is(err, context.Canceled):
+				return fmt.Errorf("операция отменена при подсчёте моделей: %w", err)
+			default:
+				return fmt.Errorf("ошибка подсчёта моделей: %w", err)
+			}
+		}
+
+		// Если это первая модель - делаем её активной автоматически
+		isActive := 0
+		if modelCount == 0 {
+			isActive = 1
+		}
+
+		// Создаём связь в user_models
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO user_models (UserId, ModelId, Provider, IsActive)
+			VALUES (?, ?, ?, ?)
+		`, userId, modelId, provider, isActive)
+
+		if err != nil {
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				return fmt.Errorf("тайм-аут (%d с) при создании связи модели: %w", sqlTimeToCancel, err)
+			case errors.Is(err, context.Canceled):
+				return fmt.Errorf("операция отменена при создании связи: %w", err)
+			default:
+				return fmt.Errorf("ошибка создания связи модели: %w", err)
+			}
+		}
+
+		logger.Info("Создана новая модель (provider: %d, modelId: %d, isActive: %v)", provider, modelId, isActive == 1, userId)
+
+	} else {
+		// ===================================================================
+		// Модель существует - обновляем её в user_gpt
+		// ===================================================================
+		modelId = existingModelId.Int64
+
+		_, err = tx.ExecContext(ctx, `
+			UPDATE user_gpt
+			SET Name = ?,
+				Model = ?,
+				AssistantId = ?,
+				Data = ?,
+				Ids = ?
+			WHERE Id = ?
+		`, name, modType, assistantId, data, ids, modelId)
+
+		if err != nil {
+			switch {
+			case errors.Is(err, context.DeadlineExceeded):
+				return fmt.Errorf("тайм-аут (%d с) при обновлении модели: %w", sqlTimeToCancel, err)
+			case errors.Is(err, context.Canceled):
+				return fmt.Errorf("операция отменена при обновлении модели: %w", err)
+			default:
+				return fmt.Errorf("ошибка обновления модели: %w", err)
+			}
+		}
+
+		logger.Info("Обновлена существующая модель (provider: %d, modelId: %d)", provider, modelId, userId)
+	}
+
+	// ===================================================================
+	// Шаг 3: Обновление статуса оператора
+	// ===================================================================
+	enabledInt := 0
+	if operator {
+		enabledInt = 1
+	}
+
+	_, err = tx.ExecContext(ctx, `
+		UPDATE operators
+		SET Telegram_enabled = ?,
+			Changed = 1,
+			Timechange = CURRENT_TIMESTAMP()
+		WHERE UserId = ?
+	`, enabledInt, userId)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при установке статуса оператора: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена при установке статуса оператора: %w", err)
+		default:
+			return fmt.Errorf("ошибка установки статуса оператора: %w", err)
+		}
+	}
+
+	// ===================================================================
+	// Финал: Фиксируем транзакцию
+	// ===================================================================
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("ошибка фиксации транзакции: %w", err)
+	}
+
+	return nil
+}
+
+// ReadUserModel получает данные модели пользователя и идентификаторы файлов
+func (d *DB) ReadUserModel(userId uint32) ([]byte, *create.VecIds, error) {
+	// Проверяем входное значение
+	if userId == 0 {
+		return nil, nil, fmt.Errorf("получен некорректный userId")
+	}
+
+	// Дочерний контекст с тайм-аутом на операцию
+	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	// SQL запрос для получения Data и Ids из user_gpt через активную модель
+	query := `
+		SELECT TO_BASE64(ug.Data), ug.Ids
+		FROM user_models um
+		JOIN user_gpt ug ON um.ModelId = ug.Id
+		WHERE um.UserId = ? AND um.IsActive = 1`
+
+	var base64Data sql.NullString
+	var idsJson sql.NullString
+
+	err := d.conn.QueryRowContext(ctx, query, userId).Scan(&base64Data, &idsJson)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return nil, nil, fmt.Errorf("тайм-аут (%d с) при вызове ReadUserModel: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return nil, nil, fmt.Errorf("операция отменена: %w", err)
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, nil, nil // Модель не найдена, но это не ошибка
+		default:
+			return nil, nil, fmt.Errorf("ошибка получения данных ReadUserModel: %w", err)
+		}
+	}
+
+	// Проверяем на пустой результат или null
+	if !base64Data.Valid || base64Data.String == "" {
+		return nil, nil, nil // Модель не найдена
+	}
+
+	// Инициализируем структуру VecIds по умолчанию с пустыми массивами
+	vecIds := &create.VecIds{
+		VectorId: []string{},
+		FileIds:  []create.Ids{},
+	}
+
+	// Проверяем и парсим Ids, если они есть
+	if idsJson.Valid && idsJson.String != "" && idsJson.String != "null" {
+		if err := json.Unmarshal([]byte(idsJson.String), vecIds); err != nil {
+			return nil, nil, fmt.Errorf("ошибка разбора Ids: %w", err)
+		}
+	}
+
+	// Декодируем base64 данные
+	decodedData, err := base64.StdEncoding.DecodeString(base64Data.String)
+	if err != nil {
+		return nil, nil, fmt.Errorf("ошибка декодирования base64: %w", err)
+	}
+
+	return decodedData, vecIds, nil
+}
+
+func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error) {
+	// Проверяем входное значение
+	if userID == 0 {
+		return 0, 0, fmt.Errorf("получен некорректный userID")
+	}
+
+	// Дочерний контекст с тайм-аутом на операцию
+	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	// Начинаем транзакцию
+	tx, err := d.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("ошибка начала транзакции: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Получаем текущие значения с блокировкой строки
+	var vLimit, vUsed int64
+	err = tx.QueryRowContext(ctx, `
+  SELECT StorageLimit, StorageUsed
+  FROM subscriptions
+  WHERE UserId = ?
+  FOR UPDATE`, userID).Scan(&vLimit, &vUsed)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return 0, 0, fmt.Errorf("тайм-аут (%d с) при получении лимитов хранилища: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return 0, 0, fmt.Errorf("операция отменена: %w", err)
+		case errors.Is(err, sql.ErrNoRows):
+			return 0, 0, fmt.Errorf("подписка пользователя не найдена")
+		default:
+			return 0, 0, fmt.Errorf("ошибка получения лимитов хранилища: %w", err)
+		}
+	}
+
+	// Вычисляем новое значение занятости
+	vNewUsed := vUsed + setStorage
+
+	// Гарантируем границы: [0, StorageLimit]
+	if vNewUsed < 0 {
+		vNewUsed = 0
+	} else if vNewUsed > vLimit {
+		vNewUsed = vLimit
+	}
+
+	// Обновляем значение StorageUsed
+	_, err = tx.ExecContext(ctx, `
+  UPDATE subscriptions
+  SET StorageUsed = ?
+  WHERE UserId = ?`, vNewUsed, userID)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return 0, 0, fmt.Errorf("тайм-аут (%d с) при обновлении использования хранилища: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return 0, 0, fmt.Errorf("операция отменена: %w", err)
+		default:
+			return 0, 0, fmt.Errorf("ошибка обновления использования хранилища: %w", err)
+		}
+	}
+
+	// Фиксируем транзакцию
+	if err := tx.Commit(); err != nil {
+		return 0, 0, fmt.Errorf("ошибка фиксации транзакции: %w", err)
+	}
+
+	// Вычисляем оставшееся место и возвращаем результат
+	remaining = uint64(vLimit - vNewUsed)
+	totalLimit = uint64(vLimit)
+
+	return remaining, totalLimit, nil
+}
