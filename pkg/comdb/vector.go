@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
 // SaveEmbedding сохраняет эмбеддинг документа в MariaDB с привязкой к модели
