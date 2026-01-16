@@ -1,25 +1,25 @@
 package openai
 
 import (
+	"AiR_TG-lead-generator/internal/app/model/create"
 	"fmt"
 	"strings"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
-	models "github.com/ikermy/AiR_Common/pkg/model/create"
 	"github.com/sashabaranov/go-openai"
 )
 
 // CreateModel создаёт новую модель OpenAI
 // Делегирует вызов к OpenAIModel из пакета create
-func (m *OpenAIModel) CreateModel(userId uint32, provider models.ProviderType, gptName string, modelName string, modelJSON []byte, fileIDs []models.Ids) (models.UMCR, error) {
-	// Создаем экземпляр UniversalModel для делегирования
-	modelsManager := &models.UniversalModel{}
+func (m *OpenAIModel) CreateModel(userId uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error) {
+	// Создаем экземпляр universalModel для делегирования
+	modelsManager := &create.UniversalModel{}
 
-	return modelsManager.CreateModel(userId, provider, gptName, modelName, modelJSON, fileIDs)
+	return modelsManager.CreateModel(userId, provider, modelData, fileIDs)
 }
 
-// UploadFileToOpenAI загружает файл в OpenAI
-func (m *OpenAIModel) UploadFileToProvider(fileName string, fileData []byte) (string, error) {
+// UploadFileFromVectorStorage загружает файл в OpenAI
+func (m *OpenAIModel) UploadFileFromVectorStorage(fileName string, fileData []byte) (string, error) {
 	// Проверка клиента
 	if m.client == nil {
 		return "", fmt.Errorf("OpenAI клиент не инициализирован")
@@ -41,9 +41,8 @@ func (m *OpenAIModel) UploadFileToProvider(fileName string, fileData []byte) (st
 	return fileResponse.ID, nil
 }
 
-// DeleteFileFromOpenAI удаляет файл из OpenAI
-// Метод не экспортирован в пакете create, поэтому возвращаем ошибку
-func (m *OpenAIModel) DeleteFileFromProvider(fileID string) error {
+// DeleteFileFromVectorStorage удаляет файл из OpenAI
+func (m *OpenAIModel) DeleteFileFromVectorStorage(fileID string) error {
 	// 1. Удаляем файл по его ID
 	if err := m.client.DeleteFile(m.ctx, fileID); err != nil {
 		// Если файл уже удален (not found), это не является критической ошибкой
@@ -86,8 +85,8 @@ func (m *OpenAIModel) DeleteFileFromProvider(fileID string) error {
 	return nil
 }
 
-// AddFileFromOpenAI добавляет файл в векторное хранилище
-func (m *OpenAIModel) AddFileFromFromProvider(userId uint32, fileID, fileName string) error {
+// AddFileFromVectorStorage добавляет файл в векторное хранилище
+func (m *OpenAIModel) AddFileFromVectorStorage(userId uint32, fileID, fileName string) error {
 	// Получаем данные пользовательского Vector Store
 	vectorStoreID, err := m.db.GetUserVectorStorage(userId)
 	if err != nil {
@@ -97,7 +96,7 @@ func (m *OpenAIModel) AddFileFromFromProvider(userId uint32, fileID, fileName st
 	type GPT struct {
 		AssistId string
 		Name     string
-		Ids      models.VecIds
+		Ids      create.VecIds
 	}
 
 	// Добавляем файл в существующий Vector Store

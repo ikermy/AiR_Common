@@ -3,32 +3,47 @@ package endpoint
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/ikermy/AiR_Common/pkg/comdb"
+	"github.com/ikermy/AiR_Common/pkg/common"
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 )
 
-type DB interface {
-	SaveDialog(treadId uint64, message json.RawMessage) error
-	UpdateDialogsMeta(dialogId uint64, meta string) error
-	GetNotificationChannel(userId uint32) (json.RawMessage, error)
+// Inter - интерфейс для работы с диалогами
+type Inter interface {
+	GetUserAsk(dialogId uint64, respId uint64) []string
+	SetUserAsk(dialogId, respId uint64, ask string, askLimit ...uint32) bool
+	SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse)
+	GetDialogHistory(dialogId uint64, limit int) ([]Message, error)
+	Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string)
+	SendEvent(userId uint32, event, userName, assistName, target string)
+	SendNotification(msg common.CarpCh) error
+}
+
+type DB comdb.Exterior
+
+type Message struct {
+	Creator   comdb.CreatorType    `json:"creator"`
+	Message   model.AssistResponse `json:"message"`
+	Timestamp time.Time            `json:"timestamp"`
 }
 
 type Endpoint struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	Db           DB
+	ctx          context.Context
+	cancel       context.CancelFunc
+	db           DB
 	arrMsg       map[uint64]map[uint64][]string
-	messageBatch map[uint64][]comdb.Message // Буфер сообщений для каждого треда
-	batchSize    int                        // Размер батча
-	mu           sync.Mutex                 // Мьютекс для защиты буфера
+	messageBatch map[uint64][]Message // Буфер сообщений для каждого треда
+	batchSize    int                  // Размер батча
+	mu           sync.Mutex           // Мьютекс для защиты буфера
+	optionalFunc func(any) error      // Дополнительный опциональный метод которого нет в Inter (с типом any для гибкости)
 }
 
 func New(parent context.Context, d DB) *Endpoint {
@@ -37,8 +52,8 @@ func New(parent context.Context, d DB) *Endpoint {
 		ctx:    ctx,
 		cancel: cancel,
 
-		Db:           d,
-		messageBatch: make(map[uint64][]comdb.Message),
+		db:           d,
+		messageBatch: make(map[uint64][]Message),
 		batchSize:    mode.BatchSize, // Размер батча по умолчанию
 	}
 
@@ -67,6 +82,44 @@ func New(parent context.Context, d DB) *Endpoint {
 	}()
 
 	return e
+}
+
+// SetOptional устанавливает callback функцию для вызова при достижении meta-цели
+func (e *Endpoint) SetOptional(fn func(any) error) {
+	e.optionalFunc = fn
+}
+
+// CallOptional безопасно вызывает опциональный метод если он установлен (принимает any)
+func (e *Endpoint) CallOptional(val any) error {
+	if e.optionalFunc != nil {
+		return e.optionalFunc(val)
+	}
+	return nil
+}
+
+// CallOptionalTyped[T any] — generic версия CallOptional для типобезопасного вызова
+// Пример: e.CallOptionalTyped[int64](int64(respId))
+func (e *Endpoint) CallOptionalTyped(val any) error {
+	return e.CallOptional(val)
+}
+
+// WrapOptional[T any] — helper-функция с дженериком для адаптирования функции типа T
+// к типу func(any) error. Используется вместе с SetOptional.
+//
+// Пример использования:
+//
+//	e.SetOptional(WrapOptional[int64](telegramProvider.Meta))
+func WrapOptional[T any](fn func(T) error) func(any) error {
+	if fn == nil {
+		return nil
+	}
+	return func(v any) error {
+		t, ok := v.(T)
+		if !ok {
+			return fmt.Errorf("WrapOptional: unexpected type %T, expected %T", v, *new(T))
+		}
+		return fn(t)
+	}
 }
 
 // Shutdown останавливает фоновые задачи и принудительно сохраняет буферы
@@ -117,7 +170,7 @@ func (e *Endpoint) flushThreadBatch(threadId uint64) {
 			logger.Error("Ошибка сериализации: %v", err)
 			continue
 		}
-		if err := e.Db.SaveDialog(threadId, jsonData); err != nil {
+		if err := e.db.SaveDialog(threadId, jsonData); err != nil {
 			logger.Error("Ошибка сохранения диалога: %v", err)
 		}
 	}
@@ -180,7 +233,7 @@ func (e *Endpoint) SetUserAsk(dialogId, respId uint64, ask string, askLimit ...u
 	}
 	askChars := utf8.RuneCountInString(ask)
 	if totalChars+askChars > int(limit) {
-		logger.Warn("Превышен лимит %d символов %d, символов в сообщении %d", askLimit, askChars, totalChars)
+		logger.Warn("Превышен лимит [%d] символов %d, символов в сообщении %d", limit, askChars, totalChars)
 		return false
 	}
 
@@ -188,13 +241,59 @@ func (e *Endpoint) SetUserAsk(dialogId, respId uint64, ask string, askLimit ...u
 	return true
 }
 
-func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse) {
-	//ask := strings.TrimSpace(*resp)
-	//if ask == "" || ask == "[]" { // Этого не может быть?! Но на всякий случай
-	//	return
-	//}
+// GetDialogHistory получает историю диалога из памяти (messageBatch) или из БД
+// Возвращает последние N сообщений (limit) в хронологическом порядке
+func (e *Endpoint) GetDialogHistory(dialogId uint64, limit int) ([]Message, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
-	message := comdb.Message{
+	// Сначала проверяем буфер в памяти
+	batch := e.messageBatch[dialogId]
+
+	if len(batch) > 0 {
+		// Есть сообщения в памяти
+		logger.Debug("Endpoint: найдено %d сообщений в памяти для диалога %d", len(batch), dialogId)
+
+		// Ограничиваем количество сообщений
+		startIdx := 0
+		if len(batch) > limit {
+			startIdx = len(batch) - limit
+		}
+
+		result := make([]Message, len(batch)-startIdx)
+		copy(result, batch[startIdx:])
+		return result, nil
+	}
+
+	// Если в памяти нет, читаем из БД
+	logger.Debug("Endpoint: сообщения для диалога %d не найдены в памяти, читаем из БД", dialogId)
+
+	// Разблокируем мьютекс на время операции с БД
+	e.mu.Unlock()
+	defer e.mu.Lock()
+
+	jsonData, err := e.db.ReadDialog(dialogId, uint8(limit))
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения диалога из БД: %w", err)
+	}
+
+	if jsonData == nil || len(jsonData) == 0 {
+		logger.Debug("Endpoint: диалог %d не найден в БД", dialogId)
+		return nil, nil
+	}
+
+	// Парсим JSON данные
+	var messages []Message
+	if err := json.Unmarshal(jsonData, &messages); err != nil {
+		return nil, fmt.Errorf("ошибка парсинга данных диалога из БД: %w", err)
+	}
+
+	logger.Debug("Endpoint: прочитано %d сообщений из БД для диалога %d", len(messages), dialogId)
+	return messages, nil
+}
+
+func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse) {
+	message := Message{
 		Creator:   creator,
 		Message:   *resp,
 		Timestamp: time.Now(),
@@ -214,7 +313,7 @@ func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *m
 
 // Meta Метод вызывается из common.startpoint
 func (e *Endpoint) Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string) {
-	err := e.Db.UpdateDialogsMeta(dialogId, meta)
+	err := e.db.UpdateDialogsMeta(dialogId, meta)
 	if err != nil {
 		logger.Error("ошибка обновления метаданных для диалога %d: %v", dialogId, err, userId)
 	}

@@ -1,20 +1,23 @@
 package mistral
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
-	models "github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
 // MistralModel реализует интерфейс model.UniversalModel для работы с Mistral AI
@@ -22,25 +25,37 @@ type MistralModel struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	client        *MistralAgentClient
-	db            model.DialogDB
-	dialogSaver   model.DialogSaver
+	db            DB
 	responders    sync.Map      // map[uint64]*RespModel
 	waitChannels  sync.Map      // map[uint64]chan struct{}
 	UserModelTTl  time.Duration // Время жизни пользовательской модели в памяти
 	actionHandler model.ActionHandler
 	shutdownOnce  sync.Once
+	router        model.RouterInterface // Ссылка на router для GetRealUserID
 }
 
+// DB интерфейс для работы с базой данных (расширяет model.DialogDB)
+//type DB interface {
+//	//db.DialogDB
+//	ReadContext(dialogId uint64) (json.RawMessage, error)
+//	SaveContext(dialogId uint64, context json.RawMessage) error
+//}
+
+type DB comdb.Exterior
+
 type RespModel struct {
-	Ctx       context.Context
-	Cancel    context.CancelFunc
-	Chan      *model.Ch      // Один канал для этого респондента
-	Context   *DialogContext // Один текущий контекст диалога
-	TTL       time.Time
-	Assist    model.Assistant
-	RespName  string
-	Services  Services
-	LibraryId string // ID библиотеки Mistral для document_library (кэш из БД)
+	Ctx            context.Context
+	Cancel         context.CancelFunc
+	Chan           *model.Ch      // Один канал для этого респондента
+	Context        *DialogContext // Один текущий контекст диалога
+	TTL            time.Time
+	Assist         model.Assistant
+	RespName       string
+	Services       Services
+	RealUserId     uint64 // Кэшированный реальный user_id
+	ConversationId string // ID conversation для Mistral Conversations API
+	Haunter        bool   // Модель используется для поиска лидов
+	//LibraryId string // ID библиотеки Mistral для document_library (кэш из БД)
 }
 
 // DialogContext хранит историю сообщений диалога в памяти
@@ -62,22 +77,19 @@ type Services struct {
 }
 
 // New создает новую модель Mistral
-func New(parent context.Context, conf *conf.Conf, db model.DialogDB, actionHandler model.ActionHandler) *MistralModel {
+func New(parent context.Context, conf *conf.Conf, actionHandler model.ActionHandler, db DB, router model.RouterInterface) *MistralModel {
 	ctx, cancel := context.WithCancel(parent)
-
-	// Создаем DialogSaver для батчированного сохранения
-	dialogSaver := model.NewDialogSaver(ctx, db, mode.BatchSize)
 
 	return &MistralModel{
 		ctx:           ctx,
 		cancel:        cancel,
 		client:        NewMistralAgentClient(parent, conf),
 		db:            db,
-		dialogSaver:   dialogSaver,
 		responders:    sync.Map{},
 		waitChannels:  sync.Map{},
 		UserModelTTl:  time.Duration(conf.GLOB.UserModelTTl) * time.Minute,
 		actionHandler: actionHandler,
+		router:        router,
 	}
 }
 
@@ -88,14 +100,8 @@ func NewAsRouterOption() model.RouterOption {
 		// Создаём универсальный обработчик функций
 		actionHandler := &model.UniversalActionHandler{}
 
-		// Приводим DB к типу model.DialogDB через интерфейс
-		dialogDB, ok := db.(model.DialogDB)
-		if !ok {
-			return fmt.Errorf("DB не соответствует интерфейсу model.DialogDB")
-		}
-
-		// Создаём Mistral модель с action handler
-		mistralModel := New(ctx, cfg, dialogDB, actionHandler)
+		// Создаём Mistral модель с action handler и router
+		mistralModel := New(ctx, cfg, actionHandler, db, r)
 
 		// Регистрируем модель в роутере
 		return model.WithMistralModel(mistralModel)(r, ctx, cfg, db)
@@ -115,7 +121,7 @@ func (m *MistralModel) NewMessage(operator model.Operator, msgType string, conte
 }
 
 // GetFileAsReader загружает файл по URL (реализация model.UniversalModel)
-func (m *MistralModel) GetFileAsReader(url string) (io.Reader, error) {
+func (m *MistralModel) GetFileAsReader(userId uint32, url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
 	}
@@ -144,7 +150,7 @@ func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId 
 	if val, ok := m.responders.Load(respId); ok {
 		respModel := val.(*RespModel)
 		respModel.TTL = time.Now().Add(m.UserModelTTl) // Обновляем TTL при каждом обращении
-		return m.convertToModelRespModel(respModel), nil
+		return m.convertToModelrespModel(respModel), nil
 	}
 
 	userCtx, cancel := context.WithCancel(m.ctx)
@@ -160,61 +166,87 @@ func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId 
 			DialogId: dialogId,
 			RespName: respName,
 		},
-		Context:  nil, // Будет загружено ниже
+		Context: &DialogContext{
+			Messages: []Message{}, // Пустой контекст - при использовании Conversations API история хранится на стороне Mistral
+			LastUsed: time.Now(),
+		},
 		Services: Services{},
 		Ctx:      userCtx,
 		Cancel:   cancel,
 	}
 
-	// Загружаем историю диалога из БД ОДИН РАЗ при создании
-	dialogContext := &DialogContext{
-		Messages: []Message{},
-		LastUsed: time.Now(),
-	}
+	// ВАЖНО: При использовании Conversations API история диалога НЕ загружается из БД!
+	// Mistral хранит всю историю на своей стороне через conversation_id.
+	// Локальный контекст используется ТОЛЬКО для сохранения в БД при выходе.
 
-	dialogData, err := m.db.ReadDialog(dialogId)
+	// Загружаем conversation_id из БД (если есть)
+	contextData, err := m.db.ReadContext(dialogId, create.ProviderMistral)
 	if err != nil {
-		//logger.Debug("Не удалось загрузить историю диалога %d: %v. Начинаем новый диалог.", dialogId, err)
-	} else {
-		// Конвертируем загруженную историю в формат Message
-		for _, msg := range dialogData.Data {
-			msgType := "user"
-			if msg.Creator == int(model.CreatorAssistant) {
-				msgType = "assistant"
-			}
+		if strings.Contains(err.Error(), "получены пустые данные") {
+			logger.Debug("Инициализация нового диалога %d", dialogId, assist.UserId)
+			// ConversationId будет создан при первом запросе
+		} else {
+			logger.Error("Ошибка чтения контекста для dialogId %d: %v", dialogId, err)
+		}
+	} else if contextData != nil {
+		logger.Debug("Контекст загружен для dialogId %d: %s", dialogId, string(contextData), assist.UserId)
 
-			// Пропускаем пустые сообщения ассистента (Mistral API их не принимает)
-			if msgType == "assistant" && msg.Message == "" {
-				logger.Debug("Пропущено пустое сообщение ассистента при загрузке истории диалога %d", dialogId)
-				continue
-			}
+		var contextObj struct {
+			ConversationID string `json:"conversation_id"`
+		}
 
-			// Парсим timestamp
-			timestamp := time.Now()
-			if msg.Timestamp != "" {
-				if t, err := time.Parse(time.RFC3339, msg.Timestamp); err == nil {
-					timestamp = t
+		// JSON_EXTRACT может вернуть строку с кавычками, пробуем распарсить
+		err = json.Unmarshal(contextData, &contextObj)
+		if err != nil {
+			// Если не получилось, пробуем убрать внешние кавычки и распарсить снова
+			var rawString string
+			if err2 := json.Unmarshal(contextData, &rawString); err2 == nil {
+				// Успешно извлекли строку, теперь парсим её как JSON
+				if err3 := json.Unmarshal([]byte(rawString), &contextObj); err3 != nil {
+					logger.Error("Ошибка десериализации контекста для dialogId %d: %v", dialogId, err3)
 				}
+			} else {
+				logger.Error("Ошибка десериализации контекста для dialogId %d: %v", dialogId, err)
 			}
+		}
 
-			dialogContext.Messages = append(dialogContext.Messages, Message{
-				Type:      msgType,
-				Content:   msg.Message,
-				Timestamp: timestamp,
-			})
+		if contextObj.ConversationID != "" {
+			user.ConversationId = contextObj.ConversationID
+			logger.Debug("Загружен conversation_id: %s", contextObj.ConversationID, assist.UserId)
 		}
 	}
 
-	// Сохраняем контекст
-	user.Context = dialogContext
-
-	// Загружаем LibraryId ОДИН РАЗ при создании (избегаем запросов к БД при каждом сообщении)
-	if libraryID, err := m.loadLibraryIdFromDB(assist.UserId); err == nil {
-		user.LibraryId = libraryID
-		logger.Debug("LibraryId загружен для пользователя %d: %s", assist.UserId, libraryID, assist.UserId)
+	// Загружаем RealUserId ОДИН РАЗ при создании (избегаем повторных HTTP запросов)
+	if realUserId, err := m.GetRealUserID(assist.UserId); err == nil {
+		user.RealUserId = realUserId
 	} else {
-		logger.Debug("LibraryId не найден для пользователя %d (будет создан при загрузке файлов)", assist.UserId, assist.UserId)
+		logger.Warn("Не удалось загрузить RealUserId: %v", err, assist.UserId)
+		user.RealUserId = 0 // Будет пропущена генерация изображений
 	}
+
+	// Загружаем параметры модели из БД (включая Haunter)
+	compressedData, _, err := m.db.ReadUserModelByProvider(assist.UserId, create.ProviderMistral)
+	if err != nil {
+		logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, assist.UserId)
+	} else if compressedData != nil {
+		// Используем функцию из пакета db для распаковки и извлечения всех параметров
+		_, _, _, image, webSearch, video, haunter, err := comdb.DecompressAndExtractMetadata(compressedData)
+		if err != nil {
+			logger.Warn("Ошибка распаковки параметров модели: %v", err, assist.UserId)
+		} else {
+			user.Haunter = haunter
+			logger.Debug("Загружены параметры модели: Image=%v, WebSearch=%v, Video=%v, Haunter=%v",
+				image, webSearch, video, haunter, assist.UserId)
+		}
+	}
+
+	//// Загружаем LibraryId ОДИН РАЗ при создании (избегаем запросов к БД при каждом сообщении)
+	//if libraryID, err := m.loadLibraryIdFromDB(assist.UserId); err == nil {
+	//	user.LibraryId = libraryID
+	//	logger.Debug("LibraryId загружен для пользователя %d: %s", assist.UserId, libraryID, assist.UserId)
+	//} else {
+	//	logger.Debug("LibraryId не найден для пользователя %d (будет создан при загрузке файлов)", assist.UserId, assist.UserId)
+	//}
 
 	// Используем respId как ключ (один пользователь может иметь несколько диалогов)
 	m.responders.Store(respId, user)
@@ -225,7 +257,7 @@ func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId 
 		m.waitChannels.Delete(respId)
 	}
 
-	return m.convertToModelRespModel(user), nil
+	return m.convertToModelrespModel(user), nil
 }
 
 // GetCh получает канал для респондента (реализация model.UniversalModel)
@@ -303,33 +335,40 @@ func (m *MistralModel) SaveAllContextDuringExit() {
 	m.responders.Range(func(key, value interface{}) bool {
 		respModel := value.(*RespModel)
 
-		if respModel.Context != nil && len(respModel.Context.Messages) > 0 && respModel.Chan != nil {
+		if respModel.Chan != nil {
 			dialogId := respModel.Chan.DialogId
 
-			// Конвертируем контекст обратно в формат DialogData для сохранения
-			dialogData := model.DialogData{
-				Data: make([]model.DialogMessage, 0, len(respModel.Context.Messages)),
-			}
-
-			for _, msg := range respModel.Context.Messages {
-				creator := model.CreatorUser
-				if msg.Type == "assistant" {
-					creator = model.CreatorAssistant
+			// Сохраняем conversation_id (если есть)
+			if respModel.ConversationId != "" {
+				contextObj := map[string]interface{}{
+					"conversation_id": respModel.ConversationId,
 				}
 
-				dialogData.Data = append(dialogData.Data, model.DialogMessage{
-					Creator:   int(creator),
-					Message:   msg.Content,
-					Timestamp: msg.Timestamp.Format(time.RFC3339),
-				})
+				contextJSON, err := json.Marshal(contextObj)
+				if err != nil {
+					logger.Error("Ошибка сериализации conversation_id для dialogId %d: %v", dialogId, err)
+				} else {
+					err = m.db.SaveContext(dialogId, create.ProviderMistral, contextJSON)
+					if err != nil {
+						logger.Error("Ошибка сохранения conversation_id для dialogId %d: %v", dialogId, err)
+					} else {
+						logger.Debug("Сохранен conversation_id для dialogId %d: %s", dialogId, respModel.ConversationId)
+					}
+				}
 			}
 
-			// Сохраняем в БД
-			if jsonData, err := json.Marshal(dialogData); err == nil {
-				if err := m.db.SaveDialog(dialogId, jsonData); err != nil {
-					logger.Error("Не удалось сохранить контекст диалога %d: %v", dialogId, err)
+			// Сохраняем контекст сообщений (если есть)
+			if respModel.Context != nil && len(respModel.Context.Messages) > 0 {
+				// Сохраняем в простом json.RawMessage формате
+				jsonData, err := json.Marshal(respModel.Context.Messages)
+				if err != nil {
+					logger.Error("Ошибка сериализации контекста диалога %d: %v", dialogId, err)
 				} else {
-					logger.Debug("Сохранен контекст диалога %d (%d сообщений)", dialogId, len(respModel.Context.Messages))
+					if err := m.db.SaveDialog(dialogId, jsonData); err != nil {
+						logger.Error("Не удалось сохранить контекст диалога %d: %v", dialogId, err)
+					} else {
+						logger.Debug("Сохранен контекст диалога %d (%d сообщений)", dialogId, len(respModel.Context.Messages))
+					}
 				}
 			}
 		}
@@ -356,9 +395,156 @@ func (m *MistralModel) CleanDialogData(dialogId uint64) {
 	})
 }
 
-// TranscribeAudio транскрибирует аудио (реализация model.UniversalModel)
-func (m *MistralModel) TranscribeAudio(audioData []byte, fileName string) (string, error) {
-	return "", fmt.Errorf("транскрибирование аудио не поддерживается для Mistral")
+// saveConversationId сохраняет conversation_id в БД (или удаляет если пустой)
+func (m *MistralModel) saveConversationId(dialogId uint64, conversationId string) {
+	if conversationId == "" {
+		// Удаляем conversation_id из БД (сброс)
+		contextObj := map[string]interface{}{
+			"conversation_id": "",
+		}
+
+		contextJSON, err := json.Marshal(contextObj)
+		if err != nil {
+			logger.Error("Ошибка сериализации пустого conversation_id для dialogId %d: %v", dialogId, err)
+			return
+		}
+
+		err = m.db.SaveContext(dialogId, create.ProviderMistral, contextJSON)
+		if err != nil {
+			logger.Error("Ошибка удаления conversation_id для dialogId %d: %v", dialogId, err)
+		} else {
+			logger.Debug("Сброшен conversation_id для dialogId %d", dialogId)
+		}
+		return
+	}
+
+	contextObj := map[string]interface{}{
+		"conversation_id": conversationId,
+	}
+
+	contextJSON, err := json.Marshal(contextObj)
+	if err != nil {
+		logger.Error("Ошибка сериализации conversation_id для dialogId %d: %v", dialogId, err)
+		return
+	}
+
+	err = m.db.SaveContext(dialogId, create.ProviderMistral, contextJSON)
+	if err != nil {
+		logger.Error("Ошибка сохранения conversation_id для dialogId %d: %v", dialogId, err)
+	} else {
+		logger.Debug("Сохранен conversation_id для dialogId %d: %s", dialogId, conversationId)
+	}
+}
+
+// TranscribeAudio обёртка
+func (m *MistralModel) TranscribeAudio(userid uint32, audioData []byte, fileName string) (string, error) {
+	return m.transcribeAudioFile(audioData, fileName)
+}
+
+// TranscribeAudio транскрибирует аудио файл используя Mistral Audio Transcription API
+func (m *MistralModel) transcribeAudioFile(audioData []byte, fileName string) (string, error) {
+	if len(audioData) == 0 {
+		return "", fmt.Errorf("пустые аудиоданные")
+	}
+
+	if m.client == nil {
+		return "", fmt.Errorf("mistral client не инициализирован")
+	}
+
+	// Формируем multipart request для отправки аудио файла
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+	defer func() {
+		if err := writer.Close(); err != nil {
+			logger.Error("TranscribeAudio: ошибка закрытия writer: %v", err)
+		}
+	}()
+
+	if err := writer.WriteField("model", "voxtral-mini-latest"); err != nil {
+		return "", fmt.Errorf("ошибка добавления поля model: %w", err)
+	}
+
+	// Добавляем аудио файл
+	part, err := writer.CreateFormFile("file", fileName)
+	if err != nil {
+		return "", fmt.Errorf("ошибка создания form file для аудио: %w", err)
+	}
+
+	if _, err := part.Write(audioData); err != nil {
+		return "", fmt.Errorf("ошибка записи аудио данных: %w", err)
+	}
+
+	// Закрываем writer перед отправкой запроса
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("ошибка закрытия writer: %w", err)
+	}
+
+	// Отправляем запрос на Mistral API
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, "https://api.mistral.ai/v1/audio/transcriptions", &requestBody)
+	if err != nil {
+		return "", fmt.Errorf("ошибка создания HTTP запроса: %w", err)
+	}
+
+	// Используем x-api-key заголовок согласно документации Mistral
+	req.Header.Set("x-api-key", m.client.apiKey)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("ошибка отправки запроса на Mistral: %w", err)
+	}
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			logger.Error("TranscribeAudio: ошибка закрытия response body: %v", err)
+		}
+	}()
+
+	// Читаем ответ
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("ошибка чтения ответа: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("ошибка API Mistral (статус %d): %s", resp.StatusCode, string(responseBody))
+	}
+
+	// Парсим ответ
+	var result struct {
+		Text string `json:"text"`
+	}
+
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return "", fmt.Errorf("ошибка парсинга ответа Mistral: %w", err)
+	}
+
+	if result.Text == "" {
+		return "", fmt.Errorf("Mistral вернул пустой текст транскрипции")
+	}
+
+	logger.Debug("TranscribeAudio: успешно транскрибировано аудио, длина текста: %d символов", len(result.Text))
+	return result.Text, nil
+}
+
+// DeleteTempFile удаляет загруженный файл из Mistral Files API
+// Используется для очистки временных файлов после обработки
+func (m *MistralModel) DeleteTempFile(fileID string) error {
+	if m.client == nil {
+		return fmt.Errorf("mistral client не инициализирован")
+	}
+
+	if fileID == "" {
+		return fmt.Errorf("fileID не может быть пустым")
+	}
+
+	err := m.client.DeleteFile(fileID)
+	if err != nil {
+		logger.Error("DeleteTempFile: ошибка удаления файла %s: %v", fileID, err)
+		return err
+	}
+
+	logger.Debug("DeleteTempFile: файл %s успешно удалён", fileID)
+	return nil
 }
 
 // CleanUp запускает фоновую очистку устаревших респондеров (реализация model.UniversalModel)
@@ -405,11 +591,6 @@ func (m *MistralModel) Shutdown() {
 	m.shutdownOnce.Do(func() {
 		logger.Info("Начинается процесс завершения работы модуля MistralModel")
 
-		// Сначала завершаем DialogSaver чтобы сохранить все сообщения
-		if m.dialogSaver != nil {
-			m.dialogSaver.Shutdown()
-		}
-
 		if m.cancel != nil {
 			m.cancel()
 		}
@@ -425,7 +606,7 @@ func (m *MistralModel) Shutdown() {
 	})
 }
 
-func (m *MistralModel) convertToModelRespModel(internal *RespModel) *model.RespModel {
+func (m *MistralModel) convertToModelrespModel(internal *RespModel) *model.RespModel {
 	// Создаем map с одним каналом для совместимости
 	chanMap := make(map[uint64]*model.Ch)
 	if internal.Chan != nil {
@@ -483,232 +664,11 @@ func (m *MistralModel) cleanupWaitChannels() {
 	})
 }
 
-// Request выполняет запрос к Mistral модели, используя историю диалога как контекст
-func (m *MistralModel) Request(modelId string, dialogId uint64, text *string, files ...model.FileUpload) (model.AssistResponse, error) {
-	var emptyResponse model.AssistResponse
-
-	// Проверяем наличие текста или файлов
-	hasText := text != nil && *text != ""
-	hasFiles := len(files) > 0
-
-	if !hasText && !hasFiles {
-		return emptyResponse, fmt.Errorf("пустое сообщение и нет файлов")
+// GetRealUserID получает реальный userId через ModelRouter
+// Использует единый метод для всех провайдеров (OpenAI, Mistral)
+func (m *MistralModel) GetRealUserID(userId uint32) (uint64, error) {
+	if m.router == nil {
+		return 0, fmt.Errorf("router не инициализирован")
 	}
-
-	// Ищем RespModel по dialogId в Chan
-	var respModel *RespModel
-	m.responders.Range(func(key, value interface{}) bool {
-		rm := value.(*RespModel)
-
-		if rm.Chan != nil && rm.Chan.DialogId == dialogId {
-			respModel = rm
-			return false // Прекращаем поиск
-		}
-		return true // Продолжаем поиск
-	})
-
-	if respModel == nil {
-		return emptyResponse, fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
-	}
-
-	// Получаем контекст диалога из памяти
-	if respModel.Context == nil {
-		return emptyResponse, fmt.Errorf("контекст диалога не найден для dialogId %d", dialogId)
-	}
-
-	// Обновляем TTL респондера при каждом запросе
-	respModel.TTL = time.Now().Add(m.UserModelTTl)
-
-	// Добавляем сообщение пользователя в контекст
-	var userContent string
-	if text != nil {
-		userContent = *text
-	}
-
-	userMessage := Message{
-		Type:      "user",
-		Content:   userContent,
-		Timestamp: time.Now(),
-	}
-
-	respModel.Context.Messages = append(respModel.Context.Messages, userMessage)
-	respModel.Context.LastUsed = time.Now()
-
-	// Формируем массив сообщений для Mistral API
-	// Берем последние сообщения для контекста
-	startIndex := 0
-	if mode.ContextMessagesLimit > 0 && len(respModel.Context.Messages) > mode.ContextMessagesLimit {
-		startIndex = len(respModel.Context.Messages) - mode.ContextMessagesLimit
-	}
-	contextMessages := respModel.Context.Messages[startIndex:]
-
-	// Конвертируем в формат Mistral
-	messages := make([]MistralMessage, 0, len(contextMessages))
-	for _, msg := range contextMessages {
-		role := "user"
-		if msg.Type == "assistant" {
-			role = "assistant"
-		}
-
-		// Пропускаем пустые сообщения ассистента (Mistral API их не принимает)
-		if role == "assistant" && msg.Content == "" {
-			logger.Debug("Пропущено пустое сообщение ассистента из истории диалога")
-			continue
-		}
-
-		messages = append(messages, MistralMessage{
-			Role:    role,
-			Content: msg.Content,
-		})
-	}
-
-	// Получаем library_id пользователя для document_library tool (из кэша)
-	var libraryIds []string
-	if respModel.LibraryId != "" {
-		libraryIds = []string{respModel.LibraryId}
-		logger.Debug("Library ID для пользователя %d (из кэша): %s", respModel.Assist.UserId, respModel.LibraryId, respModel.Assist.UserId)
-	}
-
-	// Получаем инструменты через ActionHandler
-	var tools interface{}
-	if m.actionHandler != nil {
-		tools = m.actionHandler.GetTools(models.ProviderMistral)
-	}
-
-	// Вызываем Mistral API с файлами (временная передача) или без них
-	var response Response
-	var err error
-
-	if len(files) > 0 {
-		// Временная передача файлов непосредственно в запросе (не через библиотеку)
-		logger.Debug("Получено %d файлов для временной загрузки в запросе Mistral", len(files), respModel.Assist.UserId)
-
-		// Конвертируем файлы в формат для ChatWithAgentFiles
-		fileReaders := make([]io.Reader, 0, len(files))
-		fileNames := make([]string, 0, len(files))
-
-		for _, file := range files {
-			fileReaders = append(fileReaders, file.Content)
-			fileNames = append(fileNames, file.Name)
-		}
-
-		// Вызываем с временными файлами
-		response, err = m.client.ChatWithAgentFiles(modelId, messages, fileReaders, fileNames, tools, libraryIds...)
-		if err != nil {
-			return emptyResponse, fmt.Errorf("ошибка запроса к Mistral с файлами: %w", err)
-		}
-
-		logger.Info("Запрос к Mistral выполнен с %d временными файлами", len(files), respModel.Assist.UserId)
-	} else {
-		// Обычный запрос без файлов
-		response, err = m.client.ChatWithAgent(modelId, messages, tools, libraryIds...)
-		if err != nil {
-			return emptyResponse, fmt.Errorf("ошибка запроса к Mistral: %w", err)
-		}
-	}
-
-	// Обрабатываем ответ
-	assistResponse := m.processResponse(response)
-
-	// Добавляем ответ ассистента в контекст только если он не пустой
-	if assistResponse.Message != "" {
-		assistantMessage := Message{
-			Type:      "assistant",
-			Content:   assistResponse.Message,
-			Timestamp: time.Now(),
-		}
-
-		respModel.Context.Messages = append(respModel.Context.Messages, assistantMessage)
-		respModel.Context.LastUsed = time.Now()
-	} else {
-		logger.Warn("Получен пустой ответ от ассистента, не добавляем в контекст")
-	}
-
-	// Сохраняем сообщение пользователя через DialogSaver
-	userResp := model.AssistResponse{Message: userContent}
-	m.dialogSaver.SaveDialog(model.CreatorUser, dialogId, &userResp)
-
-	// Сохраняем ответ ассистента через DialogSaver (даже если пустой, для истории)
-	m.dialogSaver.SaveDialog(model.CreatorAssistant, dialogId, &assistResponse)
-
-	// Если была вызвана функция, выполняем её
-	if response.HasFunc && m.actionHandler != nil {
-		funcResult := m.actionHandler.RunAction(m.ctx, response.FuncName, response.FuncArgs)
-		logger.Debug("Результат выполнения функции %s: %s", response.FuncName, funcResult)
-
-		// Формируем ответ с результатом функции
-		assistResponse.Message += "\n\n" + funcResult
-	}
-
-	return assistResponse, nil
-}
-
-// convertDialogToMistralMessages конвертирует историю диалога в формат Mistral
-func (m *MistralModel) convertDialogToMistralMessages(dialogMessages []model.DialogMessage) []MistralMessage {
-	var messages []MistralMessage
-
-	// Применяем ограничение на количество сообщений
-	startIndex := 0
-	if mode.ContextMessagesLimit > 0 && len(dialogMessages) > mode.ContextMessagesLimit {
-		startIndex = len(dialogMessages) - mode.ContextMessagesLimit
-	}
-
-	for i := startIndex; i < len(dialogMessages); i++ {
-		msg := dialogMessages[i]
-		role := "user"
-		if msg.Creator == int(model.CreatorAssistant) {
-			role = "assistant"
-		}
-
-		messages = append(messages, MistralMessage{
-			Role:    role,
-			Content: msg.Message,
-		})
-	}
-
-	return messages
-}
-
-// processResponse обрабатывает ответ от Mistral
-func (m *MistralModel) processResponse(response Response) model.AssistResponse {
-	assistResponse := model.AssistResponse{
-		Message:  response.Message,
-		Meta:     false,
-		Operator: false,
-	}
-
-	// Если есть вызов функции, но нет сообщения, используем пустую строку
-	if response.HasFunc && response.Message == "" {
-		assistResponse.Message = ""
-	}
-
-	return assistResponse
-}
-
-// loadLibraryIdFromDB загружает ID библиотеки из БД ОДИН РАЗ при создании RespModel
-// Избегает повторных запросов к БД при каждом сообщении
-func (m *MistralModel) loadLibraryIdFromDB(userId uint32) (string, error) {
-	// Получаем все модели пользователя
-	userModels, err := m.db.GetAllUserModels(userId)
-	if err != nil {
-		return "", fmt.Errorf("не удалось получить модели пользователя: %w", err)
-	}
-
-	// Ищем модель Mistral
-	for i := range userModels {
-		if userModels[i].Provider == models.ProviderMistral {
-			// Десериализуем AllIds для получения VectorId
-			if len(userModels[i].AllIds) > 0 {
-				var vecIds models.VecIds
-				if err := json.Unmarshal(userModels[i].AllIds, &vecIds); err != nil {
-					return "", fmt.Errorf("не удалось распарсить AllIds: %w", err)
-				}
-				if len(vecIds.VectorId) > 0 {
-					return vecIds.VectorId[0], nil
-				}
-			}
-		}
-	}
-
-	return "", fmt.Errorf("библиотека не найдена для пользователя %d", userId)
+	return m.router.GetRealUserID(userId)
 }

@@ -17,7 +17,9 @@ const (
 	RetryMaxAttempts = 3 // Максимальное количество повторных попыток
 	RetryBaseDelay   = 1 // Базовая задержка между попытками в секундах
 	// Mistral API settings
-	MistralAgentsURL = "https://api.mistral.ai/v1/agents/completions" // URL для Mistral Agents API
+	MistralAgentsURL = "https://api.mistral.ai/v1/agents/completions"
+	// Google API settings
+	GoogleAgentsURL = "https://generativelanguage.googleapis.com/v1beta"
 )
 
 var (

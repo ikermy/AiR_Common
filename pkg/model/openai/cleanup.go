@@ -1,6 +1,8 @@
 package openai
 
 import (
+	"AiR_TG-lead-generator/internal/app/model"
+	"AiR_TG-lead-generator/internal/app/model/create"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,12 +11,10 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/sashabaranov/go-openai"
 )
 
 func (m *OpenAIModel) CleanUp() {
-	logger.Debug("Запуск фоновой очистки OpenAIModel")
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
 
@@ -22,8 +22,6 @@ func (m *OpenAIModel) CleanUp() {
 		select {
 		case <-ticker.C:
 			now := time.Now()
-			logger.Debug("Фоновая очистка OpenAIModel: проверка просроченных респондеров")
-
 			deletedRespCount := 0
 			checkedRespCount := 0
 
@@ -73,8 +71,6 @@ func (m *OpenAIModel) CleanUp() {
 			if deletedRespCount > 0 {
 				logger.Info("Очистка завершена: проверено %d RespModel, удалено %d RespModel",
 					checkedRespCount, deletedRespCount)
-			} else {
-				logger.Debug("Очистка завершена: проверено %d RespModel, ничего не удалено", checkedRespCount)
 			}
 		case <-m.ctx.Done():
 			logger.Info("Остановка фоновой очистки OpenAIModel")
@@ -183,7 +179,11 @@ func (m *OpenAIModel) saveAllContextsGracefullyCtx(ctx context.Context) error {
 			defer wg.Done()
 
 			if thread != nil {
-				threadsJSON, err := json.Marshal(thread)
+				// Сохраняем только thread_id, не весь объект Thread
+				contextData := map[string]interface{}{
+					"thread_id": thread.ID,
+				}
+				threadsJSON, err := json.Marshal(contextData)
 				if err != nil {
 					mu.Lock()
 					saveErrors = append(saveErrors, fmt.Sprintf("сериализация для dialogId %d: %v", dId, err))
@@ -200,7 +200,7 @@ func (m *OpenAIModel) saveAllContextsGracefullyCtx(ctx context.Context) error {
 				default:
 				}
 
-				if err := m.db.SaveContext(dId, threadsJSON); err != nil {
+				if err := m.db.SaveContext(dId, create.ProviderOpenAI, threadsJSON); err != nil {
 					mu.Lock()
 					saveErrors = append(saveErrors, fmt.Sprintf("сохранение для dialogId %d: %v", dId, err))
 					mu.Unlock()

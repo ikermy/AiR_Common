@@ -3,12 +3,11 @@ package startpoint
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/comdb"
+	"github.com/ikermy/AiR_Common/pkg/endpoint"
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
@@ -48,53 +47,29 @@ type BotInterface interface {
 	DisableOperatorMode(userId uint32, dialogId uint64, silent ...bool) error
 }
 
-// EndpointInterface - интерфейс для работы с диалогами
-type EndpointInterface interface {
-	GetUserAsk(dialogId uint64, respId uint64) []string
-	SetUserAsk(dialogId, respId uint64, ask string, askLimit ...uint32) bool
-	SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse)
-	Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string)
-	SendEvent(userId uint32, event, userName, assistName, target string)
-}
-
-// ModelInterface - интерфейс для моделей
-type ModelInterface interface {
-	NewMessage(operator model.Operator, msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message
-	GetFileAsReader(url string) (io.Reader, error)
-	GetOrSetRespGPT(assist model.Assistant, dialogId, respId uint64, respName string) (*model.RespModel, error)
-	GetCh(respId uint64) (*model.Ch, error)
-	GetRespIdByDialogId(dialogId uint64) (uint64, error)
-	SaveAllContextDuringExit()
-	Request(modelId string, dialogId uint64, text *string, files ...model.FileUpload) (model.AssistResponse, error)
-	CleanDialogData(dialogId uint64)
-	TranscribeAudio(audioData []byte, fileName string) (string, error)
-	Shutdown()
-}
-
-// OperatorInterface - интерфейс для отправки сообщений от и для операторов
-type OperatorInterface interface {
-	AskOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) (model.Message, error)
-	SendToOperator(ctx context.Context, userID uint32, dialogID uint64, question model.Message) error
-	ReceiveFromOperator(ctx context.Context, userID uint32, dialogID uint64) <-chan model.Message // Канал для получения ответов
-	DeleteSession(userID uint32, dialogID uint64) error
-	GetConnectionErrors(ctx context.Context, userID uint32, dialogID uint64) <-chan string
-}
+type Model = model.Inter
+type Endpoint = endpoint.Inter
+type Operator = operator.Inter
 
 // Start структура с интерфейсами вместо конкретных типов
 type Start struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	Mod  ModelInterface
-	End  EndpointInterface
+	Mod  Model
+	End  Endpoint
+	Oper Operator
 	Bot  BotInterface
-	Oper OperatorInterface
 
 	respondentWG sync.Map // map[uint64]*sync.WaitGroup - для синхронизации завершения Respondent
+
+	// Карта для хранения провайдера каждого респондента (ключ: respID, значение: provider)
+	// Используется для передачи информации о провайдере при вызове CallOptional
+	responderProviders sync.Map // key: uint64 (respId), value: string (provider)
 }
 
 // New создаёт новый экземпляр Start
-func New(parent context.Context, mod ModelInterface, end EndpointInterface, bot BotInterface, operator OperatorInterface) *Start {
+func New(parent context.Context, mod Model, end Endpoint, bot BotInterface, operator Operator) *Start {
 	ctx, cancel := context.WithCancel(parent)
 	return &Start{
 		ctx:    ctx,
@@ -114,7 +89,7 @@ func (s *Start) Shutdown() {
 	}
 }
 
-func (s *Start) ask(modelId string, dialogId uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (s *Start) ask(userId uint32, modelId string, dialogId uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 	answerCh := make(chan model.AssistResponse, 1)
 	errCh := make(chan error, 1)
@@ -156,8 +131,9 @@ func (s *Start) ask(modelId string, dialogId uint64, arrAsk []string, files ...m
 		default:
 		}
 
-		body, err := s.Mod.Request(modelId, dialogId, &ask, files...)
+		body, err := s.Mod.Request(userId, modelId, dialogId, ask, files...)
 		if err != nil {
+			logger.Error("ask: ошибка запроса к модели для modelId=%s, dialogId=%d: %v", modelId, dialogId, err, userId)
 			select {
 			case errCh <- fmt.Errorf("ask error making request: %w", err):
 			default:
@@ -222,8 +198,14 @@ func (s *Start) Respondent(
 			logger.Debug("Context.Done Respondent %s", u.RespName, u.Assist.UserId)
 			return
 
-		// Обработка ошибок подключения к оператору
-		case errorType := <-operatorErrorCh:
+		// Обработка ошибок подключения к оператору (только если режим оператора включен)
+		case errorType := <-func() <-chan string {
+			if operatorMode {
+				return operatorErrorCh
+			}
+			return nil
+		}():
+			logger.Debug("Respondent: получен errorType из operatorErrorCh: %s", errorType, u.Assist.UserId)
 			if errorType == "no_tg_id" {
 				logger.Warn("Нет tg_id, отключаем операторский режим", u.Assist.UserId)
 				operatorMode = false
@@ -303,7 +285,7 @@ func (s *Start) Respondent(
 				userAsk := currentQuest.Question
 
 				// Отправляем запрос в AI
-				answer, err := s.AskWithRetry(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+				answer, err := s.AskWithRetry(u.Assist.UserId, u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
 				if err != nil {
 					if IsFatalError(err) {
 						s.sendError(errCh, fmt.Errorf("критическая ошибка при обработке вопроса после таймаута оператора: %v", err), u.Assist.UserId)
@@ -311,6 +293,7 @@ func (s *Start) Respondent(
 					}
 					logger.Debug("Некритическая ошибка AI после таймаута оператора: %v", err, u.Assist.UserId)
 				} else {
+					logger.Debug("ans: %v", answer)
 					// Отправляем ответ AI
 					select {
 					case answerCh <- Answer{
@@ -489,7 +472,7 @@ func (s *Start) Respondent(
 						// Активация операторского режима при триггере
 						//if !operatorMode {
 						//	operatorMode = true
-						//	operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserId, treadId)
+						//	operatorRxCh = s.Inter.ReceiveFromOperator(s.ctx, u.Assist.UserId, treadId)
 						//	logger.Debug("Операторский режим активирован по триггеру для пользователя %d", u.Assist.UserId)
 						//}
 						//logger.Debug("'Respondent' триггер найден в вопросе пользователя, запрашиваю операторский режим", u.Assist.UserId)
@@ -601,7 +584,6 @@ func (s *Start) Respondent(
 		)
 
 		// Операторский запрос (явный), без SetOperator — сначала пробуем синхронно спросить оператора
-		logger.Infoln("Обрабатываю вопрос пользователя, операторский режим:", operatorMode, " запрос оператору:", currentQuest.Operator.Operator, u.Assist.UserId)
 		if currentQuest.Operator.Operator {
 			// Если вопрос помечен как операторский но операторский режим ещё не включён,
 			// значит это первоначальный запрос на операторский режим, пробую связаться с оператором
@@ -619,7 +601,7 @@ func (s *Start) Respondent(
 			if err != nil || (respMsg.Content.Message == "" && len(respMsg.Content.Action.SendFiles) == 0) {
 				s.sendError(errCh, fmt.Errorf("ошибка запроса к оператору или пустой ответ, фолбэк в OpenAI: %v", err), u.Assist.UserId)
 				// Отправляю запрос в OpenAI
-				answer, err = s.AskWithRetry(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+				answer, err = s.AskWithRetry(u.Assist.UserId, u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
 				if err != nil {
 					if IsFatalError(err) {
 						s.sendError(errCh, fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserId, err), u.Assist.UserId)
@@ -665,7 +647,7 @@ func (s *Start) Respondent(
 
 		} else {
 			// Отправляю запрос в OpenAI
-			answer, err = s.AskWithRetry(u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+			answer, err = s.AskWithRetry(u.Assist.UserId, u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
 			if err != nil {
 				if IsFatalError(err) {
 					s.sendError(errCh, fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserId, err), u.Assist.UserId)
@@ -740,6 +722,14 @@ func (s *Start) Respondent(
 			if answer.Meta { // Ассистент пометил ответ как достигший цели
 				s.End.Meta(u.Assist.UserId, treadId, "target", u.RespName, u.Assist.AssistName, u.Assist.Metas.MetaAction)
 			}
+
+			// Только для Lead Hunter достижение цели с передачей контакта
+			if endpointConcrete, ok := s.End.(*endpoint.Endpoint); ok {
+				err := endpointConcrete.CallOptional(int64(respId))
+				if err != nil {
+					logger.Error("ошибка вызова CallOptional для respId %d: %v", respId, err)
+				}
+			}
 		}
 
 		// Отправляем ответ вызывающей функции
@@ -796,6 +786,7 @@ func (s *Start) StarterRespondent(
 			}
 
 			s.Respondent(u, questionCh, answerCh, fullQuestCh, respId, treadId, errCh)
+			logger.Debug("StarterRespondent: s.Respondent завершился для respId=%d", respId, u.Assist.UserId)
 		}()
 	}
 }
@@ -804,14 +795,22 @@ func (s *Start) StarterRespondent(
 func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
 	// Проверка на nil перед доступом к полям
 	if start.Model == nil {
-		logger.Error("StarterListener: start.Model is nil, RespId=%d", start.RespId)
+		logger.Error("[%s] StarterListener: start.Model is nil, RespId=%d", start.Provider, start.RespId)
 		return
+	}
+
+	// Сохраняем provider для этого respId в карту для использования в CallOptional
+	if start.Provider != "" {
+		s.responderProviders.Store(start.RespId, start.Provider)
 	}
 
 	if !start.Model.Services.Listener.Load() {
 		start.Model.Services.Listener.Store(true)
 		go func() {
-			defer func() { start.Model.Services.Listener.Store(false) }()
+			defer func() {
+				start.Model.Services.Listener.Store(false)
+				logger.Debug("[%s] StarterListener: Listener завершен для respId=%d", start.Provider, start.RespId, start.Model.Assist.UserId)
+			}()
 			// Создаём контекст listener, который завершится при отмене:
 			// - родительского s.ctx (общий контекст Start)
 			// - или контекста бота start.Ctx
@@ -830,24 +829,31 @@ func (s *Start) StarterListener(start model.StartCh, errCh chan error) {
 			// Если контекст бота уже отменён — не запускаем Listener
 			select {
 			case <-start.Ctx.Done():
-				logger.Debug("StarterListener отменён по контексту бота %s", start.Model.RespName, start.Model.Assist.UserId)
+				logger.Debug("[%s] StarterListener отменён по контексту бота %s", start.Provider, start.Model.RespName, start.Model.Assist.UserId)
 				return
 			default:
 			}
 
 			if err := s.Listener(start.Model, start.Chanel, start.RespId, start.TreadId); err != nil {
+				logger.Error("[%s] StarterListener: ошибка в Listener для respId=%d: %v", start.Provider, start.RespId, err, start.Model.Assist.UserId)
 				select {
 				case errCh <- err: // Отправляем ошибку в App
 				default:
-					logger.Warn("Не удалось отправить ошибку в errCh: %v", err, start.Model.Assist.UserId)
+					logger.Warn("[%s] Не удалось отправить ошибку в errCh: %v", start.Provider, err, start.Model.Assist.UserId)
 				}
 			}
 		}()
+	} else {
+		logger.Debug("[%s] StarterListener: Listener уже запущен для respId=%d", start.Provider, start.RespId, start.Model.Assist.UserId)
 	}
 }
 
 // Listener слушает канал от пользователя и обрабатывает сообщения
 func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, treadId uint64) error {
+	// Сохраняем provider для этого respId (берем из StartCh через responderProviders)
+	// Defer удалит его при завершении Listener
+	defer s.responderProviders.Delete(respId)
+
 	question := make(chan Question, 10)
 	fullQuestCh := make(chan Answer, 10)
 	answerCh := make(chan Answer, 10)
@@ -901,6 +907,7 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 			logger.Debug("Start context отменён в Listener %s", u.RespName, u.Assist.UserId)
 			return nil
 		case err := <-errCh:
+			logger.Error("Listener: получена ошибка из errCh: %v", err, u.Assist.UserId)
 			return err // Возвращаем возможные ошибки
 		case <-u.Ctx.Done():
 			logger.Debug("Context.Done Listener %s", u.RespName, u.Assist.UserId)
@@ -911,57 +918,55 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 				return nil
 			}
 
-			if msg.Type != "assist" {
-				// Создаю вопрос
-				var quest Question
+			// Создаю вопрос
+			var quest Question
 
-				switch msg.Type {
-				case "user":
-					quest = Question{
-						Question: strings.Split(msg.Content.Message, "\n"),
-						Voice:    false,        // Сообщение от пользователя не голосовое
-						Files:    msg.Files,    // Файлы, прикрепленные к вопросу
-						Operator: msg.Operator, // Помечаем оператором при триггере или если уже отмечено
-					}
-				case "user_voice":
-					quest = Question{
-						Question: strings.Split(msg.Content.Message, "\n"),
-						Voice:    true,         // Сообщение от пользователя голосовое
-						Files:    msg.Files,    // Файлы, прикрепленные к вопросу
-						Operator: msg.Operator, // Помечаем оператором при триггере или если уже отмечено
-					}
-				default:
-					// Неизвестный тип сообщения, пропускаю
-					s.sendError(errCh, fmt.Errorf("неизвестный тип сообщения: %s для пользователя %d", msg.Type, u.Assist.UserId), u.Assist.UserId)
-					continue
+			switch msg.Type {
+			case "user":
+				quest = Question{
+					Question: strings.Split(msg.Content.Message, "\n"),
+					Voice:    false,        // Сообщение от пользователя не голосовое
+					Files:    msg.Files,    // Файлы, прикрепленные к вопросу
+					Operator: msg.Operator, // Помечаем оператором при триггере или если уже отмечено
 				}
+			case "user_voice":
+				quest = Question{
+					Question: strings.Split(msg.Content.Message, "\n"),
+					Voice:    true,         // Сообщение от пользователя голосовое
+					Files:    msg.Files,    // Файлы, прикрепленные к вопросу
+					Operator: msg.Operator, // Помечаем оператором при триггере или если уже отмечено
+				}
+			default:
+				// Неизвестный тип сообщения, пропускаю
+				logger.Warn("Listener: неизвестный тип=%s", msg.Type, u.Assist.UserId)
+				s.sendError(errCh, fmt.Errorf("неизвестный тип сообщения: %s для пользователя %d", msg.Type, u.Assist.UserId), u.Assist.UserId)
+				continue
+			}
 
-				// Защита от паники при отправке в questionCh
-				select {
-				case question <- quest:
-					// Успешно отправлено в очередь
-				case <-s.ctx.Done():
-					logger.Debug("Контекст отменен при отправке в questionCh", u.Assist.UserId)
-					return fmt.Errorf("контекст отменен")
-				case <-time.After(500 * time.Millisecond):
-					// Редкий случай переполнения (>10 сообщений за 5 сек) - тихо пропускаем
-					logger.Warn("Очередь вопросов переполнена, сообщение пропущено", u.Assist.UserId)
-					// НЕ завершаем Listener - продолжаем работу
-				}
+			// Защита от паники при отправке в questionCh
+			select {
+			case question <- quest:
+				// Успешно отправлено в очередь
+			case <-s.ctx.Done():
+				logger.Debug("Контекст отменен при отправке в questionCh", u.Assist.UserId)
+				return fmt.Errorf("контекст отменен")
+			case <-time.After(500 * time.Millisecond):
+				// Редкий случай переполнения (>10 сообщений за 5 сек) - тихо пропускаем
+				// НЕ завершаем Listener - продолжаем работу
+			}
 
-				// Отправляю вопрос клиента в виде сообщения
-				userMsg := s.Mod.NewMessage(msg.Operator, "user", &msg.Content, &msg.Name)
-				if err := usrCh.SendToTx(userMsg); err != nil {
-					logger.Warn("Ошибка отправки вопроса в TxCh для dialogId %d: %v", treadId, err, u.Assist.UserId)
-				}
+			// Отправляю вопрос клиента в виде сообщения
+			userMsg := s.Mod.NewMessage(msg.Operator, "user", &msg.Content, &msg.Name)
+			if err := usrCh.SendToTx(userMsg); err != nil {
+				logger.Warn("Ошибка отправки вопроса в TxCh для dialogId %d: %v", treadId, err, u.Assist.UserId)
 			}
 		case quest := <-fullQuestCh: // Пришёл полный вопрос пользователя
 			switch quest.VoiceQuestion {
 			case false: // Вопрос задан текстом
 				// Нужно создать отдельный канал слушателя для сохранения диалога для использования асинхронного сохранения
-				s.End.SaveDialog(comdb.User, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
+				s.End.SaveDialog(db.User, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			case true: // Вопрос задан голосом
-				s.End.SaveDialog(comdb.UserVoice, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
+				s.End.SaveDialog(db.UserVoice, treadId, &quest.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			}
 		case resp := <-answerCh: // Пришёл ответ ассистента/оператора
 			assistMsg := s.Mod.NewMessage(resp.Operator, "assist", &resp.Answer, &u.Assist.AssistName)
@@ -974,10 +979,19 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 			// Сохраняем диалог после успешной отправки
 			switch resp.Operator.Operator {
 			case false:
-				s.End.SaveDialog(comdb.AI, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
+				s.End.SaveDialog(db.AI, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			case true:
-				s.End.SaveDialog(comdb.Operator, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
+				s.End.SaveDialog(db.Operator, treadId, &resp.Answer) // убрал go для гарантированного порядка сохранения диалогов
 			}
 		}
 	}
+}
+
+// GetProviderForResponder возвращает сохраненный provider для respId
+// Возвращает provider и флаг найден ли он
+func (s *Start) GetProviderForResponder(respId uint64) (string, bool) {
+	if val, ok := s.responderProviders.Load(respId); ok {
+		return val.(string), true
+	}
+	return "", false
 }

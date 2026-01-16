@@ -1,6 +1,7 @@
-package models
+package create
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -28,7 +29,7 @@ const ModelShemaJSON = `{
                                     "type": "string",
                                     "enum": ["photo", "video", "audio", "doc"]
                                 },
-                                "url": {
+                                "Url": {
                                     "type": "string"
                                 },
                                 "file_name": {
@@ -38,7 +39,7 @@ const ModelShemaJSON = `{
                                     "type": "string"
                                 }
                             },
-                            "required": ["type", "url", "file_name", "caption"],
+                            "required": ["type", "Url", "file_name", "caption"],
                             "additionalProperties": false
                         }
                     }
@@ -52,6 +53,234 @@ const ModelShemaJSON = `{
         "required": ["message", "action", "target", "operator"],
         "additionalProperties": false
     }`
+
+// buildEnhancedPromptAndSchema генерирует улучшенный промпт и JSON Schema на основе параметров модели
+func buildEnhancedPromptAndSchema(basePrompt string, realUserID uint64, metaAction string, operator, s3, interpreter, search bool, hasFiles bool) (string, []byte, error) {
+	enhancedPrompt := basePrompt + "\n\n"
+
+	// Добавляем важное напоминание
+	if metaAction != "" || operator {
+		enhancedPrompt += "## ⚠️ ВАЖНОЕ НАПОМИНАНИЕ:\n" +
+			"В КАЖДОМ ответе ты ОБЯЗАН:\n"
+
+		if metaAction != "" {
+			enhancedPrompt += "1. Проверить условие достижения ЦЕЛИ (из твоих инструкций выше) и правильно установить target\n"
+		}
+
+		if operator {
+			enhancedPrompt += "2. Проверить нужен ли оператор (из твоих инструкций выше) и правильно установить operator\n"
+		}
+
+		enhancedPrompt += "3. НЕ ИГНОРИРУЙ эти проверки!\n\n"
+	}
+
+	// Добавляем инструкции по работе с S3 файлами
+	if s3 {
+		enhancedPrompt += "## РАБОТА С ФАЙЛАМИ S3:\n\n" +
+			"### Два типа файлов:\n" +
+			"1. **Существующие файлы** (найденные через get_s3_files) - используй их реальные URL\n" +
+			"2. **Созданные файлы** (через create_file) - используй URL из ответа функции\n\n" +
+			"### Алгоритм работы с файлами:\n" +
+			"1. Для получения списка файлов вызови: get_s3_files() - без параметров\n" +
+			"2. Для создания нового файла вызови: create_file({\"content\": \"...\", \"file_name\": \"...txt\"})\n" +
+			"3. Для существующих файлов используй URL из ответа get_s3_files\n" +
+			"4. Для созданных файлов используй URL из ответа create_file\n\n" +
+			"### Определение типа файла:\n" +
+			"- .jpg, .jpeg, .png, .gif, .webp, .bmp → \"photo\"\n" +
+			"- .mp4, .avi, .mov, .webm, .mkv → \"video\"\n" +
+			"- .mp3, .wav, .flac, .aac, .ogg → \"audio\"\n" +
+			"- Остальные → \"doc\"\n\n"
+	}
+
+	// Добавляем инструкции по Code Interpreter
+	if interpreter {
+		enhancedPrompt += "## CODE INTERPRETER:\n" +
+			"Ты можешь выполнять Python код для:\n" +
+			"- Анализа данных и вычислений\n" +
+			"- Создания графиков и визуализаций\n" +
+			"- Обработки файлов (CSV, Excel, JSON и т.д.)\n" +
+			"- Генерации файлов с результатами\n\n" +
+			"Созданные через Code Interpreter файлы автоматически доступны в ответе.\n\n"
+	}
+
+	// Добавляем инструкции по поиску в документах
+	if search || hasFiles {
+		enhancedPrompt += "## ПОИСК В ДОКУМЕНТАХ (File Search):\n" +
+			"У тебя есть доступ к базе знаний из загруженных документов.\n" +
+			"Используй file_search для поиска информации в документах пользователя.\n" +
+			"Всегда ссылайся на источники при использовании информации из документов.\n\n"
+	}
+
+	// Добавляем общие правила для send_files
+	if s3 || interpreter {
+		enhancedPrompt += "## ПРАВИЛА отправки файлов (send_files):\n" +
+			"1. Если НЕ отправляешь файлы - send_files должен быть пустым массивом []\n" +
+			"2. Если упоминаешь файлы в message - ОБЯЗАТЕЛЬНО добавь их в send_files\n" +
+			"3. Каждый файл в send_files должен содержать:\n" +
+			"   - type: тип файла (photo/video/audio/doc)\n" +
+			"   - Url: полный URL файла\n" +
+			"   - file_name: имя файла\n" +
+			"   - caption: описание файла\n\n"
+	}
+
+	// Финальная инструкция по формату ответа
+	enhancedPrompt += "## ФОРМАТ ОТВЕТА:\n" +
+		"Твой ответ ВСЕГДА должен быть в формате JSON Schema:\n" +
+		ModelShemaJSON + "\n\n" +
+		"### ⚠️ КРИТИЧЕСКИ ВАЖНО - ПРАВИЛА для полей JSON:\n\n" +
+		"**message**: Твоё текстовое сообщение пользователю\n\n" +
+		"**action.send_files**: Массив файлов для отправки ([] если файлов нет)\n\n"
+
+	// Инструкции по target
+	if metaAction != "" {
+		enhancedPrompt += "**target** (boolean) - Достигнута ли ЦЕЛЬ диалога:\n" +
+			"  ✅ Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  ✅ Если условие ТОЧНО выполнено → target: true\n" +
+			"  ✅ Если условие НЕ выполнено → target: false\n" +
+			"  ❌ НЕ ставь false если цель достигнута!\n\n"
+	} else {
+		enhancedPrompt += "**target**: ВСЕГДА false (цели нет)\n\n"
+	}
+
+	// Инструкции по operator
+	if operator {
+		enhancedPrompt += "**operator** (boolean) - Требуется ли оператор:\n" +
+			"  ✅ Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  ✅ Если пользователь просит оператора → operator: true\n" +
+			"  ✅ Во всех остальных случаях → operator: false\n\n"
+	}
+
+	// Добавляем примеры
+	if metaAction != "" {
+		if operator {
+			enhancedPrompt += "### Пример ответа когда цель ДОСТИГНУТА:\n" +
+				"```json\n" +
+				"{\n" +
+				"  \"message\": \"Привет, Жорик! Рад познакомиться! 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n" +
+				"  \"target\": true,  // ← ЦЕЛЬ ДОСТИГНУТА!\n" +
+				"  \"operator\": false\n" +
+				"}\n" +
+				"```\n\n" +
+				"### Пример ответа когда цель НЕ достигнута:\n" +
+				"```json\n" +
+				"{\n" +
+				"  \"message\": \"Привет! Как дела? 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n" +
+				"  \"target\": false,  // ← цель НЕ достигнута\n" +
+				"  \"operator\": false\n" +
+				"}\n" +
+				"```\n\n"
+		} else {
+			enhancedPrompt += "### Пример ответа когда цель ДОСТИГНУТА:\n" +
+				"```json\n" +
+				"{\n" +
+				"  \"message\": \"Привет, Жорик! Рад познакомиться! 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n" +
+				"  \"target\": true  // ← ЦЕЛЬ ДОСТИГНУТА!\n" +
+				"}\n" +
+				"```\n\n" +
+				"### Пример ответа когда цель НЕ достигнута:\n" +
+				"```json\n" +
+				"{\n" +
+				"  \"message\": \"Привет! Как дела? 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n" +
+				"  \"target\": false  // ← цель НЕ достигнута\n" +
+				"}\n" +
+				"```\n\n"
+		}
+	}
+
+	enhancedPrompt += "ВАЖНО: Возвращай только валидный JSON без дополнительного текста."
+
+	// Генерируем JSON Schema
+	hasMetaAction := metaAction != ""
+	dynamicSchema := generateModelSchema(hasMetaAction, operator)
+	schemaJSON, err := json.Marshal(dynamicSchema)
+	if err != nil {
+		return "", nil, fmt.Errorf("ошибка сериализации JSON Schema: %w", err)
+	}
+
+	return enhancedPrompt, schemaJSON, nil
+}
+
+// generateModelSchema генерирует JSON Schema с учётом параметров модели
+func generateModelSchema(hasMetaAction bool, hasOperator bool) map[string]interface{} {
+	// Формируем список required полей
+	requiredFields := []string{"message", "action", "target"}
+
+	// operator добавляем в required только если он включен
+	if hasOperator {
+		requiredFields = append(requiredFields, "operator")
+	}
+
+	schema := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"message": map[string]interface{}{
+				"type": "string",
+			},
+			"action": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"send_files": map[string]interface{}{
+						"type": "array",
+						"items": map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"type": map[string]interface{}{
+									"type": "string",
+									"enum": []string{"photo", "video", "audio", "doc"},
+								},
+								"Url": map[string]interface{}{
+									"type": "string",
+								},
+								"file_name": map[string]interface{}{
+									"type": "string",
+								},
+								"caption": map[string]interface{}{
+									"type": "string",
+								},
+							},
+							"required":             []string{"type", "Url", "file_name", "caption"},
+							"additionalProperties": false,
+						},
+					},
+				},
+				"required":             []string{"send_files"},
+				"additionalProperties": false,
+			},
+		},
+		"required":             requiredFields,
+		"additionalProperties": false,
+	}
+
+	// Настраиваем поле target
+	if hasMetaAction {
+		// Если есть MetaAction - target может быть true или false
+		schema["properties"].(map[string]interface{})["target"] = map[string]interface{}{
+			"type": "boolean",
+		}
+	} else {
+		// Если нет MetaAction - target ВСЕГДА false
+		schema["properties"].(map[string]interface{})["target"] = map[string]interface{}{
+			"type": "boolean",
+			"enum": []interface{}{false},
+		}
+	}
+
+	// Настраиваем поле operator ТОЛЬКО если оно включено
+	if hasOperator {
+		// Если Operator включен - operator может быть true или false
+		schema["properties"].(map[string]interface{})["operator"] = map[string]interface{}{
+			"type": "boolean",
+		}
+	}
+	// Если operator выключен - НЕ добавляем его в schema вообще!
+	// Значение operator: false будет добавлено на стороне кода при парсинге ответа
+
+	return schema
+}
 
 // вызывается во внешнем приложении при добавлении файла пользователем
 // UploadFileToOpenAI загружает файл в OpenAI и возвращает его ID
@@ -94,7 +323,7 @@ func (m *UniversalModel) AddFileFromOpenAI(userId uint32, fileID, fileName strin
 		return fmt.Errorf("ошибка добавления файла в Vector Store: %w", err)
 	}
 
-	logger.Debug("Файл %s успешно добавлен в Vector Store", fileName, userId)
+	//logger.Debug("Файл %s успешно добавлен в Vector Store", fileName, userId)
 	return nil
 }
 
@@ -131,8 +360,6 @@ func (m *UniversalModel) deleteFileFromOpenAI(fileID string) error {
 			if err != nil {
 				// Логируем ошибку, но не прерываем процесс, так как основной файл уже мог быть удален
 				logger.Error("Предупреждение: не удалось удалить Vector Store %s: %v", vs.ID, err)
-			} else {
-				logger.Debug("Vector Store %s, связанный с файлом %s, успешно удален: %v", vs.ID, fileID, err)
 			}
 			// Прерываем цикл, так как нашли и обработали нужное хранилище
 			break
@@ -143,16 +370,158 @@ func (m *UniversalModel) deleteFileFromOpenAI(fileID string) error {
 }
 
 // createModel Создаю новую модель OpenAI Assistant
-func (m *UniversalModel) createModel(
-	userId uint32, gptName string, modelName string, model []byte, fileIDs []Ids) (UMCR, error) {
-	// Извлекаем текстовые инструкции из JSON
-	var modelData map[string]interface{}
-	if err := json.Unmarshal(model, &modelData); err != nil {
-		return UMCR{}, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
+func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
+	// modelData уже распарсена и типизирована, используем напрямую
+
+	// Получаем real_user_id для использования в инструкциях
+	realUserID, err := m.GetRealUserID(userId)
+	if err != nil {
+		logger.Warn("Не удалось получить real_user_id для userId %d: %v", userId, err)
+		realUserID = uint64(userId) // Fallback на обычный userId
 	}
 
-	// Создаем текст для системных инструкций
-	systemInstructions := modelData["prompt"].(string)
+	// Автоматически генерируем системные инструкции на основе параметров
+	enhancedPrompt := modelData.Prompt + "\n\n"
+
+	// Добавляем важное напоминание в начало - только для активных функций
+	if modelData.MetaAction != "" || modelData.Operator {
+		enhancedPrompt += "## ⚠️ ВАЖНОЕ НАПОМИНАНИЕ:\n" +
+			"В КАЖДОМ ответе ты ОБЯЗАН:\n"
+
+		if modelData.MetaAction != "" {
+			enhancedPrompt += "1. Проверить условие достижения ЦЕЛИ (из твоих инструкций выше) и правильно установить target\n"
+		}
+
+		if modelData.Operator {
+			enhancedPrompt += "2. Проверить нужен ли оператор (из твоих инструкций выше) и правильно установить operator\n"
+		}
+
+		enhancedPrompt += "3. НЕ ИГНОРИРУЙ эти проверки!\n\n"
+	}
+
+	// Добавляем инструкции по работе с S3 файлами
+	if modelData.S3 {
+		enhancedPrompt += "## РАБОТА С ФАЙЛАМИ S3:\n\n" +
+			fmt.Sprintf("**КРИТИЧЕСКИ ВАЖНО**: Твой user_id = \"%d\" (это строка, не число!)\n\n", realUserID) +
+			"### Два типа файлов:\n" +
+			"1. **Существующие файлы** (найденные через get_s3_files) - используй их реальные URL\n" +
+			"2. **Созданные файлы** (через create_file) - используй URL из ответа функции\n\n" +
+			"### Алгоритм работы с файлами:\n" +
+			fmt.Sprintf("1. Для получения списка файлов вызови: get_s3_files({\"user_id\": \"%d\"})\n", realUserID) +
+			fmt.Sprintf("2. Для создания нового файла вызови: create_file({\"user_id\": \"%d\", \"content\": \"...\", \"file_name\": \"...txt\"})\n", realUserID) +
+			"3. Для существующих файлов используй URL из ответа get_s3_files\n" +
+			"4. Для созданных файлов используй URL из ответа create_file\n\n" +
+			"### Определение типа файла:\n" +
+			"- .jpg, .jpeg, .png, .gif, .webp, .bmp → \"photo\"\n" +
+			"- .mp4, .avi, .mov, .webm, .mkv → \"video\"\n" +
+			"- .mp3, .wav, .flac, .aac, .ogg → \"audio\"\n" +
+			"- Остальные → \"doc\"\n\n"
+	}
+
+	// Добавляем инструкции по Code Interpreter
+	if modelData.Interpreter {
+		enhancedPrompt += "## CODE INTERPRETER:\n" +
+			"Ты можешь выполнять Python код для:\n" +
+			"- Анализа данных и вычислений\n" +
+			"- Создания графиков и визуализаций\n" +
+			"- Обработки файлов (CSV, Excel, JSON и т.д.)\n" +
+			"- Генерации файлов с результатами\n\n" +
+			"Созданные через Code Interpreter файлы автоматически доступны в ответе.\n\n"
+	}
+
+	// Добавляем инструкции по поиску в документах
+	if modelData.Search || len(fileIDs) > 0 {
+		enhancedPrompt += "## ПОИСК В ДОКУМЕНТАХ (File Search):\n" +
+			"У тебя есть доступ к базе знаний из загруженных документов.\n" +
+			"Используй file_search для поиска информации в документах пользователя.\n" +
+			"Всегда ссылайся на источники при использовании информации из документов.\n\n"
+	}
+
+	// Добавляем общие правила для send_files
+	if modelData.S3 || modelData.Interpreter {
+		enhancedPrompt += "## ПРАВИЛА отправки файлов (send_files):\n" +
+			"1. Если НЕ отправляешь файлы - send_files должен быть пустым массивом []\n" +
+			"2. Если упоминаешь файлы в message - ОБЯЗАТЕЛЬНО добавь их в send_files\n" +
+			"3. Каждый файл в send_files должен содержать:\n" +
+			"   - type: тип файла (photo/video/audio/doc)\n" +
+			"   - Url: полный URL файла\n" +
+			"   - file_name: имя файла\n" +
+			"   - caption: описание файла\n\n"
+	}
+
+	// Финальная инструкция по формату ответа
+	enhancedPrompt += "## ФОРМАТ ОТВЕТА:\n" +
+		"Твой ответ ВСЕГДА должен быть в формате JSON Schema:\n" +
+		ModelShemaJSON + "\n\n" +
+		"### ⚠️ КРИТИЧЕСКИ ВАЖНО - ПРАВИЛА для полей JSON:\n\n" +
+		"**message**: Твоё текстовое сообщение пользователю\n\n" +
+		"**action.send_files**: Массив файлов для отправки ([] если файлов нет)\n\n"
+
+	// Добавляем инструкции про target только если есть MetaAction
+	if modelData.MetaAction != "" {
+		enhancedPrompt += "**target** (boolean) - Достигнута ли ЦЕЛЬ диалога:\n" +
+			"  ✅ Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  ✅ Если условие ТОЧНО выполнено → target: true\n" +
+			"  ✅ Если условие НЕ выполнено → target: false\n" +
+			"  ❌ НЕ ставь false если цель достигнута!\n\n"
+	} else {
+		enhancedPrompt += "**target**: ВСЕГДА false (цели нет)\n\n"
+	}
+
+	// Добавляем инструкции про operator только если Operator включен
+	if modelData.Operator {
+		enhancedPrompt += "**operator** (boolean) - Требуется ли оператор:\n" +
+			"  ✅ Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  ✅ Если пользователь просит оператора → operator: true\n" +
+			"  ✅ Во всех остальных случаях → operator: false\n\n"
+	}
+	// Если operator выключен - не упоминаем его вообще, поле не будет в JSON ответе
+
+	// Добавляем примеры только если есть цель
+	if modelData.MetaAction != "" {
+		// Формируем примеры в зависимости от того, включен ли operator
+		if modelData.Operator {
+			// Если operator включен - показываем его в примерах
+			enhancedPrompt += "### Пример ответа когда цель ДОСТИГНУТА:\n" +
+				"```json\n" +
+				"{\n" +
+				"  \"message\": \"Привет, Жорик! Рад познакомиться! 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n" +
+				"  \"target\": true,  // ← ЦЕЛЬ ДОСТИГНУТА!\n" +
+				"  \"operator\": false\n" +
+				"}\n" +
+				"```\n\n" +
+				"### Пример ответа когда цель НЕ достигнута:\n" +
+				"```json\n" +
+				"{\n" +
+				"  \"message\": \"Привет! Как дела? 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n" +
+				"  \"target\": false,  // ← цель НЕ достигнута\n" +
+				"  \"operator\": false\n" +
+				"}\n" +
+				"```\n\n"
+		} else {
+			// Если operator выключен - НЕ показываем его в примерах
+			enhancedPrompt += "### Пример ответа когда цель ДОСТИГНУТА:\n" +
+				"```json\n" +
+				"{\n" +
+				"  \"message\": \"Привет, Жорик! Рад познакомиться! 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n" +
+				"  \"target\": true  // ← ЦЕЛЬ ДОСТИГНУТА!\n" +
+				"}\n" +
+				"```\n\n" +
+				"### Пример ответа когда цель НЕ достигнута:\n" +
+				"```json\n" +
+				"{\n" +
+				"  \"message\": \"Привет! Как дела? 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n" +
+				"  \"target\": false  // ← цель НЕ достигнута\n" +
+				"}\n" +
+				"```\n\n"
+		}
+	}
+
+	enhancedPrompt += "ВАЖНО: Возвращай только валидный JSON без дополнительного текста."
 
 	// Извлекаю id[]string из fileIDs
 	var ids []string
@@ -179,86 +548,112 @@ func (m *UniversalModel) createModel(
 
 	description := fmt.Sprintf("Модель для пользователя %d", userId)
 
-	// Создаем базовый AssistantRequest
+	// Генерируем JSON Schema с учётом параметров модели
+	hasMetaAction := modelData.MetaAction != ""
+	hasOperator := modelData.Operator
+	dynamicSchema := generateModelSchema(hasMetaAction, hasOperator)
+	schemaJSON, err := json.Marshal(dynamicSchema)
+	if err != nil {
+		return UMCR{}, fmt.Errorf("ошибка сериализации JSON Schema: %w", err)
+	}
+
+	// Форматируем JSON для читабельности
+	var prettyJSON bytes.Buffer
+	if err := json.Indent(&prettyJSON, schemaJSON, "", "  "); err == nil {
+		logger.Debug("Сгенерированная JSON Schema:\n%s", prettyJSON.String(), userId)
+	}
+	// Создаем базовый AssistantRequest с улучшенными инструкциями
 	assistantRequest := openai.AssistantRequest{
-		Name:         &modelName,
+		Name:         &modelData.Name,
 		Description:  &description,
-		Instructions: &systemInstructions,
-		Model:        gptName,
+		Instructions: &enhancedPrompt, // Используем улучшенный промпт
+		Model:        modelData.GptType.Name,
+		Metadata: map[string]any{
+			"realUserId":      fmt.Sprintf("%d", realUserID),                 // Сохраняем realUserID для ActionHandler
+			"operatorEnabled": fmt.Sprintf("%t", modelData.Operator),         // Сохраняем флаг Operator
+			"hasMetaAction":   fmt.Sprintf("%t", modelData.MetaAction != ""), // Сохраняем флаг MetaAction
+		},
 		ResponseFormat: &openai.ChatCompletionResponseFormat{
 			Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
 			JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
 				Name:   "response_with_action_files",
 				Strict: true,
-				Schema: json.RawMessage(ModelShemaJSON),
+				Schema: json.RawMessage(schemaJSON), // Используем динамическую схему
 			},
 		},
 	}
 
-	// Условно добавляем инструменты на основе флагов в modelData
+	// Условно добавляем инструменты на основе флагов
 	var tools []openai.AssistantTool
 
-	// Принудительно добавляем file_search если есть файлы
-	if len(vectorStoreIDs) > 0 {
-		tools = append(tools, openai.AssistantTool{Type: "file_search"})
-	} else if search, ok := modelData["search"].(bool); ok && search {
+	// Принудительно добавляем file_search если есть файлы или включен Search
+	if len(vectorStoreIDs) > 0 || modelData.Search {
 		tools = append(tools, openai.AssistantTool{Type: "file_search"})
 	}
 
-	if interpreter, ok := modelData["interpreter"].(bool); ok && interpreter {
+	if modelData.Interpreter {
 		tools = append(tools, openai.AssistantTool{Type: "code_interpreter"})
 	}
 
-	// Добавляем функции get_s3_files и create_file
-	tools = append(tools,
-		openai.AssistantTool{
-			Type: "function",
-			Function: &openai.FunctionDefinition{
-				Name:        "get_s3_files",
-				Description: "Получает список доступных файлов для конкретного пользователя",
-				Strict:      false,
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": "ID пользователя для получения его файлов",
-						},
-					},
-					"required": []string{"user_id"},
-				},
-			},
-		},
-		openai.AssistantTool{
-			Type: "function",
-			Function: &openai.FunctionDefinition{
-				Name:        "create_file",
-				Description: "Создает файл с указанным содержимым и сохраняет его на S3 для конкретного пользователя",
-				Strict:      false,
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": "ID пользователя для сохранения файла",
-						},
-						"content": map[string]interface{}{
-							"type":        "string",
-							"description": "Содержимое файла",
-						},
-						"file_name": map[string]interface{}{
-							"type":        "string",
-							"description": "Имя файла с расширением",
-						},
-					},
-					"required": []string{"user_id", "content", "file_name"},
-				},
-			},
-		},
-	)
+	// Добавляем функции get_s3_files и create_file ТОЛЬКО если включен S3
+	if modelData.S3 {
+		// Преобразуем realUserID в строку
+		userIDStr := fmt.Sprintf("%d", realUserID)
 
-	// Устанавливаем инструменты (теперь они всегда будут, так как добавили функции)
-	assistantRequest.Tools = tools
+		tools = append(tools,
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "get_s3_files",
+					Description: "Получает список доступных файлов пользователя из S3",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+								"const":       userIDStr, // Константа - ВСЕГДА это значение!
+							},
+						},
+						"required": []string{"user_id"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "create_file",
+					Description: "Создает текстовый файл и сохраняет в S3",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+								"const":       userIDStr, // Константа - ВСЕГДА это значение!
+							},
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "Текстовое содержимое файла",
+							},
+							"file_name": map[string]interface{}{
+								"type":        "string",
+								"description": "Имя файла с расширением (.txt, .md и т.д.)",
+							},
+						},
+						"required": []string{"user_id", "content", "file_name"},
+					},
+				},
+			},
+		)
+	}
+
+	// Устанавливаем инструменты только если они есть
+	if len(tools) > 0 {
+		assistantRequest.Tools = tools
+	}
 
 	// Добавляем ToolResources только если есть векторы для file_search
 	if len(vectorStoreIDs) > 0 {
@@ -361,47 +756,23 @@ func (m *UniversalModel) deleteOpenAIModel(userId uint32, modelData *UserModelRe
 		progressCallback("✅ OpenAI Assistant и файлы удалены из API")
 	}
 
-	err := m.db.RemoveModelFromUser(userId, modelData.ModelId)
-	if err != nil {
-		return fmt.Errorf("ошибка удаления связи из user_models: %w", err)
-	}
-
-	// Если удалённая модель была активной - переключаем на оставшуюся
-	if modelData.IsActive {
-		remainingModels, err := m.db.GetAllUserModels(userId)
-		if err != nil {
-			logger.Warn("Ошибка получения оставшихся моделей: %v", err, userId)
-		} else if len(remainingModels) > 0 {
-			// Переключаем на первую оставшуюся модель по провайдеру
-			newActiveProvider := remainingModels[0].Provider
-			err = m.db.SetActiveModelByProvider(userId, newActiveProvider)
-			if err != nil {
-				logger.Error("Ошибка автоматического переключения активной модели: %v", err, userId)
-			} else {
-				logger.Info("Активная модель автоматически переключена на провайдер %s после удаления",
-					newActiveProvider.String(), userId)
-				if progressCallback != nil {
-					progressCallback(fmt.Sprintf("✅ Активная модель переключена на %s", newActiveProvider.String()))
-				}
-			}
-		}
-	}
-
-	if progressCallback != nil {
-		progressCallback("✅ Модель пользователя успешно удалена")
-	}
-
 	logger.Info("OpenAI модель успешно удалена из API и БД", userId)
 	return nil
 }
 
 // createOpenAIModel создаёт OpenAI Assistant (внутренний метод)
-func (m *UniversalModel) createOpenAIModel(userId uint32, gptName string, modelName string, modelJSON []byte, fileIDs []Ids) (UMCR, error) {
+// createOpenAIModel создаёт OpenAI Assistant (внутренний метод)
+func (m *UniversalModel) createOpenAIModel(userId uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
 	if m.openaiClient == nil {
 		return UMCR{}, fmt.Errorf("OpenAI клиент не инициализирован")
 	}
+
+	if modelData == nil {
+		return UMCR{}, fmt.Errorf("modelData не может быть nil")
+	}
+
 	// Используем существующий метод createModel
-	umcr, err := m.createModel(userId, gptName, modelName, modelJSON, fileIDs)
+	umcr, err := m.createModel(userId, modelData, fileIDs)
 	if err != nil {
 		return UMCR{}, err
 	}
@@ -410,27 +781,151 @@ func (m *UniversalModel) createOpenAIModel(userId uint32, gptName string, modelN
 }
 
 // updateOpenAIModelInPlace обновляет OpenAI Assistant
-func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updated *UniversalModelData, modelJSON []byte) error {
-	// Парсим JSON для извлечения дополнительных настроек
-	var modelData map[string]interface{}
-	if err := json.Unmarshal(modelJSON, &modelData); err != nil {
-		return fmt.Errorf("ошибка разбора JSON модели: %w", err)
+func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updated *UniversalModelData) error {
+	// Получаем real_user_id для использования в инструкциях
+	realUserID, err := m.GetRealUserID(userId)
+	if err != nil {
+		logger.Warn("Не удалось получить real_user_id для userId %d: %v", userId, err)
+		realUserID = uint64(userId) // Fallback
+	}
+
+	// Автоматически генерируем системные инструкции (ТА ЖЕ ЛОГИКА ЧТО В createModel)
+	enhancedPrompt := updated.Prompt + "\n\n"
+
+	// Добавляем важное напоминание
+	if updated.MetaAction != "" || updated.Operator {
+		enhancedPrompt += "## ⚠️ ВАЖНОЕ НАПОМИНАНИЕ:\n" +
+			"В КАЖДОМ ответе ты ОБЯЗАН:\n"
+
+		if updated.MetaAction != "" {
+			enhancedPrompt += "1. Проверить условие достижения ЦЕЛИ (из твоих инструкций выше) и правильно установить target\n"
+		}
+
+		if updated.Operator {
+			enhancedPrompt += "2. Проверить нужен ли оператор (из твоих инструкций выше) и правильно установить operator\n"
+		}
+
+		enhancedPrompt += "3. НЕ ИГНОРИРУЙ эти проверки!\n\n"
+	}
+
+	// Добавляем инструкции по работе с S3 файлами
+	if updated.S3 {
+		enhancedPrompt += "## РАБОТА С ФАЙЛАМИ S3:\n\n" +
+			"### Два типа файлов:\n" +
+			"1. **Существующие файлы** (найденные через get_s3_files) - используй их реальные URL\n" +
+			"2. **Созданные файлы** (через create_file) - используй URL из ответа функции\n\n" +
+			"### Алгоритм работы с файлами:\n" +
+			"1. Для получения списка файлов вызови: get_s3_files() - без параметров\n" +
+			"2. Для создания нового файла вызови: create_file({\"content\": \"...\", \"file_name\": \"...txt\"})\n" +
+			"3. Для существующих файлов используй URL из ответа get_s3_files\n" +
+			"4. Для созданных файлов используй URL из ответа create_file\n\n" +
+			"### Определение типа файла:\n" +
+			"- .jpg, .jpeg, .png, .gif, .webp, .bmp → \"photo\"\n" +
+			"- .mp4, .avi, .mov, .webm, .mkv → \"video\"\n" +
+			"- .mp3, .wav, .flac, .aac, .ogg → \"audio\"\n" +
+			"- Остальные → \"doc\"\n\n"
+	}
+
+	// Добавляем инструкции по Code Interpreter
+	if updated.Interpreter {
+		enhancedPrompt += "## CODE INTERPRETER:\n" +
+			"Ты можешь выполнять Python код для:\n" +
+			"- Анализа данных и вычислений\n" +
+			"- Создания графиков и визуализаций\n" +
+			"- Обработки файлов (CSV, Excel, JSON и т.д.)\n" +
+			"- Генерации файлов с результатами\n\n"
+	}
+
+	// Добавляем инструкции по поиску в документах
+	if updated.Search || len(updated.FileIds) > 0 {
+		enhancedPrompt += "## ПОИСК В ДОКУМЕНТАХ (File Search):\n" +
+			"У тебя есть доступ к базе знаний из загруженных документов.\n" +
+			"Используй file_search для поиска информации в документах пользователя.\n" +
+			"Всегда ссылайся на источники при использовании информации из документов.\n\n"
+	}
+
+	// Добавляем общие правила для send_files
+	if updated.S3 || updated.Interpreter {
+		enhancedPrompt += "## ПРАВИЛА отправки файлов (send_files):\n" +
+			"1. Если НЕ отправляешь файлы - send_files должен быть пустым массивом []\n" +
+			"2. Если упоминаешь файлы в message - ОБЯЗАТЕЛЬНО добавь их в send_files\n" +
+			"3. Каждый файл в send_files должен содержать:\n" +
+			"   - type, Url, file_name, caption\n\n"
+	}
+
+	// Финальная инструкция по формату ответа
+	enhancedPrompt += "## ФОРМАТ ОТВЕТА:\n" +
+		"Твой ответ ВСЕГДА должен быть в формате JSON Schema:\n" +
+		ModelShemaJSON + "\n\n" +
+		"### ⚠️ КРИТИЧЕСКИ ВАЖНО - ПРАВИЛА для полей JSON:\n\n" +
+		"**message**: Твоё текстовое сообщение пользователю\n\n" +
+		"**action.send_files**: Массив файлов для отправки ([] если файлов нет)\n\n"
+
+	if updated.MetaAction != "" {
+		enhancedPrompt += "**target** (boolean) - Достигнута ли ЦЕЛЬ диалога:\n" +
+			"  ✅ Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  ✅ Если условие ТОЧНО выполнено → target: true\n" +
+			"  ✅ Если условие НЕ выполнено → target: false\n\n"
+	} else {
+		enhancedPrompt += "**target**: ВСЕГДА false (цели нет)\n\n"
+	}
+
+	if updated.Operator {
+		enhancedPrompt += "**operator** (boolean) - Требуется ли оператор:\n" +
+			"  ✅ Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  ✅ Если пользователь просит оператора → operator: true\n" +
+			"  ✅ Во всех остальных случаях → operator: false\n\n"
+	}
+
+	// Добавляем примеры
+	if updated.MetaAction != "" {
+		if updated.Operator {
+			enhancedPrompt += "### Пример ответа когда цель ДОСТИГНУТА:\n" +
+				"```json\n{\n  \"message\": \"Привет, Жорик! Рад познакомиться! 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n  \"target\": true,\n  \"operator\": false\n}\n```\n\n"
+		} else {
+			enhancedPrompt += "### Пример ответа когда цель ДОСТИГНУТА:\n" +
+				"```json\n{\n  \"message\": \"Привет, Жорик! Рад познакомиться! 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n  \"target\": true\n}\n```\n\n"
+		}
+	}
+
+	enhancedPrompt += "ВАЖНО: Возвращай только валидный JSON без дополнительного текста."
+
+	// Генерируем JSON Schema
+	hasMetaAction := updated.MetaAction != ""
+	hasOperator := updated.Operator
+	dynamicSchema := generateModelSchema(hasMetaAction, hasOperator)
+	schemaJSON, err := json.Marshal(dynamicSchema)
+	if err != nil {
+		return fmt.Errorf("ошибка сериализации JSON Schema: %w", err)
 	}
 
 	description := fmt.Sprintf("Модель для пользователя %d", userId)
 
-	// Определяем инструменты
-	var tools []openai.AssistantTool
+	// Обрабатываем векторные хранилища и файлы
 	var vectorStoreIDs []string
+	var tools []openai.AssistantTool
 
-	// Проверяем, нужен ли file_search
-	searchEnabled, _ := modelData["search"].(bool)
-	needsFileSearch := searchEnabled && len(updated.FileIds) > 0
-
-	existingModelData, err := m.db.GetModelByProvider(userId, existing.Provider)
-	if err != nil || existingModelData == nil {
-		return fmt.Errorf("ошибка получения записи модели: %w", err)
+	// Получаем все модели пользователя и находим нужную
+	allModels, err := m.db.GetAllUserModels(userId)
+	if err != nil {
+		return fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
+
+	var existingModelData *UserModelRecord
+	for i := range allModels {
+		if allModels[i].Provider == existing.Provider {
+			existingModelData = &allModels[i]
+			break
+		}
+	}
+
+	if existingModelData == nil {
+		return fmt.Errorf("запись модели провайдера %s не найдена для пользователя", existing.Provider)
+	}
+
+	needsFileSearch := updated.Search && len(updated.FileIds) > 0
 
 	if needsFileSearch {
 		// Проверяем, изменились ли файлы
@@ -444,13 +939,12 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 			}
 
 			vsName := fmt.Sprintf("vs_user_%d_%d", userId, time.Now().Unix())
-			vsRequest := openai.VectorStoreRequest{
+			vectorStore, err := m.openaiClient.CreateVectorStore(m.ctx, openai.VectorStoreRequest{
 				Name:    vsName,
 				FileIDs: ids,
-			}
-			vectorStore, err := m.openaiClient.CreateVectorStore(m.ctx, vsRequest)
+			})
 			if err != nil {
-				return fmt.Errorf("ошибка создания нового Vector Store: %w", err)
+				return fmt.Errorf("ошибка создания Vector Store: %w", err)
 			}
 			vectorStoreIDs = append(vectorStoreIDs, vectorStore.ID)
 
@@ -463,17 +957,16 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 
 			for _, oldVectorId := range existing.VecIds.VectorId {
 				if _, err := m.openaiClient.DeleteVectorStore(m.ctx, oldVectorId); err != nil {
-					logger.Error("Ошибка удаления старого Vector Store %s: %v", oldVectorId, err, userId)
+					logger.Error("Ошибка удаления Vector Store %s: %v", oldVectorId, err, userId)
 				}
 			}
 		} else {
-			// Файлы не изменились
 			vectorStoreIDs = existing.VecIds.VectorId
 		}
 
 		tools = append(tools, openai.AssistantTool{Type: "file_search"})
 	} else {
-		// File search не нужен - удаляем все файлы и векторные хранилища
+		// Удаляем все файлы и векторные хранилища
 		for _, file := range existing.FileIds {
 			if err := m.deleteFileFromOpenAI(file.ID); err != nil {
 				logger.Error("Ошибка удаления файла %s: %v", file.ID, err, userId)
@@ -487,65 +980,85 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 		}
 
 		vectorStoreIDs = []string{}
-		logger.Debug("Векторные хранилища и файлы удалены, так как search=false или нет файлов", userId)
 	}
 
 	// Code interpreter
-	if interpreter, ok := modelData["interpreter"].(bool); ok && interpreter {
+	if updated.Interpreter {
 		tools = append(tools, openai.AssistantTool{Type: "code_interpreter"})
 	}
 
-	// Добавляем стандартные функции (из action_handler.go)
-	tools = append(tools,
-		openai.AssistantTool{
-			Type: "function",
-			Function: &openai.FunctionDefinition{
-				Name:        "lead_target",
-				Description: "Отмечает достижение целевого действия в диалоге",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"target": map[string]interface{}{
-							"type":        "boolean",
-							"description": "true если цель достигнута",
+	// Добавляем функции S3 ТОЛЬКО если включен
+	if updated.S3 {
+		userIDStr := fmt.Sprintf("%d", realUserID)
+
+		tools = append(tools,
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "get_s3_files",
+					Description: "Получает список доступных файлов пользователя из S3",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+								"const":       userIDStr,
+							},
 						},
+						"required": []string{"user_id"},
 					},
-					"required": []string{"target"},
 				},
 			},
-		},
-		openai.AssistantTool{
-			Type: "function",
-			Function: &openai.FunctionDefinition{
-				Name:        "get_s3_files",
-				Description: "Получает список доступных файлов для конкретного пользователя",
-				Parameters: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": "ID пользователя для получения его файлов",
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "create_file",
+					Description: "Создает текстовый файл и сохраняет в S3",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+								"const":       userIDStr,
+							},
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "Текстовое содержимое файла",
+							},
+							"file_name": map[string]interface{}{
+								"type":        "string",
+								"description": "Имя файла с расширением",
+							},
 						},
+						"required": []string{"user_id", "content", "file_name"},
 					},
-					"required": []string{"user_id"},
 				},
 			},
-		},
-	)
+		)
+	}
 
 	// Создаем запрос на обновление
 	updateRequest := openai.AssistantRequest{
 		Name:         &updated.Name,
 		Description:  &description,
-		Instructions: &updated.Prompt,
+		Instructions: &enhancedPrompt, // Используем улучшенный промпт
 		Model:        updated.GptType.Name,
 		Tools:        tools,
+		Metadata: map[string]any{
+			"realUserId":      fmt.Sprintf("%d", realUserID),
+			"operatorEnabled": fmt.Sprintf("%t", updated.Operator),
+			"hasMetaAction":   fmt.Sprintf("%t", updated.MetaAction != ""),
+		},
 		ResponseFormat: &openai.ChatCompletionResponseFormat{
 			Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
 			JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
 				Name:   "response_with_action_files",
 				Strict: true,
-				Schema: json.RawMessage(ModelShemaJSON),
+				Schema: json.RawMessage(schemaJSON), // Динамическая схема
 			},
 		},
 	}
@@ -576,10 +1089,9 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 		VectorId: vectorStoreIDs,
 	}
 
-	// Сериализуем vecIds в JSON
 	vecIdsJSON, err := json.Marshal(vecIds)
 	if err != nil {
-		return fmt.Errorf("failed to marshal vector IDs: %w", err)
+		return fmt.Errorf("ошибка сериализации vector IDs: %w", err)
 	}
 
 	umcr := UMCR{
@@ -593,7 +1105,7 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 		return fmt.Errorf("ошибка сохранения обновленной модели в БД: %w", err)
 	}
 
-	logger.Info("OpenAI Assistant успешно обновлен для пользователя %d", userId, userId)
+	logger.Info("OpenAI Assistant успешно обновлен", userId)
 	return nil
 }
 

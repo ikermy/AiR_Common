@@ -1,6 +1,9 @@
 package openai
 
 import (
+	"AiR_TG-lead-generator/internal/app/db"
+	"AiR_TG-lead-generator/internal/app/model"
+	"AiR_TG-lead-generator/internal/app/model/create"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -14,19 +17,20 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/sashabaranov/go-openai"
 )
 
-type DB interface {
-	ReadContext(dialogId uint64) (json.RawMessage, error)
-	SaveContext(treadId uint64, context json.RawMessage) error
-	// Методы для работы с диалогами
-	SaveDialog(dialogId uint64, data json.RawMessage) error
-	ReadDialog(dialogId uint64) (model.DialogData, error)
+//type DB interface {
+//	ReadContext(dialogId uint64) (json.RawMessage, error)
+//	SaveContext(treadId uint64, context json.RawMessage) error
+//	// Методы для работы с диалогами
+//	SaveDialog(dialogId uint64, data json.RawMessage) error
+//	ReadDialog(dialogId uint64) (json.RawMessage, error)
+//
+//	GetUserVectorStorage(userId uint32) (string, error)
+//}
 
-	GetUserVectorStorage(userId uint32) (string, error)
-}
+type DB = db.Exterior
 
 type OpenAIModel struct {
 	ctx           context.Context
@@ -49,6 +53,7 @@ type RespModel struct {
 	Assist   model.Assistant
 	RespName string
 	Services Services
+	Haunter  bool // Модель используется для поиска лидов
 }
 
 type Services struct {
@@ -91,7 +96,7 @@ func NewAsRouterOption() model.RouterOption {
 	}
 }
 
-// Реализация интерфейса model.Model
+// Реализация интерфейса model.Inter
 func (m *OpenAIModel) NewMessage(operator model.Operator, msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message {
 	return model.Message{
 		Operator:  operator,
@@ -103,7 +108,7 @@ func (m *OpenAIModel) NewMessage(operator model.Operator, msgType string, conten
 	}
 }
 
-func (m *OpenAIModel) GetFileAsReader(url string) (io.Reader, error) {
+func (m *OpenAIModel) GetFileAsReader(userId uint32, url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
 	}
@@ -163,22 +168,64 @@ func (m *OpenAIModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId u
 	}
 
 	// Загружаем thread из БД
-	contextData, err := m.db.ReadContext(dialogId)
+	contextData, err := m.db.ReadContext(dialogId, create.ProviderOpenAI)
 	if err != nil {
 		if strings.Contains(err.Error(), "получены пустые данные") {
-			logger.Info("Инициализация нового диалога %d для userId %d", dialogId, assist.UserId)
+			logger.Info("Инициализация нового диалога %d", dialogId, assist.UserId)
 			// Thread будет создан при первом запросе
 		} else {
 			logger.Error("Ошибка чтения контекста для dialogId %d: %v", dialogId, err)
 		}
-	} else {
-		var thread *openai.Thread
-		err = json.Unmarshal(contextData, &thread)
-		if err != nil {
-			logger.Error("Ошибка десериализации контекста для dialogId %d: %v", dialogId, err)
-			return nil, err
+	} else if contextData != nil {
+		// Загружаем структуру с thread_id
+		var contextObj struct {
+			ThreadID string `json:"thread_id"`
 		}
-		user.Thread = thread
+
+		// JSON_EXTRACT может вернуть строку с кавычками, пробуем распарсить
+		err = json.Unmarshal(contextData, &contextObj)
+		if err != nil {
+			// Если не получилось, пробуем убрать внешние кавычки и распарсить снова
+			var rawString string
+			if err2 := json.Unmarshal(contextData, &rawString); err2 == nil {
+				// Успешно извлекли строку, теперь парсим её как JSON
+				if err3 := json.Unmarshal([]byte(rawString), &contextObj); err3 != nil {
+					logger.Error("Ошибка десериализации контекста для dialogId %d: %v", dialogId, err3)
+					return nil, err3
+				}
+			} else {
+				logger.Error("Ошибка десериализации контекста для dialogId %d: %v", dialogId, err)
+				return nil, err
+			}
+		}
+
+		// Если thread_id есть, загружаем thread от OpenAI
+		if contextObj.ThreadID != "" {
+			thread, err := m.client.RetrieveThread(context.Background(), contextObj.ThreadID)
+			if err != nil {
+				logger.Error("Ошибка загрузки thread %s для dialogId %d: %v", contextObj.ThreadID, dialogId, err)
+				// Если ошибка загрузки, создадим новый thread
+			} else {
+				user.Thread = &thread
+				logger.Info("Загружен существующий thread %s для dialogId %d", thread.ID, dialogId)
+			}
+		}
+	}
+
+	// Загружаем параметры модели из БД (включая Haunter)
+	compressedData, _, err := m.db.ReadUserModelByProvider(assist.UserId, create.ProviderOpenAI)
+	if err != nil {
+		logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, assist.UserId)
+	} else if compressedData != nil {
+		// Используем функцию из пакета db для распаковки и извлечения всех параметров
+		_, _, _, image, webSearch, video, haunter, err := db.DecompressAndExtractMetadata(compressedData)
+		if err != nil {
+			logger.Warn("Ошибка распаковки параметров модели: %v", err, assist.UserId)
+		} else {
+			user.Haunter = haunter
+			logger.Debug("Загружены параметры модели: Image=%v, WebSearch=%v, Video=%v, Haunter=%v",
+				image, webSearch, video, haunter, assist.UserId)
+		}
 	}
 
 	// Используем respId как ключ
@@ -283,13 +330,17 @@ func (m *OpenAIModel) SaveAllContextDuringExit() {
 		if respModel.Thread != nil && respModel.Chan != nil {
 			dialogId := respModel.Chan.DialogId
 
-			threadsJSON, err := json.Marshal(respModel.Thread)
+			// Сохраняем только thread_id, не весь объект Thread
+			contextData := map[string]interface{}{
+				"thread_id": respModel.Thread.ID,
+			}
+			threadsJSON, err := json.Marshal(contextData)
 			if err != nil {
 				logger.Error("Ошибка сериализации thread для dialogId %d: %v", dialogId, err)
 				return true
 			}
 
-			err = m.db.SaveContext(dialogId, threadsJSON)
+			err = m.db.SaveContext(dialogId, create.ProviderOpenAI, threadsJSON)
 			if err != nil {
 				logger.Error("Ошибка сохранения thread для dialogId %d: %v", dialogId, err)
 			} else {
@@ -303,7 +354,12 @@ func (m *OpenAIModel) SaveAllContextDuringExit() {
 	logger.Info("OpenAIModel: сохранение thread завершено")
 }
 
-func (m *OpenAIModel) TranscribeAudio(audioData []byte, fileName string) (string, error) {
+// TranscribeAudio обёртка
+func (m *OpenAIModel) TranscribeAudio(userid uint32, audioData []byte, fileName string) (string, error) {
+	return m.transcribeAudioFile(audioData, fileName)
+}
+
+func (m *OpenAIModel) transcribeAudioFile(audioData []byte, fileName string) (string, error) {
 	if len(audioData) == 0 {
 		return "", fmt.Errorf("пустые аудиоданные")
 	}
@@ -324,6 +380,12 @@ func (m *OpenAIModel) TranscribeAudio(audioData []byte, fileName string) (string
 	}
 
 	return resp.Text, nil
+}
+
+// DeleteTempFile удаляет загруженный файл (OpenAI не требует явного удаления)
+func (m *OpenAIModel) DeleteTempFile(fileID string) error {
+	// OpenAI не требует явного удаления файлов после использования
+	return nil
 }
 
 func (m *OpenAIModel) Shutdown() {

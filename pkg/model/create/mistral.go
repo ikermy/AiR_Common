@@ -1,4 +1,4 @@
-package models
+package create
 
 import (
 	"bytes"
@@ -33,7 +33,7 @@ const MistralSchemaJSON = `{
 								"enum": ["photo", "video", "audio", "doc"],
 								"description": "Тип файла"
 							},
-							"url": {
+							"Url": {
 								"type": "string",
 								"description": "URL файла"
 							},
@@ -46,7 +46,7 @@ const MistralSchemaJSON = `{
 								"description": "Подпись к файлу"
 							}
 						},
-						"required": ["type", "url", "file_name", "caption"]
+						"required": ["type", "Url", "file_name", "caption"]
 					}
 				}
 			},
@@ -83,9 +83,10 @@ type MistralDocument struct {
 
 // MistralAgentClient клиент для работы с Mistral Agents API
 type MistralAgentClient struct {
-	apiKey string
-	url    string
-	ctx    context.Context
+	apiKey         string
+	url            string
+	ctx            context.Context
+	universalModel *UniversalModel // Ссылка на UniversalModel для доступа к GetRealUserID
 }
 
 // deleteMistralModel удаляет Mistral Agent (с поддержкой WS сообщений)
@@ -196,7 +197,7 @@ func (m *MistralAgentClient) deleteAgent(agentID string) error {
 }
 
 // updateMistralModelInPlace обновляет Mistral Agent
-func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, updated *UniversalModelData, modelJSON []byte) error {
+func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, updated *UniversalModelData) error {
 	if m.mistralClient == nil {
 		return fmt.Errorf("Mistral клиент не инициализирован")
 	}
@@ -204,9 +205,22 @@ func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, upda
 	// Для Mistral нужно удалить старого агента и создать нового
 	// (Mistral API может не поддерживать PATCH/UPDATE агентов)
 
-	existingModelData, err := m.db.GetModelByProvider(userId, existing.Provider)
-	if err != nil || existingModelData == nil {
-		return fmt.Errorf("ошибка получения записи модели: %w", err)
+	// Получаем все модели пользователя и находим нужную
+	allModels, err := m.db.GetAllUserModels(userId)
+	if err != nil {
+		return fmt.Errorf("ошибка получения моделей пользователя: %w", err)
+	}
+
+	var existingModelData *UserModelRecord
+	for i := range allModels {
+		if allModels[i].Provider == existing.Provider {
+			existingModelData = &allModels[i]
+			break
+		}
+	}
+
+	if existingModelData == nil {
+		return fmt.Errorf("запись модели провайдера %s не найдена для пользователя", existing.Provider)
 	}
 
 	// Проверяем, изменились ли файлы (аналогично OpenAI)
@@ -236,20 +250,19 @@ func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, upda
 		return fmt.Errorf("ошибка сохранения обновленной модели в БД: %w", err)
 	}
 
-	logger.Info("Mistral Agent успешно обновлен для пользователя %d (новый ID: %s)", userId, umcr.AssistID, userId)
+	logger.Info("Mistral Agent успешно обновлен (новый ID: %s)", umcr.AssistID, userId)
 	return nil
 }
 
 // createMistralModel создаёт Mistral Agent (внутренний метод)
-func (m *UniversalModel) createMistralModel(userId uint32, gptName string, modelName string, modelJSON []byte, fileIDs []Ids) (UMCR, error) {
+// createMistralModel создаёт Mistral Agent (внутренний метод)
+func (m *UniversalModel) createMistralModel(userId uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
 	if m.mistralClient == nil {
-		return UMCR{}, fmt.Errorf("Mistral клиент не инициализирован")
+		return UMCR{}, fmt.Errorf("mistral клиент не инициализирован")
 	}
 
-	// Парсим JSON для извлечения данных модели
-	var modelData UniversalModelData
-	if err := json.Unmarshal(modelJSON, &modelData); err != nil {
-		return UMCR{}, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
+	if modelData == nil {
+		return UMCR{}, fmt.Errorf("modelData не может быть nil")
 	}
 
 	if modelData.Prompt == "" {
@@ -257,7 +270,7 @@ func (m *UniversalModel) createMistralModel(userId uint32, gptName string, model
 	}
 
 	// Создаём агента через Mistral API с поддержкой всех возможностей
-	umcr, err := m.mistralClient.createMistralAgent(&modelData, userId, fileIDs)
+	umcr, err := m.mistralClient.createMistralAgent(modelData, userId, fileIDs)
 	if err != nil {
 		return UMCR{}, fmt.Errorf("ошибка создания Mistral агента: %w", err)
 	}
@@ -277,16 +290,104 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 
 	description := fmt.Sprintf("Agent для пользователя %d", userId)
 
-	// Добавляем JSON Schema в промпт для структурированного вывода
-	// Mistral API не поддерживает response_format, поэтому добавляем схему в instructions
-	enhancedPrompt := modelData.Prompt + "\n\n" +
-		fmt.Sprintf("СИСТЕМНАЯ ИНФОРМАЦИЯ:\n"+
-			"- Твой user_id: %d\n"+
-			"- При вызове функций get_s3_files и create_file ВСЕГДА используй этот user_id\n"+
-			"- НЕ спрашивай user_id у пользователя\n\n", userId) +
-		"ВАЖНО: Твой ответ ДОЛЖЕН быть валидным JSON в следующем формате:\n" +
+	// Получаем реальный user_id через universalModel
+	realUserId, err := m.universalModel.GetRealUserID(userId)
+	if err != nil {
+		return UMCR{}, fmt.Errorf("ошибка получения реального user_id: %v", err)
+	}
+
+	// Формируем enhancedPrompt динамически в зависимости от возможностей модели
+	enhancedPrompt := modelData.Prompt + "\n\n"
+
+	// Добавляем важное напоминание - только для активных функций
+	if modelData.MetaAction != "" || modelData.Operator {
+		enhancedPrompt += "⚠️ ВАЖНОЕ НАПОМИНАНИЕ:\n" +
+			"В КАЖДОМ ответе ты ОБЯЗАН:\n"
+
+		if modelData.MetaAction != "" {
+			enhancedPrompt += "1. Проверить условие достижения ЦЕЛИ (из твоих инструкций выше) и правильно установить target\n"
+		}
+
+		if modelData.Operator {
+			enhancedPrompt += "2. Проверить нужен ли оператор (из твоих инструкций выше) и правильно установить operator\n"
+		}
+
+		enhancedPrompt += "3. НЕ ИГНОРИРУЙ эти проверки!\n\n"
+	}
+
+	// Добавляем системную информацию о user_id только если есть функции для работы с файлами
+	if modelData.S3 {
+		enhancedPrompt += fmt.Sprintf("СИСТЕМНАЯ ИНФОРМАЦИЯ:\n"+
+			"- Твой user_id: \"%d\" (СТРОКА, НЕ ЧИСЛО!)\n"+
+			"- При вызове ВСЕХ функций передавай user_id как СТРОКУ: {\"user_id\": \"%d\"}\n"+
+			"- НЕ спрашивай user_id у пользователя, используй ТОЛЬКО это значение\n\n", realUserId, realUserId)
+	}
+
+	// Добавляем инструкции по работе с файлами только если S3 включен
+	if modelData.S3 {
+		enhancedPrompt += "РАБОТА С ФАЙЛАМИ:\n" +
+			"1. Если пользователь просит СОЗДАТЬ новый файл - ВСЕГДА сначала вызови функцию create_file с содержимым\n" +
+			"2. После создания файла вызови get_s3_files чтобы получить актуальный список с новым файлом\n" +
+			"3. Затем отправь созданный файл в send_files\n" +
+			"4. Если пользователь просит показать существующие файлы - вызови get_s3_files и отправь нужные\n" +
+			"5. Определяй тип файла: .jpg/.png/.gif → photo, .mp4 → video, .mp3 → audio, .txt/.pdf и др → doc\n\n"
+	}
+
+	// Добавляем инструкции по генерации изображений только если Image включен
+	if modelData.Image {
+		enhancedPrompt += "ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ:\n" +
+			"Когда пользователь просит нарисовать/сгенерировать/создать изображение:\n" +
+			"1. Опиши в своём текстовом ответе что ты рисуешь\n" +
+			"2. Система АВТОМАТИЧЕСКИ сгенерирует и отправит изображение пользователю\n" +
+			"3. НЕ добавляй файлы в send_files - они добавятся автоматически!\n" +
+			"4. Просто ответь пользователю что создаёшь изображение\n\n"
+	}
+
+	// Добавляем инструкции по веб-поиску только если WebSearch включен
+	if modelData.WebSearch {
+		enhancedPrompt += "ВЕБ-ПОИСК:\n" +
+			"Когда пользователь задаёт вопрос, требующий актуальной информации из интернета:\n" +
+			"1. Система АВТОМАТИЧЕСКИ выполнит поиск в интернете\n" +
+			"2. Используй полученные результаты для формирования ответа\n" +
+			"3. Ссылайся на источники если это уместно\n\n"
+	}
+
+	// Добавляем определение типов файлов только если S3 или Image включены
+	if modelData.S3 || modelData.Image {
+		enhancedPrompt += "Определение типа файла для send_files:\n" +
+			"   - .jpg/.png/.gif/.webp → \"photo\"\n" +
+			"   - .mp4/.avi → \"video\"\n" +
+			"   - .mp3/.wav → \"audio\"\n" +
+			"   - .txt/.pdf/.doc и остальные → \"doc\"\n\n"
+	}
+
+	// Добавляем инструкции по полям target и operator
+	enhancedPrompt += "ПРАВИЛА для полей JSON ответа:\n\n"
+
+	// Инструкции по target
+	if modelData.MetaAction != "" {
+		enhancedPrompt += "**target** (boolean) - Достигнута ли ЦЕЛЬ диалога:\n" +
+			"  ✅ Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  ✅ Если условие ТОЧНО выполнено → target: true\n" +
+			"  ✅ Если условие НЕ выполнено → target: false\n\n"
+	} else {
+		enhancedPrompt += "**target**: ВСЕГДА false (цели нет)\n\n"
+	}
+
+	// Инструкции по operator
+	if modelData.Operator {
+		enhancedPrompt += "**operator** (boolean) - Требуется ли оператор:\n" +
+			"  ✅ Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  ✅ Если пользователь просит оператора → operator: true\n" +
+			"  ✅ Во всех остальных случаях → operator: false\n\n"
+	} else {
+		enhancedPrompt += "**operator**: ВСЕГДА false (вызов оператора отключен)\n\n"
+	}
+
+	// Финальная инструкция по формату ответа (всегда)
+	enhancedPrompt += "ВАЖНО: Твой ответ ДОЛЖЕН быть валидным JSON (можешь обернуть в ```json):\n" +
 		MistralSchemaJSON + "\n\n" +
-		"Всегда возвращай ответ строго в этом JSON формате."
+		"Всегда возвращай ответ строго в этом JSON формате. Можешь использовать markdown: ```json\\n{...}\\n```"
 
 	payload := map[string]interface{}{
 		"name":         modelData.Name,
@@ -309,13 +410,13 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 			"type": "function",
 			"function": map[string]interface{}{
 				"name":        "get_s3_files",
-				"description": "Получает список доступных файлов для конкретного пользователя",
+				"description": fmt.Sprintf("Получает список файлов пользователя из S3. ВАЖНО: user_id должен быть СТРОКОЙ \"%d\"", userId),
 				"parameters": map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"user_id": map[string]interface{}{
 							"type":        "string",
-							"description": "ID пользователя для получения его файлов",
+							"description": fmt.Sprintf("ID пользователя СТРОКОЙ: \"%d\"", userId),
 						},
 					},
 					"required": []string{"user_id"},
@@ -326,21 +427,21 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 			"type": "function",
 			"function": map[string]interface{}{
 				"name":        "create_file",
-				"description": "Создает файл с указанным содержимым и сохраняет его на S3 для конкретного пользователя",
+				"description": fmt.Sprintf("Создаёт текстовый файл (.txt, .md) и сохраняет в S3. ВАЖНО: user_id = \"%d\" (строка!)", userId),
 				"parameters": map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"user_id": map[string]interface{}{
 							"type":        "string",
-							"description": "ID пользователя для сохранения файла",
+							"description": fmt.Sprintf("ID пользователя СТРОКОЙ: \"%d\"", userId),
 						},
 						"content": map[string]interface{}{
 							"type":        "string",
-							"description": "Содержимое файла",
+							"description": "Текстовое содержимое файла",
 						},
 						"file_name": map[string]interface{}{
 							"type":        "string",
-							"description": "Имя файла с расширением",
+							"description": "Имя файла с расширением (.txt, .md и т.д.)",
 						},
 					},
 					"required": []string{"user_id", "content", "file_name"},
@@ -837,7 +938,7 @@ func (m *UniversalModel) CreateMistralLibraryWithFiles(userId uint32, fileIDs []
 		return "", fmt.Errorf("ошибка создания библиотеки: %w", err)
 	}
 
-	logger.Info("Создана библиотека Mistral: %s для пользователя %d", library.ID, userId)
+	logger.Info("Создана библиотека Mistral: %s", library.ID, userId)
 
 	// Загружаем файлы в библиотеку (нужно получить данные файлов из хранилища)
 	// TODO: реализовать загрузку файлов из вашего хранилища
@@ -860,7 +961,7 @@ func (m *UniversalModel) AddFileToMistralLibrary(userId uint32, libraryID, fileN
 		return nil, fmt.Errorf("ошибка загрузки документа: %w", err)
 	}
 
-	logger.Info("Файл %s успешно добавлен в библиотеку %s для пользователя %d", fileName, libraryID, userId)
+	logger.Info("Файл %s успешно добавлен в библиотеку %s", fileName, libraryID, userId)
 	return document, nil
 }
 
@@ -875,7 +976,7 @@ func (m *UniversalModel) DeleteMistralLibrary(userId uint32, libraryID string) e
 		return fmt.Errorf("ошибка удаления библиотеки: %w", err)
 	}
 
-	logger.Info("Библиотека %s удалена для пользователя %d", libraryID, userId)
+	logger.Info("Библиотека %s удалена", libraryID, userId)
 	return nil
 }
 

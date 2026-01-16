@@ -72,7 +72,7 @@ func (e *Endpoint) SendEvent(userId uint32, event, userName, assistName, target 
 }
 
 func (e *Endpoint) SendNotification(msg common.CarpCh) error {
-	res, err := e.Db.GetNotificationChannel(msg.UserID)
+	res, err := e.db.GetNotificationChannel(msg.UserID)
 	if err != nil {
 		return fmt.Errorf("ошибка получения каналов уведомлений: %w", err)
 	}
@@ -108,13 +108,13 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 			// Подготовка сообщения Telegram
 			telegramValue, ok := ch["channel_value"].(string)
 			if !ok {
-				logger.Error("channel_value не является строкой для пользователя %d", msg.UserID)
+				logger.Error("channel_value не является строкой", msg.UserID)
 				lastError = fmt.Errorf("channel_value не является строкой")
 				continue
 			}
 			tId, err := strconv.ParseInt(telegramValue, 10, 64)
 			if err != nil {
-				logger.Error("ошибка преобразования Telegram ID для пользователя %d: %v", msg.UserID, err)
+				logger.Error("ошибка преобразования Telegram ID: %v", err, msg.UserID)
 				lastError = err
 				continue
 			}
@@ -136,20 +136,20 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 			// Подготовка сообщения Email
 			emailValue, ok := ch["channel_value"].(string)
 			if !ok {
-				logger.Error("channel_value не является строкой для пользователя %d", msg.UserID)
+				logger.Error("channel_value не является строкой", msg.UserID)
 				lastError = fmt.Errorf("channel_value не является строкой")
 				continue
 			}
 			err = SendEmailNotification(msg.UserID, emailValue, msg.Event, msg.UserName, msg.AssistName, msg.Target)
 			if err != nil {
-				logger.Error("ошибка отправки Email уведомления для пользователя %d: %v", msg.UserID, err)
+				logger.Error("ошибка отправки Email уведомления: %v", err, msg.UserID)
 				lastError = err
 				continue
 			}
 			successCount++
 
 		default:
-			logger.Warn("Неизвестный канал уведомлений: %s для пользователя %d", ch["channel_type"], msg.UserID)
+			logger.Warn("Неизвестный канал уведомлений: %s", ch["channel_type"], msg.UserID)
 		}
 	}
 

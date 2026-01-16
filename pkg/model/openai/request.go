@@ -1,6 +1,8 @@
 package openai
 
 import (
+	"AiR_TG-lead-generator/internal/app/model"
+	"AiR_TG-lead-generator/internal/app/model/create"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,8 +10,6 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/ikermy/AiR_Common/pkg/model"
-	models "github.com/ikermy/AiR_Common/pkg/model/create"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -184,16 +184,16 @@ func (m *OpenAIModel) mergeResponses(responses []model.AssistResponse) model.Ass
 	return merged
 }
 
-func (m *OpenAIModel) Request(modelId string, dialogId uint64, text *string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (m *OpenAIModel) Request(userId uint32, modelId string, dialogId uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 
-	if (text == nil || *text == "") && len(files) == 0 {
+	if text == "" && len(files) == 0 {
 		return emptyResponse, fmt.Errorf("пустое сообщение и нет файлов")
 	}
 
 	err := m.CreateThead(dialogId)
 	if err != nil {
-		logger.Warn("не удалось создать тред: %v", err)
+		logger.Warn("не удалось создать тред: %v", err, userId)
 	}
 
 	// Ищем RespModel по dialogId в Chan
@@ -226,16 +226,10 @@ func (m *OpenAIModel) Request(modelId string, dialogId uint64, text *string, fil
 		vectorStore *openai.VectorStore
 	)
 
-	t := text
-	if t == nil {
-		empty := ""
-		t = &empty
-	}
-
 	if len(files) > 0 {
 		vectorStore, err = m.getAssistantVectorStore(respModel.Assist.AssistId)
 		if err != nil {
-			logger.Error("Не удалось получить векторное хранилище: %w", err)
+			logger.Error("Не удалось получить векторное хранилище: %w", err, userId)
 		}
 	}
 
@@ -243,13 +237,13 @@ func (m *OpenAIModel) Request(modelId string, dialogId uint64, text *string, fil
 		var fileNames []string
 		fileIDs, fileNames, err = m.uploadFilesForAssistant(files, vectorStore)
 		if err != nil {
-			logger.Error("Не удалось загрузить файлы: %w", err)
-			messageReq = createMsg(t)
+			logger.Error("Не удалось загрузить файлы: %w", err, userId)
+			messageReq = createMsg(text)
 		} else {
-			messageReq = createMsgWithFiles(t, fileNames)
+			messageReq = createMsgWithFiles(text, fileNames)
 		}
 	} else {
-		messageReq = createMsg(t)
+		messageReq = createMsg(text)
 	}
 
 	_, err = m.client.CreateMessage(m.ctx, thead.ID, messageReq)
@@ -311,7 +305,7 @@ func (m *OpenAIModel) Request(modelId string, dialogId uint64, text *string, fil
 	}
 
 	if m.actionHandler != nil {
-		if tools := m.actionHandler.GetTools(models.ProviderOpenAI); tools != nil {
+		if tools := m.actionHandler.GetTools(create.ProviderOpenAI); tools != nil {
 			if openaiTools, ok := tools.([]openai.Tool); ok {
 				runRequest.Tools = openaiTools
 			}
@@ -340,25 +334,25 @@ func (m *OpenAIModel) Request(modelId string, dialogId uint64, text *string, fil
 }
 
 // createMsg создает простое сообщение для OpenAI
-func createMsg(text *string) openai.MessageRequest {
+func createMsg(text string) openai.MessageRequest {
 	return openai.MessageRequest{
 		Role:    "user",
-		Content: *text,
+		Content: text,
 	}
 }
 
 // createMsgWithFiles создает сообщение с файлами для OpenAI
-func createMsgWithFiles(text *string, fileNames []string) openai.MessageRequest {
+func createMsgWithFiles(text string, fileNames []string) openai.MessageRequest {
 	msg := openai.MessageRequest{
 		Role:    "user",
-		Content: *text,
+		Content: text,
 	}
 	if len(fileNames) == 1 {
-		*text += fmt.Sprintf("\n\nОБЯЗАТЕЛЬНО используй file_search для анализа содержимого этого файла: %s. И если потребуется code_interpreter. ИГНОРИРУЙ все остальные файлы в векторном хранилище - это важно!", fileNames[0])
+		text += fmt.Sprintf("\n\nОБЯЗАТЕЛЬНО используй file_search для анализа содержимого этого файла: %s. И если потребуется code_interpreter. ИГНОРИРУЙ все остальные файлы в векторном хранилище - это важно!", fileNames[0])
 	} else {
-		*text += fmt.Sprintf("\n\nОБЯЗАТЕЛЬНО используй file_search для анализа содержимого этих файлов: %s. И если потребуется code_interpreter. ИГНОРИРУЙ все остальные файлы в векторном хранилище - это важно!", strings.Join(fileNames, ", "))
+		text += fmt.Sprintf("\n\nОБЯЗАТЕЛЬНО используй file_search для анализа содержимого этих файлов: %s. И если потребуется code_interpreter. ИГНОРИРУЙ все остальные файлы в векторном хранилище - это важно!", strings.Join(fileNames, ", "))
 	}
-	msg.Content = *text
+	msg.Content = text
 
 	return msg
 }
