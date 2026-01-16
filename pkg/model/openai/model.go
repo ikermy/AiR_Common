@@ -1,9 +1,6 @@
 package openai
 
 import (
-	"AiR_TG-lead-generator/internal/app/db"
-	"AiR_TG-lead-generator/internal/app/model"
-	"AiR_TG-lead-generator/internal/app/model/create"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,22 +12,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/ikermy/AiR_Common/pkg/model"
+	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"github.com/sashabaranov/go-openai"
 )
 
-//type DB interface {
-//	ReadContext(dialogId uint64) (json.RawMessage, error)
-//	SaveContext(treadId uint64, context json.RawMessage) error
-//	// Методы для работы с диалогами
-//	SaveDialog(dialogId uint64, data json.RawMessage) error
-//	ReadDialog(dialogId uint64) (json.RawMessage, error)
-//
-//	GetUserVectorStorage(userId uint32) (string, error)
-//}
-
-type DB = db.Exterior
+type DB = comdb.Exterior
 
 type OpenAIModel struct {
 	ctx           context.Context
@@ -218,7 +208,7 @@ func (m *OpenAIModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId u
 		logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, assist.UserId)
 	} else if compressedData != nil {
 		// Используем функцию из пакета db для распаковки и извлечения всех параметров
-		_, _, _, image, webSearch, video, haunter, err := db.DecompressAndExtractMetadata(compressedData)
+		_, _, _, image, webSearch, video, haunter, err := comdb.DecompressAndExtractMetadata(compressedData)
 		if err != nil {
 			logger.Warn("Ошибка распаковки параметров модели: %v", err, assist.UserId)
 		} else {

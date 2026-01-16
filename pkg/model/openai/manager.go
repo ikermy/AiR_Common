@@ -1,11 +1,11 @@
 package openai
 
 import (
-	"AiR_TG-lead-generator/internal/app/model/create"
 	"fmt"
 	"strings"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"github.com/sashabaranov/go-openai"
 )
 
