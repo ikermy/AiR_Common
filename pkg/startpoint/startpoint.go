@@ -44,8 +44,6 @@ type Answer struct {
 
 // BotInterface - интерфейс для различных реализаций ботов
 type BotInterface interface {
-	StartBots() error
-	StopBot()
 	DisableOperatorMode(userId uint32, dialogId uint64, silent ...bool) error
 }
 
