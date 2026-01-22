@@ -335,7 +335,7 @@ func (d *DB) ReadDialog(dialogId uint64, limit ...uint8) (json.RawMessage, error
 	if len(limit) == 0 {
 		// без лимита
 		err = d.Conn().QueryRowContext(ctx,
-			"SELECT ReadDialog(?);", dialogId).Scan(&data)
+			"SELECT ReadDialog(?, NULL);", dialogId).Scan(&data)
 	} else {
 		// с лимитом
 		err = d.Conn().QueryRowContext(ctx,

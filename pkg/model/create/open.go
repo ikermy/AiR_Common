@@ -760,7 +760,6 @@ func (m *UniversalModel) deleteOpenAIModel(userId uint32, modelData *UserModelRe
 }
 
 // createOpenAIModel создаёт OpenAI Assistant (внутренний метод)
-// createOpenAIModel создаёт OpenAI Assistant (внутренний метод)
 func (m *UniversalModel) createOpenAIModel(userId uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
 	if m.openaiClient == nil {
 		return UMCR{}, fmt.Errorf("OpenAI клиент не инициализирован")
