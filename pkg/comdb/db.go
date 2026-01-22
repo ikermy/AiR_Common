@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/conf"
@@ -30,7 +31,7 @@ type Exterior interface {
 	GetUserSubscriptionLimites(userId uint32) (json.RawMessage, error)
 	SaveDialog(treadId uint64, message json.RawMessage) error
 	ReadDialog(dialogId uint64, limit ...uint8) (json.RawMessage, error)
-	DeleteDialog(dialogId uint64) error
+	DeleteDialog(userId uint32, dialogId uint64) error
 	UpdateDialogsMeta(dialogId uint64, meta string) error
 	ReadContext(dialogId uint64, provider create.ProviderType) (json.RawMessage, error)
 	SaveContext(threadId uint64, provider create.ProviderType, dialogContext json.RawMessage) error
@@ -363,25 +364,37 @@ func (d *DB) ReadDialog(dialogId uint64, limit ...uint8) (json.RawMessage, error
 	return json.RawMessage(data.String), nil
 }
 
-func (d *DB) DeleteDialog(dialogId uint64) error {
-	// Проверяем входное значение
+// DeleteDialog удаляет диалог с проверкой прав пользователя
+func (d *DB) DeleteDialog(userId uint32, dialogId uint64) error {
+	// Проверяем входные значения
 	if dialogId == 0 {
 		return fmt.Errorf("получен некорректный dialogId")
+	}
+	if userId == 0 {
+		return fmt.Errorf("получен некорректный userId")
 	}
 
 	// Дочерний контекст с тайм-аутом на операцию
 	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
 	defer cancel()
 
-	// Выполняем вызов хранимой функции
-	result, err := d.Conn().ExecContext(ctx, "CALL DeleteDialog(?);", dialogId)
+	// Вызываем хранимую процедуру с проверкой прав
+	_, err := d.Conn().ExecContext(ctx, "CALL DeleteDialog(?, ?)", dialogId, userId)
 	if err != nil {
-		return fmt.Errorf("ошибка удаления диалога: %w", err)
-	}
+		// Проверяем специальный код ошибки для демо-пользователя
+		if strings.Contains(err.Error(), "SQLSTATE 45001") ||
+			strings.Contains(err.Error(), "Невозможно удалить диалог демо пользователя") {
+			return fmt.Errorf("невозможно удалить диалог демо пользователя")
+		}
 
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return fmt.Errorf("диалога не найден для удаления: %d", dialogId)
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при удалении диалога: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена: %w", err)
+		default:
+			return fmt.Errorf("ошибка удаления диалога: %w", err)
+		}
 	}
 
 	return nil
