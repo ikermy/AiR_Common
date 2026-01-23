@@ -68,6 +68,7 @@ type GoogleAgentConfig struct {
 	WebSearch bool `json:"web_search"` // Веб-поиск (google_search)
 	Video     bool `json:"video"`      // Генерация видео (Google Veo)
 	Haunter   bool `json:"haunter"`    // Модель используется для поиска лидов
+	Search    bool `json:"search"`     // Поиск по векторному хранилищу (эмбеддингам в MariaDB)
 }
 
 // DialogCache кэширует историю диалога в памяти для быстрого доступа
@@ -211,7 +212,7 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 		logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, userId)
 	} else if compressedData != nil {
 		// Используем функцию из пакета db для распаковки и извлечения всех параметров
-		_, _, _, image, webSearch, video, haunter, err := comdb.DecompressAndExtractMetadata(compressedData)
+		_, _, _, image, webSearch, video, haunter, search, err := comdb.DecompressAndExtractMetadata(compressedData)
 		if err != nil {
 			logger.Warn("Ошибка распаковки параметров модели: %v", err, userId)
 		} else {
@@ -219,6 +220,7 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 			agentConfig.WebSearch = webSearch
 			agentConfig.Video = video
 			agentConfig.Haunter = haunter
+			agentConfig.Search = search
 		}
 	}
 
@@ -252,22 +254,29 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 
 	// Проверяем наличие эмбеддингов в таблице vector_embeddings
 	// Это важно для Google моделей, т.к. эмбеддинги хранятся в отдельной таблице
-	embeddings, err := m.db.ListModelEmbeddings(activeModel.ModelId)
-	if err != nil {
-		logger.Warn("Ошибка получения эмбеддингов для modelId=%d: %v", activeModel.ModelId, err, userId)
-	} else if len(embeddings) > 0 {
-		agentConfig.HasVector = true
-		logger.Info("Найдено %d эмбеддингов в vector_embeddings для modelId=%d", len(embeddings), activeModel.ModelId, userId)
+	// ВАЖНО: Загружаем эмбеддинги ТОЛЬКО если флаг Search включен
+	if agentConfig.Search {
+		embeddings, err := m.db.ListModelEmbeddings(activeModel.ModelId)
+		if err != nil {
+			logger.Warn("Ошибка получения эмбеддингов для modelId=%d: %v", activeModel.ModelId, err, userId)
+		} else if len(embeddings) > 0 {
+			agentConfig.HasVector = true
+			logger.Info("Найдено %d эмбеддингов в vector_embeddings для modelId=%d", len(embeddings), activeModel.ModelId, userId)
 
-		// Извлекаем уникальные doc_id как VectorIds
-		vectorIdsMap := make(map[string]bool)
-		for _, emb := range embeddings {
-			vectorIdsMap[emb.ID] = true
+			// Извлекаем уникальные doc_id как VectorIds
+			vectorIdsMap := make(map[string]bool)
+			for _, emb := range embeddings {
+				vectorIdsMap[emb.ID] = true
+			}
+			agentConfig.VectorIds = make([]string, 0, len(vectorIdsMap))
+			for id := range vectorIdsMap {
+				agentConfig.VectorIds = append(agentConfig.VectorIds, id)
+			}
+		} else {
+			logger.Info("Search включен для modelId=%d, но эмбеддинги отсутствуют", activeModel.ModelId, userId)
 		}
-		agentConfig.VectorIds = make([]string, 0, len(vectorIdsMap))
-		for id := range vectorIdsMap {
-			agentConfig.VectorIds = append(agentConfig.VectorIds, id)
-		}
+	} else {
+		logger.Info("Search отключен для modelId=%d, пропускаем загрузку эмбеддингов", activeModel.ModelId, userId)
 	}
 
 	respModel.AgentConfig = &agentConfig
