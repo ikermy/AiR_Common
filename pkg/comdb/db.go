@@ -48,6 +48,7 @@ type Exterior interface {
 	ReadUserModelByProvider(userId uint32, provider create.ProviderType) ([]byte, *create.VecIds, error)
 	GetActiveModel(userId uint32) (*create.UserModelRecord, error)
 	GetModelByProvider(userId uint32, provider create.ProviderType) (*create.UserModelRecord, error)
+	GetModelByProviderAnyStatus(userId uint32, provider create.ProviderType) (*create.UserModelRecord, error)
 	SetActiveModel(userId uint32, modelId uint64) error
 	SetActiveModelByProvider(userId uint32, provider create.ProviderType) error
 	RemoveModelFromUser(userId uint32, modelId uint64) error
