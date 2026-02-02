@@ -235,6 +235,8 @@ type UniversalModelData struct {
 	WebSearch bool `json:"web_search"` // Веб-поиск (Mistral, Google)
 	// Google-специфичные возможности
 	Video bool `json:"video"` // Генерация видео (Google Veo/Imagen 3)
+	// Google OAuth Integration - статус подключения Google аккаунта работает для всех провайдеров
+	GOAuth bool `json:"google_oauth"`
 	//////////////////////////////////
 	Espero   *EsperoConfig `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
 	GptType  *GptType      `json:"gpttype"`

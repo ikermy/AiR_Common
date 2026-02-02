@@ -171,7 +171,7 @@ func (m *GoogleModel) GetOrCreateResponder(dialogId uint64, userId uint32) (*Goo
 		return nil, fmt.Errorf("ошибка загрузки конфигурации агента: %w", err)
 	}
 
-	logger.Info("Создан новый Google респондент для dialogId %d", dialogId)
+	logger.Debug("Создан новый Google респондент для dialogId %d", dialogId)
 
 	return respModel, nil
 }
@@ -187,22 +187,22 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 	}
 
 	// Ищем активную модель Google
-	var activeModel *create.UserModelRecord
+	var found *create.UserModelRecord
 	for i := range userModels {
-		if userModels[i].IsActive && userModels[i].Provider == create.ProviderGoogle {
-			activeModel = &userModels[i]
+		if userModels[i].Provider == create.ProviderGoogle {
+			found = &userModels[i]
 			break
 		}
 	}
 
-	if activeModel == nil {
-		return fmt.Errorf("активная Google модель не найдена для userId %d", userId)
+	if found == nil {
+		return fmt.Errorf("модель Google не найдена для userId %d", userId)
 	}
 
 	// Инициализируем базовую конфигурацию
 	agentConfig := GoogleAgentConfig{
-		ModelId:   activeModel.ModelId,
-		ModelName: activeModel.AssistId,
+		ModelId:   found.ModelId,
+		ModelName: found.AssistId,
 		HasVector: false,
 	}
 
@@ -233,9 +233,9 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 	}
 
 	// Пытаемся распарсить AllIds если он не пуст (для обратной совместимости)
-	if len(activeModel.AllIds) > 0 {
+	if len(found.AllIds) > 0 {
 		var tempConfig GoogleAgentConfig
-		if err := json.Unmarshal(activeModel.AllIds, &tempConfig); err != nil {
+		if err := json.Unmarshal(found.AllIds, &tempConfig); err != nil {
 			logger.Warn("Ошибка парсинга AllIds: %v", err, userId)
 		} else {
 			// Объединяем конфигурацию из AllIds с загруженной из БД
@@ -256,12 +256,12 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 	// Это важно для Google моделей, т.к. эмбеддинги хранятся в отдельной таблице
 	// ВАЖНО: Загружаем эмбеддинги ТОЛЬКО если флаг Search включен
 	if agentConfig.Search {
-		embeddings, err := m.db.ListModelEmbeddings(activeModel.ModelId)
+		embeddings, err := m.db.ListModelEmbeddings(found.ModelId)
 		if err != nil {
-			logger.Warn("Ошибка получения эмбеддингов для modelId=%d: %v", activeModel.ModelId, err, userId)
+			logger.Warn("Ошибка получения эмбеддингов для modelId=%d: %v", found.ModelId, err, userId)
 		} else if len(embeddings) > 0 {
 			agentConfig.HasVector = true
-			logger.Info("Найдено %d эмбеддингов в vector_embeddings для modelId=%d", len(embeddings), activeModel.ModelId, userId)
+			logger.Debug("Найдено %d эмбеддингов в vector_embeddings для modelId=%d", len(embeddings), found.ModelId, userId)
 
 			// Извлекаем уникальные doc_id как VectorIds
 			vectorIdsMap := make(map[string]bool)
@@ -273,14 +273,14 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 				agentConfig.VectorIds = append(agentConfig.VectorIds, id)
 			}
 		} else {
-			logger.Info("Search включен для modelId=%d, но эмбеддинги отсутствуют", activeModel.ModelId, userId)
+			logger.Debug("Search включен для modelId=%d, но эмбеддинги отсутствуют", found.ModelId, userId)
 		}
 	} else {
-		logger.Info("Search отключен для modelId=%d, пропускаем загрузку эмбеддингов", activeModel.ModelId, userId)
+		logger.Debug("Search отключен для modelId=%d, пропускаем загрузку эмбеддингов", found.ModelId, userId)
 	}
 
 	respModel.AgentConfig = &agentConfig
-	respModel.Assist.AssistId = activeModel.AssistId
+	respModel.Assist.AssistId = found.AssistId
 
 	//logger.Debug("Загружена конфигурация Google агента: model=%s, tools=%d, hasVector=%v, vectorIds=%d, Image=%v, WebSearch=%v, Video=%v, Haunter=%v",
 	//	agentConfig.ModelName, len(agentConfig.Tools), agentConfig.HasVector, len(agentConfig.VectorIds),
@@ -302,7 +302,7 @@ func (m *GoogleModel) CleanupExpiredResponders() {
 			}
 
 			m.responders.Delete(respId)
-			logger.Info("Удален неактивный Google респондент для respId %d", respId)
+			logger.Debug("Удален неактивный Google респондент для respId %d", respId)
 		}
 
 		return true
@@ -312,7 +312,7 @@ func (m *GoogleModel) CleanupExpiredResponders() {
 // Shutdown корректно завершает работу модели
 func (m *GoogleModel) Shutdown() {
 	m.shutdownOnce.Do(func() {
-		logger.Info("Начало shutdown для GoogleModel")
+		logger.Infoln("Начало shutdown для GoogleModel")
 
 		// Останавливаем все респонденты
 		m.responders.Range(func(key, value interface{}) bool {
@@ -328,7 +328,7 @@ func (m *GoogleModel) Shutdown() {
 			m.cancel()
 		}
 
-		logger.Info("GoogleModel shutdown завершен")
+		logger.Infoln("GoogleModel shutdown завершен")
 	})
 }
 

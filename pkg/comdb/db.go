@@ -17,6 +17,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"golang.org/x/oauth2"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -67,6 +68,12 @@ type Exterior interface {
 	GetContactAvailability(userID uint32, contact string) (map[string]bool, error)
 	GetContactsAvailableIn(userID uint32, provider string) ([]string, error)
 	GetContactsInBothProviders(userID uint32, provider1, provider2 string) ([]string, error)
+
+	// Google OAuth методы
+	SaveGoogleTokenByProvider(userId uint32, provider create.ProviderType, googleEmail string, token *oauth2.Token) error
+	GetGoogleTokenByProvider(userId uint32, provider create.ProviderType) (*oauth2.Token, string, error)
+	RefreshGoogleTokenIfNeededByProvider(userId uint32, provider create.ProviderType, oauthConfig *oauth2.Config) error
+	DeleteGoogleTokenByProvider(userId uint32, provider create.ProviderType) error
 }
 
 // ChatType определяет тип чата (используется в БД)
@@ -749,13 +756,6 @@ func (d *DB) UpdateUserGPT(userId uint32, modelId uint64, assistId string, allId
 		}
 		return fmt.Errorf("ошибка обновления user_gpt: %w", err)
 	}
-
-	// Обновляем timestamp пользователя
-	_, err = d.Conn().ExecContext(ctx, `
-		UPDATE users 
-		SET changed = 1, Timechange = CURRENT_TIMESTAMP() 
-		WHERE Id = ?
-	`, userId)
 
 	if err != nil {
 		// Логируем, но не возвращаем ошибку - основное обновление прошло успешно
