@@ -877,6 +877,18 @@ func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecI
 		modelData.Haunter = ha
 	}
 
+	// Извлекаем google_oauth (GOAuth)
+	if goauthMap, ok := rawData["google_oauth"].(map[string]interface{}); ok {
+		goauth := GOAuth{}
+		if calendar, ok := goauthMap["calendar"].(bool); ok {
+			goauth.Calendar = calendar
+		}
+		if sheets, ok := goauthMap["sheets"].(bool); ok {
+			goauth.Sheets = sheets
+		}
+		modelData.GOAuth = goauth
+	}
+
 	// Извлекаем espero
 	if esperoMap, ok := rawData["espero"].(map[string]interface{}); ok {
 		espero := &EsperoConfig{}
