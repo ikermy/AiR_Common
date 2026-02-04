@@ -119,6 +119,9 @@ type DB interface {
 
 	// SearchSimilarEmbeddings ищет похожие документы в рамках конкретной модели используя VEC_Distance_Cosine
 	SearchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]VectorDocument, error)
+
+	// GetUserTimeZone получает часовой пояс пользователя из БД
+	UserTimeZone(userId uint32) (string, error)
 }
 
 // DocumentMetadata представляет метаданные документа с эмбеддингом
@@ -217,6 +220,26 @@ type GptType struct {
 	ID   uint8  `json:"id"`
 }
 
+type GOAuth struct {
+	Calendar bool `json:"calendar"`
+	Sheets   bool `json:"sheets"`
+}
+
+// Enabled возвращает true если хотя бы одна функция включена
+func (g GOAuth) Enabled() bool {
+	return g.Calendar || g.Sheets
+}
+
+// HasCalendar проверяет доступ к Calendar
+func (g GOAuth) HasCalendar() bool {
+	return g.Calendar
+}
+
+// HasSheets проверяет доступ к Sheets
+func (g GOAuth) HasSheets() bool {
+	return g.Sheets
+}
+
 // UniversalModelData универсальная структура хранения данных моделей
 type UniversalModelData struct {
 	Name        string   `json:"name"`        // Имя модели только для удобства идентификации
@@ -235,12 +258,11 @@ type UniversalModelData struct {
 	WebSearch bool `json:"web_search"` // Веб-поиск (Mistral, Google)
 	// Google-специфичные возможности
 	Video bool `json:"video"` // Генерация видео (Google Veo/Imagen 3)
-	// Google OAuth Integration - статус подключения Google аккаунта работает для всех провайдеров
-	GOAuth bool `json:"google_oauth"`
 	//////////////////////////////////
 	Espero   *EsperoConfig `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
 	GptType  *GptType      `json:"gpttype"`
-	Provider ProviderType  `json:"provider"` // "openai=1", "mistral=2..."
+	Provider ProviderType  `json:"provider"`     // "openai=1", "mistral=2..."
+	GOAuth   GOAuth        `json:"google_oauth"` // Google OAuth Integration - статус подключения Google аккаунта работает для всех провайдеров
 }
 
 // EsperoConfig представляет настройки ожидания из ModelDataRequest
@@ -954,4 +976,20 @@ func (m *UniversalModel) GetRealUserID(userId uint32) (uint64, error) {
 	}
 
 	return userID, nil
+}
+
+// GetUserTimeZone получает таймзону пользователя из БД
+func (m *UniversalModel) GetUserTimeZone(userId uint32) (string, error) {
+	if m.db == nil {
+		return "UTC", fmt.Errorf("database connection is nil")
+	}
+
+	timezone, err := m.db.UserTimeZone(userId)
+	if err != nil {
+		// Возвращаем UTC как fallback при ошибке
+		logger.Warn("Не удалось получить таймзону пользователя %d: %v, используется UTC", userId, err)
+		return "UTC", nil
+	}
+
+	return timezone, nil
 }

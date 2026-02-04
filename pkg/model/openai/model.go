@@ -69,14 +69,14 @@ func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.Acti
 // Использование: router := model.NewModelRouter(ctx, conf, db, openai.NewAsRouterOption())
 func NewAsRouterOption() model.RouterOption {
 	return func(r *model.ModelRouter, ctx context.Context, cfg *conf.Conf, db model.DB) error {
-		// Создаём универсальный обработчик функций
-		actionHandler := &model.UniversalActionHandler{}
-
 		// Приводим DB к типу OpenAIModel.DB через интерфейс
 		openaiDB, ok := db.(DB)
 		if !ok {
 			return fmt.Errorf("DB не соответствует интерфейсу openai.DB")
 		}
+
+		// Создаём универсальный обработчик функций с Google OAuth конфигом
+		actionHandler := model.NewUniversalActionHandler(ctx, openaiDB, create.ProviderOpenAI, &cfg.GOAuth)
 
 		// Создаём OpenAI модель с action handler
 		openaiModel := New(ctx, cfg, openaiDB, actionHandler)

@@ -11,6 +11,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ikermy/AiR_Common/pkg/comdb"
+	"github.com/ikermy/AiR_Common/pkg/conf"
+	"github.com/ikermy/AiR_Common/pkg/google_services"
 	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
@@ -19,7 +22,22 @@ import (
 )
 
 // UniversalActionHandler универсальный обработчик функций для всех провайдеров
-type UniversalActionHandler struct{}
+type UniversalActionHandler struct {
+	db          comdb.Exterior
+	ctx         context.Context
+	provider    create.ProviderType
+	googleOAuth *conf.GOAuth // OAuth конфиг для Google API
+}
+
+// NewUniversalActionHandler создаёт новый action handler с доступом к БД
+func NewUniversalActionHandler(ctx context.Context, db comdb.Exterior, provider create.ProviderType, googleOAuth *conf.GOAuth) *UniversalActionHandler {
+	return &UniversalActionHandler{
+		db:          db,
+		ctx:         ctx,
+		provider:    provider,
+		googleOAuth: googleOAuth,
+	}
+}
 
 func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, arguments string) string {
 	switch functionName {
@@ -280,6 +298,317 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		return responseStr
 
+	// ============================================================================
+	// GOOGLE CALENDAR FUNCTIONS
+	// ============================================================================
+	case "calendar_create_event":
+		var rawParams struct {
+			UserID      string   `json:"user_id"`
+			Title       string   `json:"title"`
+			Description string   `json:"description"`
+			StartTime   string   `json:"start_time"`
+			EndTime     string   `json:"end_time"`
+			Location    string   `json:"location"`
+			Attendees   []string `json:"attendees"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &rawParams); err != nil {
+			return `{"error": "неверные параметры для calendar_create_event"}`
+		}
+
+		var userID uint32
+		fmt.Sscanf(rawParams.UserID, "%d", &userID)
+
+		params := google_services.CreateEventParams{
+			UserID:      userID,
+			Title:       rawParams.Title,
+			Description: rawParams.Description,
+			StartTime:   rawParams.StartTime,
+			EndTime:     rawParams.EndTime,
+			Location:    rawParams.Location,
+			Attendees:   rawParams.Attendees,
+		}
+
+		// Создаём CalendarService с OAuth credentials
+		var clientID, clientSecret, redirectURI string
+		if h.googleOAuth != nil {
+			clientID = h.googleOAuth.ClientID
+			clientSecret = h.googleOAuth.ClientSecret
+			redirectURI = h.googleOAuth.RedirectURI
+		}
+		calendarService := google_services.NewCalendarService(h.ctx, h.db, h.provider, clientID, clientSecret, redirectURI)
+		result, err := calendarService.CreateEvent(params)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "%s"}`, err.Error())
+		}
+		return result
+
+	case "calendar_list_events":
+		var rawParams struct {
+			UserID     string `json:"user_id"`
+			TimeMin    string `json:"time_min"`
+			TimeMax    string `json:"time_max"`
+			MaxResults int64  `json:"max_results"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &rawParams); err != nil {
+			return `{"error": "неверные параметры для calendar_list_events"}`
+		}
+
+		var userID uint32
+		fmt.Sscanf(rawParams.UserID, "%d", &userID)
+
+		params := google_services.ListEventsParams{
+			UserID:     userID,
+			TimeMin:    rawParams.TimeMin,
+			TimeMax:    rawParams.TimeMax,
+			MaxResults: rawParams.MaxResults,
+		}
+
+		// Создаём CalendarService с OAuth credentials
+		var clientID, clientSecret, redirectURI string
+		if h.googleOAuth != nil {
+			clientID = h.googleOAuth.ClientID
+			clientSecret = h.googleOAuth.ClientSecret
+			redirectURI = h.googleOAuth.RedirectURI
+		}
+		calendarService := google_services.NewCalendarService(h.ctx, h.db, h.provider, clientID, clientSecret, redirectURI)
+		result, err := calendarService.ListEvents(params)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "%s"}`, err.Error())
+		}
+		return result
+
+	case "calendar_delete_event":
+		var rawParams struct {
+			UserID  string `json:"user_id"`
+			EventID string `json:"event_id"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &rawParams); err != nil {
+			return `{"error": "неверные параметры для calendar_delete_event"}`
+		}
+
+		var userID uint32
+		fmt.Sscanf(rawParams.UserID, "%d", &userID)
+
+		params := google_services.DeleteEventParams{
+			UserID:  userID,
+			EventID: rawParams.EventID,
+		}
+
+		// Создаём CalendarService с OAuth credentials
+		var clientID, clientSecret, redirectURI string
+		if h.googleOAuth != nil {
+			clientID = h.googleOAuth.ClientID
+			clientSecret = h.googleOAuth.ClientSecret
+			redirectURI = h.googleOAuth.RedirectURI
+		}
+		calendarService := google_services.NewCalendarService(h.ctx, h.db, h.provider, clientID, clientSecret, redirectURI)
+		result, err := calendarService.DeleteEvent(params)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "%s"}`, err.Error())
+		}
+		return result
+
+	case "calendar_get_event":
+		var rawParams struct {
+			UserID  string `json:"user_id"`
+			EventID string `json:"event_id"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &rawParams); err != nil {
+			return `{"error": "неверные параметры для calendar_get_event"}`
+		}
+
+		var userID uint32
+		fmt.Sscanf(rawParams.UserID, "%d", &userID)
+
+		params := google_services.GetEventParams{
+			UserID:  userID,
+			EventID: rawParams.EventID,
+		}
+
+		// Создаём CalendarService с OAuth credentials
+		var clientID, clientSecret, redirectURI string
+		if h.googleOAuth != nil {
+			clientID = h.googleOAuth.ClientID
+			clientSecret = h.googleOAuth.ClientSecret
+			redirectURI = h.googleOAuth.RedirectURI
+		}
+		calendarService := google_services.NewCalendarService(h.ctx, h.db, h.provider, clientID, clientSecret, redirectURI)
+		result, err := calendarService.GetEvent(params)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "%s"}`, err.Error())
+		}
+		return result
+
+	// ============================================================================
+	// GOOGLE SHEETS FUNCTIONS
+	// ============================================================================
+	case "sheets_read_range":
+		var rawParams struct {
+			UserID        string `json:"user_id"`
+			SpreadsheetID string `json:"spreadsheet_id"`
+			Range         string `json:"range"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &rawParams); err != nil {
+			return `{"error": "неверные параметры для sheets_read_range"}`
+		}
+
+		var userID uint32
+		fmt.Sscanf(rawParams.UserID, "%d", &userID)
+
+		params := google_services.ReadRangeParams{
+			UserID:        userID,
+			SpreadsheetID: rawParams.SpreadsheetID,
+			Range:         rawParams.Range,
+		}
+
+		// Создаём SheetsService с OAuth credentials
+		var clientID, clientSecret, redirectURI string
+		if h.googleOAuth != nil {
+			clientID = h.googleOAuth.ClientID
+			clientSecret = h.googleOAuth.ClientSecret
+			redirectURI = h.googleOAuth.RedirectURI
+		}
+		sheetsService := google_services.NewSheetsService(h.ctx, h.db, h.provider, clientID, clientSecret, redirectURI)
+		result, err := sheetsService.ReadRange(params)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "%s"}`, err.Error())
+		}
+		return result
+
+	case "sheets_write_range":
+		var rawParams struct {
+			UserID        string          `json:"user_id"`
+			SpreadsheetID string          `json:"spreadsheet_id"`
+			Range         string          `json:"range"`
+			Values        [][]interface{} `json:"values"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &rawParams); err != nil {
+			return `{"error": "неверные параметры для sheets_write_range"}`
+		}
+
+		var userID uint32
+		fmt.Sscanf(rawParams.UserID, "%d", &userID)
+
+		params := google_services.WriteRangeParams{
+			UserID:        userID,
+			SpreadsheetID: rawParams.SpreadsheetID,
+			Range:         rawParams.Range,
+			Values:        rawParams.Values,
+		}
+
+		// Создаём SheetsService с OAuth credentials
+		var clientID, clientSecret, redirectURI string
+		if h.googleOAuth != nil {
+			clientID = h.googleOAuth.ClientID
+			clientSecret = h.googleOAuth.ClientSecret
+			redirectURI = h.googleOAuth.RedirectURI
+		}
+		sheetsService := google_services.NewSheetsService(h.ctx, h.db, h.provider, clientID, clientSecret, redirectURI)
+		result, err := sheetsService.WriteRange(params)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "%s"}`, err.Error())
+		}
+		return result
+
+	case "sheets_append_range":
+		var rawParams struct {
+			UserID        string          `json:"user_id"`
+			SpreadsheetID string          `json:"spreadsheet_id"`
+			Range         string          `json:"range"`
+			Values        [][]interface{} `json:"values"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &rawParams); err != nil {
+			return `{"error": "неверные параметры для sheets_append_range"}`
+		}
+
+		var userID uint32
+		fmt.Sscanf(rawParams.UserID, "%d", &userID)
+
+		params := google_services.AppendRangeParams{
+			UserID:        userID,
+			SpreadsheetID: rawParams.SpreadsheetID,
+			Range:         rawParams.Range,
+			Values:        rawParams.Values,
+		}
+
+		// Создаём SheetsService с OAuth credentials
+		var clientID, clientSecret, redirectURI string
+		if h.googleOAuth != nil {
+			clientID = h.googleOAuth.ClientID
+			clientSecret = h.googleOAuth.ClientSecret
+			redirectURI = h.googleOAuth.RedirectURI
+		}
+		sheetsService := google_services.NewSheetsService(h.ctx, h.db, h.provider, clientID, clientSecret, redirectURI)
+		result, err := sheetsService.AppendRange(params)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "%s"}`, err.Error())
+		}
+		return result
+
+	case "sheets_create_spreadsheet":
+		var rawParams struct {
+			UserID     string   `json:"user_id"`
+			Title      string   `json:"title"`
+			SheetNames []string `json:"sheet_names"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &rawParams); err != nil {
+			return `{"error": "неверные параметры для sheets_create_spreadsheet"}`
+		}
+
+		var userID uint32
+		fmt.Sscanf(rawParams.UserID, "%d", &userID)
+
+		params := google_services.CreateSpreadsheetParams{
+			UserID:     userID,
+			Title:      rawParams.Title,
+			SheetNames: rawParams.SheetNames,
+		}
+
+		// Создаём SheetsService с OAuth credentials
+		var clientID, clientSecret, redirectURI string
+		if h.googleOAuth != nil {
+			clientID = h.googleOAuth.ClientID
+			clientSecret = h.googleOAuth.ClientSecret
+			redirectURI = h.googleOAuth.RedirectURI
+		}
+		sheetsService := google_services.NewSheetsService(h.ctx, h.db, h.provider, clientID, clientSecret, redirectURI)
+		result, err := sheetsService.CreateSpreadsheet(params)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "%s"}`, err.Error())
+		}
+		return result
+
+	case "sheets_get_info":
+		var rawParams struct {
+			UserID        string `json:"user_id"`
+			SpreadsheetID string `json:"spreadsheet_id"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &rawParams); err != nil {
+			return `{"error": "неверные параметры для sheets_get_info"}`
+		}
+
+		var userID uint32
+		fmt.Sscanf(rawParams.UserID, "%d", &userID)
+
+		params := google_services.GetSpreadsheetInfoParams{
+			UserID:        userID,
+			SpreadsheetID: rawParams.SpreadsheetID,
+		}
+
+		// Создаём SheetsService с OAuth credentials
+		var clientID, clientSecret, redirectURI string
+		if h.googleOAuth != nil {
+			clientID = h.googleOAuth.ClientID
+			clientSecret = h.googleOAuth.ClientSecret
+			redirectURI = h.googleOAuth.RedirectURI
+		}
+		sheetsService := google_services.NewSheetsService(h.ctx, h.db, h.provider, clientID, clientSecret, redirectURI)
+		result, err := sheetsService.GetSpreadsheetInfo(params)
+		if err != nil {
+			return fmt.Sprintf(`{"error": "%s"}`, err.Error())
+		}
+		return result
+
 	default:
 		result, _ := json.Marshal(map[string]string{"error": fmt.Sprintf("Функция %s не поддерживается", functionName)})
 		return string(result)
@@ -340,6 +669,250 @@ func (h *UniversalActionHandler) GetTools(provider create.ProviderType) interfac
 				"required": []string{"user_id", "content", "file_name"},
 			},
 		},
+	}
+
+	// Добавляем Google Calendar функции если Google OAuth настроен
+	if h.googleOAuth != nil && h.googleOAuth.ClientID != "" {
+		calendarFunctions := []map[string]interface{}{
+			{
+				"name":        "calendar_create_event",
+				"description": "Создает событие в Google Calendar пользователя",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+						},
+						"title": map[string]interface{}{
+							"type":        "string",
+							"description": "Название события",
+						},
+						"description": map[string]interface{}{
+							"type":        "string",
+							"description": "Описание события",
+						},
+						"start_time": map[string]interface{}{
+							"type":        "string",
+							"description": "Время начала в RFC3339 формате (например: 2026-02-05T15:00:00+03:00)",
+						},
+						"end_time": map[string]interface{}{
+							"type":        "string",
+							"description": "Время окончания в RFC3339 формате",
+						},
+						"location": map[string]interface{}{
+							"type":        "string",
+							"description": "Место проведения события",
+						},
+						"attendees": map[string]interface{}{
+							"type":        "array",
+							"description": "Email адреса участников",
+							"items": map[string]interface{}{
+								"type": "string",
+							},
+						},
+					},
+					"required": []string{"user_id", "title", "start_time", "end_time"},
+				},
+			},
+			{
+				"name":        "calendar_list_events",
+				"description": "Получает список событий из Google Calendar",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+						},
+						"time_min": map[string]interface{}{
+							"type":        "string",
+							"description": "Начало периода в RFC3339 формате (опционально)",
+						},
+						"time_max": map[string]interface{}{
+							"type":        "string",
+							"description": "Конец периода в RFC3339 формате (опционально)",
+						},
+						"max_results": map[string]interface{}{
+							"type":        "integer",
+							"description": "Максимальное количество событий (по умолчанию 10)",
+						},
+					},
+					"required": []string{"user_id"},
+				},
+			},
+			{
+				"name":        "calendar_delete_event",
+				"description": "Удаляет событие из Google Calendar",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+						},
+						"event_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID события для удаления",
+						},
+					},
+					"required": []string{"user_id", "event_id"},
+				},
+			},
+			{
+				"name":        "calendar_get_event",
+				"description": "Получает детали события из Google Calendar",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+						},
+						"event_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID события",
+						},
+					},
+					"required": []string{"user_id", "event_id"},
+				},
+			},
+		}
+		functions = append(functions, calendarFunctions...)
+
+		// Добавляем Google Sheets функции
+		sheetsFunctions := []map[string]interface{}{
+			{
+				"name":        "sheets_read_range",
+				"description": "Читает данные из Google Sheets таблицы",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+						},
+						"spreadsheet_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID таблицы из URL (между /d/ и /edit)",
+						},
+						"range": map[string]interface{}{
+							"type":        "string",
+							"description": "Диапазон ячеек (например: Лист1!A1:D10)",
+						},
+					},
+					"required": []string{"user_id", "spreadsheet_id", "range"},
+				},
+			},
+			{
+				"name":        "sheets_write_range",
+				"description": "Записывает данные в Google Sheets таблицу",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+						},
+						"spreadsheet_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID таблицы",
+						},
+						"range": map[string]interface{}{
+							"type":        "string",
+							"description": "Диапазон для записи (например: Лист1!A1)",
+						},
+						"values": map[string]interface{}{
+							"type":        "array",
+							"description": "Двумерный массив данных [[row1], [row2]]",
+							"items": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type": "string",
+								},
+							},
+						},
+					},
+					"required": []string{"user_id", "spreadsheet_id", "range", "values"},
+				},
+			},
+			{
+				"name":        "sheets_append_range",
+				"description": "Добавляет данные в конец Google Sheets таблицы",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+						},
+						"spreadsheet_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID таблицы",
+						},
+						"range": map[string]interface{}{
+							"type":        "string",
+							"description": "Диапазон для добавления (например: Лист1!A:D)",
+						},
+						"values": map[string]interface{}{
+							"type":        "array",
+							"description": "Двумерный массив данных для добавления",
+							"items": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type": "string",
+								},
+							},
+						},
+					},
+					"required": []string{"user_id", "spreadsheet_id", "range", "values"},
+				},
+			},
+			{
+				"name":        "sheets_create_spreadsheet",
+				"description": "Создает новую Google Sheets таблицу",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+						},
+						"title": map[string]interface{}{
+							"type":        "string",
+							"description": "Название новой таблицы",
+						},
+						"sheet_names": map[string]interface{}{
+							"type":        "array",
+							"description": "Названия листов (опционально)",
+							"items": map[string]interface{}{
+								"type": "string",
+							},
+						},
+					},
+					"required": []string{"user_id", "title"},
+				},
+			},
+			{
+				"name":        "sheets_get_info",
+				"description": "Получает информацию о Google Sheets таблице (листы, размеры)",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+						},
+						"spreadsheet_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID таблицы",
+						},
+					},
+					"required": []string{"user_id", "spreadsheet_id"},
+				},
+			},
+		}
+		functions = append(functions, sheetsFunctions...)
 	}
 
 	// Для OpenAI конвертируем в формат openai.Tool

@@ -114,12 +114,13 @@ func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.Acti
 // NewAsRouterOption создаёт Google модель и возвращает её как опцию для ModelRouter
 func NewAsRouterOption() model.RouterOption {
 	return func(r *model.ModelRouter, ctx context.Context, cfg *conf.Conf, db model.DB) error {
-		actionHandler := &model.UniversalActionHandler{}
-
 		googleDB, ok := db.(DB)
 		if !ok {
 			return fmt.Errorf("DB не соответствует интерфейсу google.DB")
 		}
+
+		// Создаём ActionHandler с Google OAuth конфигом из cfg
+		actionHandler := model.NewUniversalActionHandler(ctx, googleDB, create.ProviderGoogle, &cfg.GOAuth)
 
 		googleModel := New(ctx, cfg, googleDB, actionHandler)
 

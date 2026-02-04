@@ -18,6 +18,7 @@ type Conf struct {
 	SMTP     SMTP
 	GLOB     GLOB
 	OPER     OPER
+	GOAuth   GOAuth
 	Contacts ContactsServiceConfig
 }
 
@@ -30,7 +31,7 @@ type TgConfig struct {
 type GPTConfig struct {
 	OpenAIKey  string `mapstructure:"openai_key"`
 	MistralKey string `mapstructure:"mistral_key"`
-	GoogleKey string `mapstructure:"google_key"`
+	GoogleKey  string `mapstructure:"google_key"`
 }
 
 type WebConfig struct {
@@ -93,6 +94,12 @@ type TargetService struct {
 	Name string `mapstructure:"name"`
 	Host string `mapstructure:"host"`
 	Port int    `mapstructure:"port"`
+}
+
+type GOAuth struct {
+	RedirectURI  string `mapstructure:"redirect_uri"`
+	ClientID     string `mapstructure:"client_id"`
+	ClientSecret string `mapstructure:"client_secret"`
 }
 
 func NewConf() (*Conf, error) {
@@ -209,6 +216,13 @@ func NewConf() (*Conf, error) {
 	}
 
 	conf.OPER = operConfig
+
+	// GOAuth секция
+	var gOAuthConfig GOAuth
+	if err := v.UnmarshalKey("google_oauth", &gOAuthConfig); err != nil {
+		return nil, fmt.Errorf("ошибка разбора секции google_oauth: %w", err)
+	}
+	conf.GOAuth = gOAuthConfig
 
 	// Contacts секция (опциональная)
 	var contactsConfig ContactsServiceConfig

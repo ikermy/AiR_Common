@@ -97,8 +97,8 @@ func New(parent context.Context, conf *conf.Conf, actionHandler model.ActionHand
 // Использование: router := model.NewModelRouter(ctx, conf, db, mistral.NewAsRouterOption())
 func NewAsRouterOption() model.RouterOption {
 	return func(r *model.ModelRouter, ctx context.Context, cfg *conf.Conf, db model.DB) error {
-		// Создаём универсальный обработчик функций
-		actionHandler := &model.UniversalActionHandler{}
+		// Создаём универсальный обработчик функций с Google OAuth конфигом
+		actionHandler := model.NewUniversalActionHandler(ctx, db, create.ProviderMistral, &cfg.GOAuth)
 
 		// Создаём Mistral модель с action handler и router
 		mistralModel := New(ctx, cfg, actionHandler, db, r)

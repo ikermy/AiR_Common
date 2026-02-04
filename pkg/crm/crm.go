@@ -303,7 +303,7 @@ func (c *CRM) Init(userID uint32) (*User, error) {
 		if transport, ok := u.httpClient.Transport.(*http.Transport); ok {
 			transport.CloseIdleConnections()
 		}
-		logger.Warn("Не удалось получить настройки для userID %d: %v. Возвращаем неинициализированный User", userID, err)
+		logger.Warn("Не удалось получить настройки: %v. Возвращаем неинициализированный User", err, userID)
 		// Возвращаем пустой User (без ctx, httpClient и т.д.) для безопасного использования
 		return &User{}, fmt.Errorf("ошибка получения настроек для userID %d: %v", userID, err)
 	}

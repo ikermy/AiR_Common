@@ -74,6 +74,9 @@ type Exterior interface {
 	GetGoogleTokenByProvider(userId uint32, provider create.ProviderType) (*oauth2.Token, string, error)
 	RefreshGoogleTokenIfNeededByProvider(userId uint32, provider create.ProviderType, oauthConfig *oauth2.Config) error
 	DeleteGoogleTokenByProvider(userId uint32, provider create.ProviderType) error
+
+	// UserInfo методы
+	UserTimeZone(userId uint32) (string, error)
 }
 
 // ChatType определяет тип чата (используется в БД)
@@ -1911,4 +1914,34 @@ func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remainin
 	totalLimit = uint64(vLimit)
 
 	return remaining, totalLimit, nil
+}
+
+func (d *DB) UserTimeZone(userId uint32) (string, error) {
+	if userId == 0 {
+		return "", fmt.Errorf("получены некорректные данные: userId")
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	var tz sql.NullString
+	err := d.conn.QueryRowContext(ctx, "SELECT TimeZone FROM users WHERE Id = ?", userId).Scan(&tz)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return "", fmt.Errorf("тайм-аут (%d с) при получении часового пояса пользователя: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return "", fmt.Errorf("операция отменена: %w", err)
+		case errors.Is(err, sql.ErrNoRows):
+			return "", fmt.Errorf("пользователь с ID %d не найден", userId)
+		default:
+			return "", fmt.Errorf("ошибка получения часового пояса пользователя: %w", err)
+		}
+	}
+
+	if !tz.Valid {
+		return "", fmt.Errorf("часовой пояс не установлен для пользователя %d", userId)
+	}
+
+	return tz.String, nil
 }

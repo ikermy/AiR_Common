@@ -816,7 +816,7 @@ func (m *GoogleModel) handleFunctionCall(functionCall map[string]interface{}) (m
 		return nil, fmt.Errorf("ошибка сериализации аргументов: %v", err)
 	}
 
-	// Вызываем action handler
+	// Все функции обрабатываются через action handler
 	if m.actionHandler != nil {
 		result := m.actionHandler.RunAction(m.ctx, functionName, string(argsJSON))
 
@@ -1005,11 +1005,11 @@ func (m *GoogleModel) extractVideoPrompt(userText, modelResponse string) string 
 		"create video", "generate video", "make video",
 	}
 
-	promptLower := strings.ToLower(prompt)
+	userTextLower := strings.ToLower(userText)
 	for _, word := range cleanWords {
-		promptLower = strings.ReplaceAll(promptLower, word, "")
+		userTextLower = strings.ReplaceAll(userTextLower, word, "")
 	}
-	prompt = strings.TrimSpace(promptLower)
+	prompt = strings.TrimSpace(userTextLower)
 
 	// Удаляем параметры
 	prompt = strings.Split(prompt, "вертикал")[0]

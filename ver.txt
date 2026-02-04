@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.40.11"
-git tag -a v1.40.11 -m "model router"
+git commit -m "v1.41.0"
+git tag -a v1.41.0 -m "google oauth2 support"
 git push origin master
-git push origin v1.40.11
+git push origin v1.41.0

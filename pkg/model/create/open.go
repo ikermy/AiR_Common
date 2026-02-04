@@ -375,12 +375,41 @@ func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelDat
 	// Получаем real_user_id для использования в инструкциях
 	realUserID, err := m.GetRealUserID(userId)
 	if err != nil {
-		logger.Warn("Не удалось получить real_user_id для userId %d: %v", userId, err)
+		logger.Warn("Не удалось получить real_user_id: %v", err, userId)
 		realUserID = uint64(userId) // Fallback на обычный userId
 	}
 
+	// Получаем текущее время в таймзоне пользователя для динамического промпта
+	currentTime := time.Now()
+	userTimezone := "UTC"
+	if m.db != nil {
+		if tz, err := m.GetUserTimeZone(userId); err == nil {
+			userTimezone = tz
+		}
+	}
+	loc, _ := time.LoadLocation(userTimezone)
+	localTime := currentTime.In(loc)
+
 	// Автоматически генерируем системные инструкции на основе параметров
 	enhancedPrompt := modelData.Prompt + "\n\n"
+
+	// Добавляем ТЕКУЩУЮ ДАТУ И ВРЕМЯ в начало промпта для всех моделей
+	enhancedPrompt += fmt.Sprintf("📅 ТЕКУЩАЯ ДАТА И ВРЕМЯ:\n"+
+		"- День недели: %s\n"+
+		"- Время: %s\n"+
+		"- Таймзона: %s\n\n"+
+		"ВАЖНО: При расчёте 'завтра', 'через неделю', 'в понедельник' и т.д. используй указанную информацию как БАЗУ.\n"+
+		"Примеры:\n"+
+		"- 'завтра' = %s (сегодня + 1 день)\n"+
+		"- 'послезавтра' = %s (сегодня + 2 дня)\n"+
+		"- 'через неделю' = %s (сегодня + 7 дней)\n\n",
+		localTime.Weekday().String(),
+		localTime.Format("15:04:05"),
+		userTimezone,
+		localTime.AddDate(0, 0, 1).Format("2006-01-02"),
+		localTime.AddDate(0, 0, 2).Format("2006-01-02"),
+		localTime.AddDate(0, 0, 7).Format("2006-01-02"),
+	)
 
 	// Добавляем важное напоминание в начало - только для активных функций
 	if modelData.MetaAction != "" || modelData.Operator {
@@ -426,6 +455,47 @@ func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelDat
 			"- Обработки файлов (CSV, Excel, JSON и т.д.)\n" +
 			"- Генерации файлов с результатами\n\n" +
 			"Созданные через Code Interpreter файлы автоматически доступны в ответе.\n\n"
+	}
+
+	// Добавляем инструкции по GOOGLE CALENDAR
+	if modelData.GOAuth.HasCalendar() {
+		// Получаем таймзону пользователя
+		userTimezone := "UTC"
+		if tz, err := m.GetUserTimeZone(userId); err == nil {
+			userTimezone = tz
+		}
+
+		enhancedPrompt += "## 📅 GOOGLE CALENDAR - Управление событиями:\n" +
+			"У тебя есть доступ к Google Calendar пользователя.\n\n" +
+			fmt.Sprintf("**user_id для всех функций: \"%d\"** (строка)\n\n", realUserID) +
+			"### Доступные функции:\n" +
+			"- calendar_create_event - создание события\n" +
+			"- calendar_list_events - список событий\n" +
+			"- calendar_delete_event - удаление события\n" +
+			"- calendar_get_event - детали события\n\n" +
+			"### ВАЖНО при работе со временем:\n" +
+			"- Формат времени: RFC3339 с таймзоной (" + userTimezone + ")\n" +
+			"- Пример: \"2026-02-05T15:00:00+03:00\"\n" +
+			"- Длительность по умолчанию: 1 час\n" +
+			"- После создания/удаления подтверди действие и покажи ссылку\n\n"
+	}
+
+	// Добавляем инструкции по GOOGLE SHEETS
+	if modelData.GOAuth.HasSheets() {
+		enhancedPrompt += "## 📊 GOOGLE SHEETS - Работа с таблицами:\n" +
+			"У тебя есть доступ к Google Sheets пользователя.\n\n" +
+			fmt.Sprintf("**user_id для всех функций: \"%d\"** (строка)\n\n", realUserID) +
+			"### Доступные функции:\n" +
+			"- sheets_read_range - чтение данных\n" +
+			"- sheets_write_range - запись данных\n" +
+			"- sheets_append_range - добавление в конец\n" +
+			"- sheets_create_spreadsheet - создание таблицы\n" +
+			"- sheets_get_info - информация о таблице\n\n" +
+			"### ВАЖНО:\n" +
+			"- spreadsheet_id берётся из URL (между /d/ и /edit)\n" +
+			"- Диапазон в формате: 'Лист1!A1:D10'\n" +
+			"- Перед записью всегда читай текущие данные\n" +
+			"- После операций сообщай результат (кол-во строк/ячеек)\n\n"
 	}
 
 	// Добавляем инструкции по поиску в документах
@@ -783,7 +853,7 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 	// Получаем real_user_id для использования в инструкциях
 	realUserID, err := m.GetRealUserID(userId)
 	if err != nil {
-		logger.Warn("Не удалось получить real_user_id для userId %d: %v", userId, err)
+		logger.Warn("Не удалось получить real_user_id: %v", err, userId)
 		realUserID = uint64(userId) // Fallback
 	}
 

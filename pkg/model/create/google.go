@@ -128,8 +128,40 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 		return UMCR{}, fmt.Errorf("ошибка получения реального user_id: %v", err)
 	}
 
+	// Получаем текущее время в таймзоне пользователя для динамического промпта
+	currentTime := time.Now()
+	userTimezone := "UTC"
+	if m.universalModel != nil {
+		if tz, err := m.universalModel.GetUserTimeZone(userId); err == nil {
+			userTimezone = tz
+		}
+	}
+	loc, _ := time.LoadLocation(userTimezone)
+	localTime := currentTime.In(loc)
+
 	// Формируем enhancedPrompt динамически в зависимости от возможностей модели
 	enhancedPrompt := modelData.Prompt + "\n\n"
+
+	// Добавляем ТЕКУЩУЮ ДАТУ И ВРЕМЯ в начало промпта для всех моделей
+	enhancedPrompt += fmt.Sprintf("📅 ТЕКУЩАЯ ДАТА И ВРЕМЯ:\n"+
+		"- Сегодня: %s (%s)\n"+
+		"- Время: %s\n"+
+		"- Таймзона: %s\n"+
+		"- Unix timestamp: %d\n\n"+
+		"ВАЖНО: При расчёте 'завтра', 'через неделю', 'в понедельник' и т.д. используй указанную дату как БАЗУ.\n"+
+		"Примеры:\n"+
+		"- 'завтра' = %s (сегодня + 1 день)\n"+
+		"- 'послезавтра' = %s (сегодня + 2 дня)\n"+
+		"- 'через неделю' = %s (сегодня + 7 дней)\n\n",
+		localTime.Format("2006-01-02"),
+		localTime.Weekday().String(),
+		localTime.Format("15:04:05"),
+		userTimezone,
+		localTime.Unix(),
+		localTime.AddDate(0, 0, 1).Format("2006-01-02"),
+		localTime.AddDate(0, 0, 2).Format("2006-01-02"),
+		localTime.AddDate(0, 0, 7).Format("2006-01-02"),
+	)
 
 	// Добавляем важное напоминание - только для активных функций
 	if modelData.MetaAction != "" || modelData.Operator {
@@ -209,6 +241,71 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 			"2. После получения результатов поиска - обобщи их в понятном виде\n" +
 			"3. Указывай источники информации когда это уместно\n" +
 			"4. Если ты НЕ УВЕРЕН в информации - ИСПОЛЬЗУЙ ПОИСК вместо отказа!\n\n"
+	}
+
+	// Добавляем инструкции по GOOGLE CALENDAR
+	if modelData.GOAuth.HasCalendar() {
+		enhancedPrompt += "📅 GOOGLE CALENDAR - Управление событиями:\n" +
+			"У тебя есть доступ к Google Calendar пользователя. Доступные функции:\n\n" +
+			"1. **calendar_create_event** - Создание нового события:\n" +
+			fmt.Sprintf("   - user_id: \"%d\" (СТРОКА, обязательно)\n", realUserId) +
+			"   - title: название события\n" +
+			"   - description: описание (опционально)\n" +
+			"   - start_time: время начала в RFC3339 (например: \"2026-02-05T15:00:00+03:00\")\n" +
+			"   - end_time: время окончания в RFC3339\n" +
+			"   - location: место проведения (опционально)\n" +
+			"   - attendees: массив email участников (опционально)\n" +
+			"   Пример запроса: 'создай встречу \"Планерка\" завтра в 10:00 на час'\n\n" +
+			"2. **calendar_list_events** - Получение списка событий:\n" +
+			fmt.Sprintf("   - user_id: \"%d\"\n", realUserId) +
+			"   - time_min: начало периода в RFC3339 (опционально)\n" +
+			"   - time_max: конец периода в RFC3339 (опционально)\n" +
+			"   - max_results: максимум событий (по умолчанию 10)\n" +
+			"   Пример запроса: 'покажи мои встречи на неделю'\n\n" +
+			"3. **calendar_delete_event** - Удаление события:\n" +
+			fmt.Sprintf("   - user_id: \"%d\"\n", realUserId) +
+			"   - event_id: ID события из списка\n" +
+			"   Пример запроса: 'удали встречу \"Планерка\"'\n\n" +
+			"4. **calendar_get_event** - Получение деталей события:\n" +
+			fmt.Sprintf("   - user_id: \"%d\"\n", realUserId) +
+			"   - event_id: ID события\n\n" +
+			"⚠️ ВАЖНО ПРИ РАБОТЕ С ВРЕМЕНЕМ:\n" +
+			"- ВСЕГДА используй ТЕКУЩУЮ ДАТУ из раздела выше для расчётов\n" +
+			"- Формат времени: RFC3339 с таймзоной пользователя (" + userTimezone + ")\n" +
+			"- При создании рассчитывай дату относительно СЕГОДНЯ (" + localTime.Format("2006-01-02") + ")\n" +
+			"- Если время не указано - предлагай разумное (10:00, 14:00, 16:00)\n" +
+			"- Длительность по умолчанию: 1 час\n" +
+			"- Таймзона автоматически применяется системой\n\n" +
+			"ПОСЛЕ СОЗДАНИЯ/УДАЛЕНИЯ:\n" +
+			"- Подтверди действие с деталями (название, дата, время)\n" +
+			"- Покажи ссылку на событие из поля 'link'\n\n"
+	}
+
+	// Добавляем инструкции по GOOGLE SHEETS
+	if modelData.GOAuth.HasSheets() {
+		enhancedPrompt += "📊 GOOGLE SHEETS - Работа с таблицами:\n" +
+			"У тебя есть доступ к Google Sheets пользователя. Доступные функции:\n" +
+			"1. **sheets_read_range** - Чтение данных из таблицы:\n" +
+			"   - spreadsheet_id берётся из URL таблицы (между /d/ и /edit)\n" +
+			fmt.Sprintf("   - user_id ВСЕГДА должен быть \"%d\" (СТРОКА)\n", realUserId) +
+			"   - range в формате 'Лист1!A1:D10' или 'Sheet1!A:Z'\n" +
+			"   - Пример: прочитай данные из таблицы, диапазон A1:C10\n" +
+			"2. **sheets_write_range** - Запись/обновление данных:\n" +
+			"   - values - двумерный массив [[\"Заголовок1\", \"Заголовок2\"], [\"Значение1\", \"Значение2\"]]\n" +
+			"   - Каждый подмассив - это одна строка\n" +
+			"   - Пример: запиши в таблицу данные о продажах\n" +
+			"3. **sheets_append_range** - Добавление строк в конец таблицы:\n" +
+			"   - Автоматически добавляет данные после последней заполненной строки\n" +
+			"   - Идеально для логов, списков, отчётов\n" +
+			"   - Пример: добавь новую строку с данными\n" +
+			"4. **sheets_create_spreadsheet** - Создание новой таблицы:\n" +
+			"   - Можешь указать названия листов через sheet_names\n" +
+			"   - Пример: создай таблицу \"Отчёт по продажам\"\n" +
+			"ВАЖНО:\n" +
+			"- Spreadsheet ID ищи в URL: docs.google.com/spreadsheets/d/[ЗДЕСЬ_ID]/edit\n" +
+			"- При записи данных сначала спроси у пользователя spreadsheet_id или попроси ссылку\n" +
+			"- Форматируй данные аккуратно в виде таблиц для лучшей читаемости\n" +
+			"- После операций сообщай результат: сколько строк/ячеек обновлено\n\n"
 	}
 
 	// Добавляем инструкции по ГЕНЕРАЦИИ ИЗОБРАЖЕНИЙ
@@ -333,10 +430,250 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 		})
 	}
 
-	// 3. Добавляем Code Interpreter (только если нет S3)
+	// 3. Добавляем Google Calendar (Function Calling)
+	if modelData.GOAuth.HasCalendar() {
+		calendarFunctions := []map[string]interface{}{
+			{
+				"name":        "calendar_create_event",
+				"description": "Создает новое событие в Google Calendar пользователя",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserId),
+						},
+						"title": map[string]interface{}{
+							"type":        "string",
+							"description": "Название события",
+						},
+						"description": map[string]interface{}{
+							"type":        "string",
+							"description": "Описание события (опционально)",
+						},
+						"start_time": map[string]interface{}{
+							"type":        "string",
+							"description": "Время начала в RFC3339 формате (например: '2026-02-04T10:00:00Z')",
+						},
+						"end_time": map[string]interface{}{
+							"type":        "string",
+							"description": "Время окончания в RFC3339 формате",
+						},
+						"location": map[string]interface{}{
+							"type":        "string",
+							"description": "Место проведения (опционально)",
+						},
+						"attendees": map[string]interface{}{
+							"type":        "array",
+							"description": "Email адреса участников (опционально)",
+							"items": map[string]interface{}{
+								"type": "string",
+							},
+						},
+					},
+					"required": []string{"user_id", "title", "start_time", "end_time"},
+				},
+			},
+			{
+				"name":        "calendar_list_events",
+				"description": "Получает список событий из Google Calendar пользователя",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserId),
+						},
+						"time_min": map[string]interface{}{
+							"type":        "string",
+							"description": "Начало периода в RFC3339 (опционально, по умолчанию - текущее время)",
+						},
+						"time_max": map[string]interface{}{
+							"type":        "string",
+							"description": "Конец периода в RFC3339 (опционально)",
+						},
+						"max_results": map[string]interface{}{
+							"type":        "integer",
+							"description": "Максимальное количество событий (по умолчанию 10)",
+						},
+					},
+					"required": []string{"user_id"},
+				},
+			},
+			{
+				"name":        "calendar_delete_event",
+				"description": "Удаляет событие из Google Calendar",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserId),
+						},
+						"event_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID события для удаления",
+						},
+					},
+					"required": []string{"user_id", "event_id"},
+				},
+			},
+		}
+
+		// Если уже есть function_declarations (например, от S3), добавляем к ним
+		if modelData.S3 {
+			// Находим существующий блок с function_declarations и добавляем функции Calendar
+			for i, tool := range googleTools {
+				if funcDecls, ok := tool["function_declarations"].([]map[string]interface{}); ok {
+					googleTools[i]["function_declarations"] = append(funcDecls, calendarFunctions...)
+					break
+				}
+			}
+		} else {
+			// Создаем новый блок function_declarations
+			googleTools = append(googleTools, map[string]interface{}{
+				"function_declarations": calendarFunctions,
+			})
+		}
+	}
+
+	// 4. Добавляем Google Sheets (Function Calling)
+	if modelData.GOAuth.HasSheets() {
+		sheetsFunctions := []map[string]interface{}{
+			{
+				"name":        "sheets_read_range",
+				"description": "Читает данные из указанного диапазона в Google Sheets",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserId),
+						},
+						"spreadsheet_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID таблицы Google Sheets (из URL)",
+						},
+						"range": map[string]interface{}{
+							"type":        "string",
+							"description": "Диапазон для чтения (например: 'Sheet1!A1:D10')",
+						},
+					},
+					"required": []string{"user_id", "spreadsheet_id", "range"},
+				},
+			},
+			{
+				"name":        "sheets_write_range",
+				"description": "Записывает данные в указанный диапазон Google Sheets",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserId),
+						},
+						"spreadsheet_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID таблицы Google Sheets",
+						},
+						"range": map[string]interface{}{
+							"type":        "string",
+							"description": "Начальная ячейка для записи (например: 'Sheet1!A1')",
+						},
+						"values": map[string]interface{}{
+							"type":        "array",
+							"description": "Двумерный массив значений для записи",
+							"items": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type": "string",
+								},
+							},
+						},
+					},
+					"required": []string{"user_id", "spreadsheet_id", "range", "values"},
+				},
+			},
+			{
+				"name":        "sheets_append_range",
+				"description": "Добавляет данные в конец таблицы Google Sheets",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserId),
+						},
+						"spreadsheet_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID таблицы Google Sheets",
+						},
+						"range": map[string]interface{}{
+							"type":        "string",
+							"description": "Диапазон колонок для добавления (например: 'Sheet1!A:D')",
+						},
+						"values": map[string]interface{}{
+							"type":        "array",
+							"description": "Двумерный массив значений для добавления",
+							"items": map[string]interface{}{
+								"type": "array",
+								"items": map[string]interface{}{
+									"type": "string",
+								},
+							},
+						},
+					},
+					"required": []string{"user_id", "spreadsheet_id", "range", "values"},
+				},
+			},
+			{
+				"name":        "sheets_create_spreadsheet",
+				"description": "Создает новую таблицу Google Sheets",
+				"parameters": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserId),
+						},
+						"title": map[string]interface{}{
+							"type":        "string",
+							"description": "Название новой таблицы",
+						},
+						"sheet_names": map[string]interface{}{
+							"type":        "array",
+							"description": "Названия листов (опционально)",
+							"items": map[string]interface{}{
+								"type": "string",
+							},
+						},
+					},
+					"required": []string{"user_id", "title"},
+				},
+			},
+		}
+
+		// Добавляем к существующим function_declarations или создаем новый блок
+		foundFuncDecls := false
+		for i, tool := range googleTools {
+			if funcDecls, ok := tool["function_declarations"].([]map[string]interface{}); ok {
+				googleTools[i]["function_declarations"] = append(funcDecls, sheetsFunctions...)
+				foundFuncDecls = true
+				break
+			}
+		}
+		if !foundFuncDecls {
+			googleTools = append(googleTools, map[string]interface{}{
+				"function_declarations": sheetsFunctions,
+			})
+		}
+	}
+
+	// 5. Добавляем Code Interpreter (только если нет S3 и нет GOAuth)
 	// ВАЖНО: Google Gemini НЕ поддерживает одновременное использование
 	// function_declarations и code_execution в одном запросе
-	if modelData.Interpreter && !modelData.S3 {
+	hasAnyFunctionDeclarations := modelData.S3 || modelData.GOAuth.Enabled()
+	if modelData.Interpreter && !hasAnyFunctionDeclarations {
 		googleTools = append(googleTools, map[string]interface{}{
 			"code_execution": map[string]interface{}{},
 		})

@@ -156,7 +156,7 @@ func (m *GoogleModel) getActiveModelId(userId uint32) (uint64, error) {
 	// Получаем все модели пользователя и находим Google модель
 	allModels, err := m.db.GetAllUserModels(userId)
 	if err != nil {
-		logger.Error("getActiveModelId: ошибка GetAllUserModels для userId=%d: %v", userId, err)
+		logger.Error("getActiveModelId: ошибка GetAllUserModels: %v", err, userId)
 		return 0, fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
 
