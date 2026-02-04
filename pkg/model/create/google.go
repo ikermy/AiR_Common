@@ -362,7 +362,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	// Добавляем generation_config с response_schema если нет tools
 	// ВАЖНО: response_schema на этапе создания агента применяется только если нет function_declarations
 	// При запросах (request.go) schema добавляется в зависимости от наличия tools в данном запросе
-	hasTools := modelData.S3 || modelData.Interpreter || modelData.WebSearch
+	hasTools := modelData.S3 || modelData.Interpreter || modelData.WebSearch || modelData.GOAuth.HasCalendar() || modelData.GOAuth.HasSheets()
 
 	if !hasTools {
 		// Только без tools можем добавить response_schema при создании
