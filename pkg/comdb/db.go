@@ -201,11 +201,11 @@ func (d *DB) MainCTX() context.Context {
 
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction
 // Также извлекает параметры Google модели: Image, WebSearch, Video, Haunter и Search
-func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, triggers []string, espero *Espero, image, webSearch, video, haunter, search bool, err error) {
+func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, triggers []string, espero *Espero, image, webSearch, video, haunter, search, operator bool, err error) {
 	// Создаем reader для распаковки данных
 	gzipReader, err := gzip.NewReader(bytes.NewReader(compressedData))
 	if err != nil {
-		return "", nil, nil, false, false, false, false, false, fmt.Errorf("ошибка при создании gzip reader: %w", err)
+		return "", nil, nil, false, false, false, false, false, false, fmt.Errorf("ошибка при создании gzip reader: %w", err)
 	}
 	defer func(gzipReader *gzip.Reader) {
 		closeErr := gzipReader.Close()
@@ -217,13 +217,13 @@ func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, tri
 	// Читаем распакованные данные
 	decompressedData, err := io.ReadAll(gzipReader)
 	if err != nil {
-		return "", nil, nil, false, false, false, false, false, fmt.Errorf("ошибка при распаковке данных: %w", err)
+		return "", nil, nil, false, false, false, false, false, false, fmt.Errorf("ошибка при распаковке данных: %w", err)
 	}
 
 	// Разбираем JSON
 	var modelData map[string]interface{}
 	if err := json.Unmarshal(decompressedData, &modelData); err != nil {
-		return "", nil, nil, false, false, false, false, false, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
+		return "", nil, nil, false, false, false, false, false, false, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
 	}
 
 	// Извлекаем поля MetaAction
@@ -278,7 +278,12 @@ func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, tri
 		search = val
 	}
 
-	return metaAction, triggers, espero, image, webSearch, video, haunter, search, nil
+	// Извлекаем флаг operator
+	if val, ok := modelData["operator"].(bool); ok {
+		operator = val
+	}
+
+	return metaAction, triggers, espero, image, webSearch, video, haunter, search, operator, nil
 }
 
 // ReadContext читает контекст диалога из базы данных

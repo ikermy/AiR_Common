@@ -769,7 +769,7 @@ func (m *UniversalModel) GetActiveUserModel(userId uint32) (*UniversalModelData,
 
 // GetUserModelByProvider получает модель пользователя по провайдеру
 func (m *UniversalModel) GetUserModelByProvider(userId uint32, provider ProviderType) (*UniversalModelData, error) {
-	record, err := m.db.GetModelByProvider(userId, provider)
+	record, err := m.db.GetModelByProviderAnyStatus(userId, provider)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения модели по провайдеру %s: %w", provider, err)
 	}

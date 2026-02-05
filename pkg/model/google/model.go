@@ -64,11 +64,13 @@ type GoogleAgentConfig struct {
 	HasVector         bool                     `json:"has_vector,omitempty"` // Флаг наличия Vector Store (управляется отдельно)
 
 	// Дополнительные возможности Google модели
-	Image     bool `json:"image"`      // Генерация изображений (Imagen 3)
-	WebSearch bool `json:"web_search"` // Веб-поиск (google_search)
-	Video     bool `json:"video"`      // Генерация видео (Google Veo)
-	Haunter   bool `json:"haunter"`    // Модель используется для поиска лидов
-	Search    bool `json:"search"`     // Поиск по векторному хранилищу (эмбеддингам в MariaDB)
+	Image      bool   `json:"image"`       // Генерация изображений (Imagen 3)
+	WebSearch  bool   `json:"web_search"`  // Веб-поиск (google_search)
+	Video      bool   `json:"video"`       // Генерация видео (Google Veo)
+	Haunter    bool   `json:"haunter"`     // Модель используется для поиска лидов
+	Search     bool   `json:"search"`      // Поиск по векторному хранилищу (эмбеддингам в MariaDB)
+	Operator   bool   `json:"operator"`    // Вызов оператора включён
+	MetaAction string `json:"meta_action"` // Целевое действие модели
 }
 
 // DialogCache кэширует историю диалога в памяти для быстрого доступа
@@ -213,7 +215,7 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 		logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, userId)
 	} else if compressedData != nil {
 		// Используем функцию из пакета db для распаковки и извлечения всех параметров
-		_, _, _, image, webSearch, video, haunter, search, err := comdb.DecompressAndExtractMetadata(compressedData)
+		metaAction, _, _, image, webSearch, video, haunter, search, operator, err := comdb.DecompressAndExtractMetadata(compressedData)
 		if err != nil {
 			logger.Warn("Ошибка распаковки параметров модели: %v", err, userId)
 		} else {
@@ -222,6 +224,8 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 			agentConfig.Video = video
 			agentConfig.Haunter = haunter
 			agentConfig.Search = search
+			agentConfig.Operator = operator
+			agentConfig.MetaAction = metaAction
 		}
 	}
 
