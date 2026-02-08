@@ -519,6 +519,7 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 	responseBody.ReadFrom(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
+		logger.Error("SendFunctionResult: API вернул статус %d для conversation_id=%s, ответ: %s", resp.StatusCode, conversationID, responseBody.String())
 		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, responseBody.String())
 	}
 
@@ -526,6 +527,7 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 
 	var result ConversationResponse
 	if err := json.Unmarshal(responseBody.Bytes(), &result); err != nil {
+		logger.Error("SendFunctionResult: ошибка парсинга JSON для conversation_id=%s: %v, тело ответа: %s", conversationID, err, responseBody.String())
 		return ConversationResponse{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 

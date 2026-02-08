@@ -98,7 +98,7 @@ func New(parent context.Context, conf *conf.Conf, actionHandler model.ActionHand
 func NewAsRouterOption() model.RouterOption {
 	return func(r *model.ModelRouter, ctx context.Context, cfg *conf.Conf, db model.DB) error {
 		// Создаём универсальный обработчик функций с Google OAuth конфигом
-		actionHandler := model.NewUniversalActionHandler(ctx, db, create.ProviderMistral, &cfg.GOAuth)
+		actionHandler := model.NewUniversalActionHandler(ctx, db, cfg)
 
 		// Создаём Mistral модель с action handler и router
 		mistralModel := New(ctx, cfg, actionHandler, db, r)
@@ -230,7 +230,7 @@ func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId 
 		logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, assist.UserId)
 	} else if compressedData != nil {
 		// Используем функцию из пакета db для распаковки и извлечения всех параметров
-		_, _, _, _, _, _, haunter, _, _, err := comdb.DecompressAndExtractMetadata(compressedData)
+		_, _, _, _, _, _, haunter, _, _, _, _, _, _, err := comdb.DecompressAndExtractMetadata(compressedData)
 		if err != nil {
 			logger.Warn("Ошибка распаковки параметров модели: %v", err, assist.UserId)
 		} else {

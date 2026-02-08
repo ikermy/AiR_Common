@@ -174,6 +174,20 @@ func (m *OpenAIModel) uploadFiles(files []model.FileUpload) ([]string, error) {
 	var fileIDs []string
 
 	for _, file := range files {
+		// Если это изображение с URL - пропускаем загрузку
+		// Изображения по URL не используются в Assistants API (только для Chat Completions)
+		// Документы всегда загружаются для file_search
+		if file.HasURL() && file.IsImageMimeType() {
+			logger.Debug("Пропуск загрузки изображения %s (доступно по URL: %s)", file.Name, file.URL)
+			continue
+		}
+
+		// Для документов и изображений без URL - загружаем байты
+		if file.Content == nil {
+			logger.Warn("Файл %s не имеет Content и не является изображением с URL, пропускаем", file.Name)
+			continue
+		}
+
 		data, err := io.ReadAll(file.Content)
 		if err != nil {
 			return nil, fmt.Errorf("не удалось прочитать содержимое файла %s: %w", file.Name, err)

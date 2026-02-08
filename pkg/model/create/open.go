@@ -126,17 +126,17 @@ func buildEnhancedPromptAndSchema(basePrompt string, realUserID uint64, metaActi
 	enhancedPrompt += "## ФОРМАТ ОТВЕТА:\n" +
 		"Твой ответ ВСЕГДА должен быть в формате JSON Schema:\n" +
 		ModelShemaJSON + "\n\n" +
-		"### ⚠️ КРИТИЧЕСКИ ВАЖНО - ПРАВИЛА для полей JSON:\n\n" +
+		"### КРИТИЧЕСКИ ВАЖНО - ПРАВИЛА для полей JSON:\n\n" +
 		"**message**: Твоё текстовое сообщение пользователю\n\n" +
 		"**action.send_files**: Массив файлов для отправки ([] если файлов нет)\n\n"
 
 	// Инструкции по target
 	if metaAction != "" {
 		enhancedPrompt += "**target** (boolean) - Достигнута ли ЦЕЛЬ диалога:\n" +
-			"  ✅ Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
-			"  ✅ Если условие ТОЧНО выполнено → target: true\n" +
-			"  ✅ Если условие НЕ выполнено → target: false\n" +
-			"  ❌ НЕ ставь false если цель достигнута!\n\n"
+			"  Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  Если условие ТОЧНО выполнено → target: true\n" +
+			"  Если условие НЕ выполнено → target: false\n" +
+			"  НЕ ставь false если цель достигнута!\n\n"
 	} else {
 		enhancedPrompt += "**target**: ВСЕГДА false (цели нет)\n\n"
 	}
@@ -144,9 +144,9 @@ func buildEnhancedPromptAndSchema(basePrompt string, realUserID uint64, metaActi
 	// Инструкции по operator
 	if operator {
 		enhancedPrompt += "**operator** (boolean) - Требуется ли оператор:\n" +
-			"  ✅ Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
-			"  ✅ Если пользователь просит оператора → operator: true\n" +
-			"  ✅ Во всех остальных случаях → operator: false\n\n"
+			"  Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  Если пользователь просит оператора → operator: true\n" +
+			"  Во всех остальных случаях → operator: false\n\n"
 	}
 
 	// Добавляем примеры
@@ -379,41 +379,17 @@ func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelDat
 		realUserID = uint64(userId) // Fallback на обычный userId
 	}
 
-	// Получаем текущее время в таймзоне пользователя для динамического промпта
-	currentTime := time.Now()
-	userTimezone := "UTC"
-	if m.db != nil {
-		if tz, err := m.GetUserTimeZone(userId); err == nil {
-			userTimezone = tz
-		}
-	}
-	loc, _ := time.LoadLocation(userTimezone)
-	localTime := currentTime.In(loc)
-
 	// Автоматически генерируем системные инструкции на основе параметров
 	enhancedPrompt := modelData.Prompt + "\n\n"
 
-	// Добавляем ТЕКУЩУЮ ДАТУ И ВРЕМЯ в начало промпта для всех моделей
-	enhancedPrompt += fmt.Sprintf("📅 ТЕКУЩАЯ ДАТА И ВРЕМЯ:\n"+
-		"- День недели: %s\n"+
-		"- Время: %s\n"+
-		"- Таймзона: %s\n\n"+
-		"ВАЖНО: При расчёте 'завтра', 'через неделю', 'в понедельник' и т.д. используй указанную информацию как БАЗУ.\n"+
-		"Примеры:\n"+
-		"- 'завтра' = %s (сегодня + 1 день)\n"+
-		"- 'послезавтра' = %s (сегодня + 2 дня)\n"+
-		"- 'через неделю' = %s (сегодня + 7 дней)\n\n",
-		localTime.Weekday().String(),
-		localTime.Format("15:04:05"),
-		userTimezone,
-		localTime.AddDate(0, 0, 1).Format("2006-01-02"),
-		localTime.AddDate(0, 0, 2).Format("2006-01-02"),
-		localTime.AddDate(0, 0, 7).Format("2006-01-02"),
-	)
+	// Напоминание о необходимости получить актуальное время с сервера для ВСЕХ моделей
+	enhancedPrompt += fmt.Sprintf("ТЕКУЩЕЕ ВРЕМЯ:\n"+
+		"ВАЖНО: Для получения актуальной даты и времени используй функцию get_current_time(user_id=\"%d\")\n"+
+		"НЕ используй свои внутренние знания о дате - они УСТАРЕЛИ!\n\n", realUserID)
 
 	// Добавляем важное напоминание в начало - только для активных функций
 	if modelData.MetaAction != "" || modelData.Operator {
-		enhancedPrompt += "## ⚠️ ВАЖНОЕ НАПОМИНАНИЕ:\n" +
+		enhancedPrompt += "## ВАЖНОЕ НАПОМИНАНИЕ:\n" +
 			"В КАЖДОМ ответе ты ОБЯЗАН:\n"
 
 		if modelData.MetaAction != "" {
@@ -459,13 +435,7 @@ func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelDat
 
 	// Добавляем инструкции по GOOGLE CALENDAR
 	if modelData.GOAuth.HasCalendar() {
-		// Получаем таймзону пользователя
-		userTimezone := "UTC"
-		if tz, err := m.GetUserTimeZone(userId); err == nil {
-			userTimezone = tz
-		}
-
-		enhancedPrompt += "## 📅 GOOGLE CALENDAR - Управление событиями:\n" +
+		enhancedPrompt += "## GOOGLE CALENDAR - Управление событиями:\n" +
 			"У тебя есть доступ к Google Calendar пользователя.\n\n" +
 			fmt.Sprintf("**user_id для всех функций: \"%d\"** (строка)\n\n", realUserID) +
 			"### Доступные функции:\n" +
@@ -474,38 +444,51 @@ func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelDat
 			"- calendar_delete_event - удаление события\n" +
 			"- calendar_get_event - детали события\n\n" +
 			"### ВАЖНО при работе со временем:\n" +
-			"- Формат времени: RFC3339 с таймзоной (" + userTimezone + ")\n" +
-			"- Пример: \"2026-02-05T15:00:00+03:00\"\n" +
+			"- Формат времени: RFC3339 (например: \"2026-02-05T15:00:00+03:00\")\n" +
+			"- ВСЕГДА вызывай get_current_time ПЕРЕД расчётом дат!\n" +
 			"- Длительность по умолчанию: 1 час\n" +
 			"- После создания/удаления подтверди действие и покажи ссылку\n\n"
 	}
 
 	// Добавляем инструкции по GOOGLE SHEETS
 	if modelData.GOAuth.HasSheets() {
-		enhancedPrompt += "## 📊 GOOGLE SHEETS - Работа с таблицами:\n" +
+		enhancedPrompt += "## GOOGLE SHEETS - Работа с таблицами:\n" +
 			"У тебя есть доступ к Google Sheets пользователя.\n\n" +
 			fmt.Sprintf("**user_id для всех функций: \"%d\"** (строка)\n\n", realUserID) +
-			"### ⚠️ КРИТИЧЕСКИ ВАЖНО - ВСЕГДА ВЫЗЫВАЙ ФУНКЦИИ:\n" +
-			"1. Пользователь спрашивает о данных в таблице → НЕМЕДЛЕННО вызови sheets_read_range\n" +
-			"2. Нужно узнать количество строк → вызови sheets_read_range, подсчитай len(values)-1 (минус заголовки)\n" +
-			"3. Нужно записать данные → вызови sheets_write_range\n" +
-			"4. Нужно добавить строку → вызови sheets_append_range\n" +
-			"5. НЕ говори 'произошла ошибка' БЕЗ РЕАЛЬНОЙ попытки вызова функции!\n" +
-			"6. НЕ говори о проблемах с доступом ПЕРЕД попыткой вызова!\n" +
-			"7. ДЕЙСТВУЙ: вызови функцию → получи результат → обработай\n\n" +
+			"\n" +
+			"КРИТИЧЕСКИ ВАЖНО - ОБЯЗАТЕЛЬНО ВЫЗЫВАЙ ФУНКЦИИ!\n\n" +
+			"КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:\n" +
+			"- \"К сожалению, я не могу определить количество строк\"\n" +
+			"- \"Отсутствие доступа к аккаунту пользователя\"\n" +
+			"- \"Я не могу получить данные из таблицы\"\n" +
+			"- \"Пожалуйста, убедитесь, что у меня есть доступ\"\n" +
+			"- Отвечать БЕЗ вызова функции sheets_read_range\n\n" +
+			"ПРАВИЛЬНЫЕ ДЕЙСТВИЯ:\n" +
+			"1. Пользователь спрашивает \"что в таблице\" → НЕМЕДЛЕННО вызови sheets_read_range\n" +
+			"2. Пользователь спрашивает \"сколько строк\" → ОБЯЗАТЕЛЬНО вызови sheets_read_range и посчитай len(values)-1\n" +
+			"3. НЕ ОТВЕЧАЙ из промпта - ВЫЗОВИ ФУНКЦИЮ и получи РЕАЛЬНЫЕ данные!\n" +
+			"4. НЕ ГОВОРИ о проблемах доступа - У ТЕБЯ УЖЕ ЕСТЬ ДОСТУП через функции!\n\n" +
+			"Где взять spreadsheet_id:\n" +
+			"- Ищи в промпте выше (может быть указан как: ID:, таблица CRM: ID, spreadsheet_id)\n" +
+			"- Ищи в запросе пользователя (может быть длинная строка типа 18kxy_zkX...)\n" +
+			"- ID может быть в ЛЮБОМ формате - найди его!\n\n" +
+			"Где взять название листа:\n" +
+			"- Ищи в промпте (может быть: Лист:, sheet:, на листе)\n" +
+			"- Ищи в запросе пользователя\n" +
+			"- Если не найден - используй весь диапазон: A:Z\n\n" +
 			"### Доступные функции:\n" +
-			"- sheets_read_range - чтение данных из таблицы\n" +
-			"- sheets_write_range - запись/обновление данных\n" +
-			"- sheets_append_range - добавление строк в конец\n" +
-			"- sheets_create_spreadsheet - создание новой таблицы\n" +
-			"- sheets_get_info - информация о таблице (листы, размеры)\n\n" +
+			"- sheets_read_range(user_id, spreadsheet_id, range) - чтение данных\n" +
+			"- sheets_write_range(user_id, spreadsheet_id, range, values) - запись данных\n" +
+			"- sheets_append_range(user_id, spreadsheet_id, range, values) - добавление строк\n\n" +
+			"### КРИТИЧЕСКИ ВАЖНО ПРИ РАБОТЕ С ДАТАМИ:\n" +
+			"ЕСЛИ в запросе упоминаются ДАТЫ ('текущая дата', 'сегодня', 'завтра', 'дата'):\n" +
+			fmt.Sprintf("1. ОБЯЗАТЕЛЬНО СНАЧАЛА вызови get_current_time({\"user_id\": \"%d\"})\n", realUserID) +
+			"2. Используй ТОЛЬКО дату из ответа get_current_time\n" +
+			"3. НЕ используй свои внутренние знания о дате - они УСТАРЕЛИ!\n\n" +
 			"### ВАЖНО:\n" +
-			"- spreadsheet_id берётся из промпта пользователя или из URL (между /d/ и /edit)\n" +
-			"- Если в промпте указан ID таблицы - используй ЕГО (полный ID из промпта)\n" +
-			"- Диапазон в формате: 'Лиды!A1:F100' или 'Лист!A:F' (весь лист)\n" +
-			"- Для подсчёта строк используй: len(values) - 1 (вычитаем заголовки)\n" +
-			"- Перед записью всегда читай текущие данные\n" +
-			"- После операций сообщай результат (кол-во строк/ячеек)\n\n"
+			"- Диапазон в формате: 'Лиды!A:F' (весь лист) или 'Лист!A1:F100'\n" +
+			"- Для подсчёта строк: вызови sheets_read_range → посчитай len(values)-1\n" +
+			"- ВСЕГДА вызывай функцию ПЕРЕД ответом!\n\n"
 	}
 
 	// Добавляем инструкции по поиску в документах
@@ -674,10 +657,35 @@ func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelDat
 		tools = append(tools, openai.AssistantTool{Type: "code_interpreter"})
 	}
 
+	// Добавляем функцию get_current_time ВСЕГДА (для получения актуального времени)
+	userIDStr := fmt.Sprintf("%d", realUserID)
+	tools = append(tools,
+		openai.AssistantTool{
+			Type: "function",
+			Function: &openai.FunctionDefinition{
+				Name: "get_current_time",
+				Description: "Получает ТОЧНОЕ текущее время и дату с сервера в часовом поясе пользователя. " +
+					"ОБЯЗАТЕЛЬНО используй эту функцию ПЕРЕД расчётом дат (завтра, через неделю, в понедельник и т.д.). " +
+					"НЕ используй свои внутренние знания о дате - они УСТАРЕЛИ!",
+				Strict: false,
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+							"const":       userIDStr,
+						},
+					},
+					"required": []string{"user_id"},
+				},
+			},
+		},
+	)
+
 	// Добавляем функции get_s3_files и create_file ТОЛЬКО если включен S3
 	if modelData.S3 {
-		// Преобразуем realUserID в строку
-		userIDStr := fmt.Sprintf("%d", realUserID)
+		// Используем уже созданный userIDStr
 
 		tools = append(tools,
 			openai.AssistantTool{
@@ -723,6 +731,230 @@ func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelDat
 							},
 						},
 						"required": []string{"user_id", "content", "file_name"},
+					},
+				},
+			},
+		)
+	}
+
+	// Добавляем функции Google Calendar если включен
+	if modelData.GOAuth.HasCalendar() {
+		userIDStr := fmt.Sprintf("%d", realUserID)
+		tools = append(tools,
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "calendar_create_event",
+					Description: "Создает новое событие в Google Calendar пользователя",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "Название события",
+							},
+							"description": map[string]interface{}{
+								"type":        "string",
+								"description": "Описание события (опционально)",
+							},
+							"start_time": map[string]interface{}{
+								"type":        "string",
+								"description": "Время начала в RFC3339 формате",
+							},
+							"end_time": map[string]interface{}{
+								"type":        "string",
+								"description": "Время окончания в RFC3339 формате",
+							},
+							"location": map[string]interface{}{
+								"type":        "string",
+								"description": "Место проведения (опционально)",
+							},
+						},
+						"required": []string{"user_id", "title", "start_time", "end_time"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "calendar_list_events",
+					Description: "Получает список событий из Google Calendar",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"time_min": map[string]interface{}{
+								"type":        "string",
+								"description": "Начало периода в RFC3339 (опционально)",
+							},
+							"time_max": map[string]interface{}{
+								"type":        "string",
+								"description": "Конец периода в RFC3339 (опционально)",
+							},
+							"max_results": map[string]interface{}{
+								"type":        "integer",
+								"description": "Максимальное количество событий (по умолчанию 10)",
+							},
+						},
+						"required": []string{"user_id"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "calendar_delete_event",
+					Description: "Удаляет событие из Google Calendar",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"event_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID события для удаления",
+							},
+						},
+						"required": []string{"user_id", "event_id"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "calendar_get_event",
+					Description: "Получает детали события из Google Calendar",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"event_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID события для получения деталей",
+							},
+						},
+						"required": []string{"user_id", "event_id"},
+					},
+				},
+			},
+		)
+	}
+
+	// Добавляем функции Google Sheets если включен
+	if modelData.GOAuth.HasSheets() {
+		userIDStr := fmt.Sprintf("%d", realUserID)
+		tools = append(tools,
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "sheets_read_range",
+					Description: "Читает данные из указанного диапазона в Google Sheets",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"spreadsheet_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID таблицы Google Sheets (из URL или промпта)",
+							},
+							"range": map[string]interface{}{
+								"type":        "string",
+								"description": "Диапазон для чтения (например: 'Лиды!A:F' или 'Sheet1!A1:D10')",
+							},
+						},
+						"required": []string{"user_id", "spreadsheet_id", "range"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "sheets_write_range",
+					Description: "Записывает данные в указанный диапазон Google Sheets",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"spreadsheet_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID таблицы Google Sheets",
+							},
+							"range": map[string]interface{}{
+								"type":        "string",
+								"description": "Начальная ячейка для записи (например: 'Sheet1!A1')",
+							},
+							"values": map[string]interface{}{
+								"type":        "array",
+								"description": "Двумерный массив значений для записи",
+								"items": map[string]interface{}{
+									"type": "array",
+									"items": map[string]interface{}{
+										"type": "string",
+									},
+								},
+							},
+						},
+						"required": []string{"user_id", "spreadsheet_id", "range", "values"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "sheets_append_range",
+					Description: "Добавляет данные в конец таблицы Google Sheets",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"spreadsheet_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID таблицы Google Sheets",
+							},
+							"range": map[string]interface{}{
+								"type":        "string",
+								"description": "Диапазон колонок для добавления (например: 'Sheet1!A:D')",
+							},
+							"values": map[string]interface{}{
+								"type":        "array",
+								"description": "Двумерный массив значений для добавления",
+								"items": map[string]interface{}{
+									"type": "array",
+									"items": map[string]interface{}{
+										"type": "string",
+									},
+								},
+							},
+						},
+						"required": []string{"user_id", "spreadsheet_id", "range", "values"},
 					},
 				},
 			},
@@ -872,7 +1104,7 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 
 	// Добавляем важное напоминание
 	if updated.MetaAction != "" || updated.Operator {
-		enhancedPrompt += "## ⚠️ ВАЖНОЕ НАПОМИНАНИЕ:\n" +
+		enhancedPrompt += "##ВАЖНОЕ НАПОМИНАНИЕ:\n" +
 			"В КАЖДОМ ответе ты ОБЯЗАН:\n"
 
 		if updated.MetaAction != "" {
@@ -914,6 +1146,49 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 			"- Генерации файлов с результатами\n\n"
 	}
 
+	// Добавляем инструкции по GOOGLE CALENDAR
+	if updated.GOAuth.HasCalendar() {
+		enhancedPrompt += "## GOOGLE CALENDAR - Управление событиями:\n" +
+			"У тебя есть доступ к Google Calendar пользователя.\n\n" +
+			fmt.Sprintf("**user_id для всех функций: \"%d\"** (строка)\n\n", realUserID) +
+			"### Доступные функции:\n" +
+			"- calendar_create_event - создание события\n" +
+			"- calendar_list_events - список событий\n" +
+			"- calendar_delete_event - удаление события\n" +
+			"- calendar_get_event - детали события\n\n" +
+			"### ВАЖНО:\n" +
+			"- Формат времени: RFC3339 (например: \"2026-02-05T15:00:00+03:00\")\n" +
+			"- ВСЕГДА вызывай get_current_time ПЕРЕД расчётом дат!\n" +
+			"- После создания/удаления подтверди действие\n\n"
+	}
+
+	// Добавляем инструкции по GOOGLE SHEETS
+	if updated.GOAuth.HasSheets() {
+		enhancedPrompt += "## 📊 GOOGLE SHEETS - Работа с таблицами:\n" +
+			"У тебя есть доступ к Google Sheets пользователя.\n\n" +
+			fmt.Sprintf("**user_id для всех функций: \"%d\"** (строка)\n\n", realUserID) +
+			"\n" +
+			"КРИТИЧЕСКИ ВАЖНО - ОБЯЗАТЕЛЬНО ВЫЗЫВАЙ ФУНКЦИИ!\n" +
+			"КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:\n" +
+			"\"К сожалению, я не могу определить количество строк\"\n" +
+			"\"Отсутствие доступа к аккаунту пользователя\"\n" +
+			"\"Я не могу получить данные из таблицы\"\n" +
+			"\"Пожалуйста, убедитесь, что у меня есть доступ\"\n" +
+			"Отвечать БЕЗ вызова функции sheets_read_range\n\n" +
+			"ПРАВИЛЬНЫЕ ДЕЙСТВИЯ:\n" +
+			"1. Вопрос \"что в таблице\" → НЕМЕДЛЕННО вызови sheets_read_range\n" +
+			"2. Вопрос \"сколько строк\" → ОБЯЗАТЕЛЬНО вызови sheets_read_range и посчитай len(values)-1\n" +
+			"3. НЕ ОТВЕЧАЙ из промпта - ВЫЗОВИ ФУНКЦИЮ!\n" +
+			"4. У ТЕБЯ УЖЕ ЕСТЬ ДОСТУП через функции!\n\n" +
+			"spreadsheet_id ищи в промпте или запросе пользователя\n" +
+			"Диапазон: 'Лиды!A:F' или 'Sheet1!A:Z'\n\n" +
+			"### Функции:\n" +
+			"- sheets_read_range - чтение данных\n" +
+			"- sheets_write_range - запись\n" +
+			"- sheets_append_range - добавление строк\n" +
+			"═══════════════════════════════════════════════════════════\n\n"
+	}
+
 	// Добавляем инструкции по поиску в документах
 	if updated.Search || len(updated.FileIds) > 0 {
 		enhancedPrompt += "## ПОИСК В ДОКУМЕНТАХ (File Search):\n" +
@@ -935,24 +1210,24 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 	enhancedPrompt += "## ФОРМАТ ОТВЕТА:\n" +
 		"Твой ответ ВСЕГДА должен быть в формате JSON Schema:\n" +
 		ModelShemaJSON + "\n\n" +
-		"### ⚠️ КРИТИЧЕСКИ ВАЖНО - ПРАВИЛА для полей JSON:\n\n" +
+		"### КРИТИЧЕСКИ ВАЖНО - ПРАВИЛА для полей JSON:\n\n" +
 		"**message**: Твоё текстовое сообщение пользователю\n\n" +
 		"**action.send_files**: Массив файлов для отправки ([] если файлов нет)\n\n"
 
 	if updated.MetaAction != "" {
 		enhancedPrompt += "**target** (boolean) - Достигнута ли ЦЕЛЬ диалога:\n" +
-			"  ✅ Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
-			"  ✅ Если условие ТОЧНО выполнено → target: true\n" +
-			"  ✅ Если условие НЕ выполнено → target: false\n\n"
+			"Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"Если условие ТОЧНО выполнено → target: true\n" +
+			"Если условие НЕ выполнено → target: false\n\n"
 	} else {
 		enhancedPrompt += "**target**: ВСЕГДА false (цели нет)\n\n"
 	}
 
 	if updated.Operator {
 		enhancedPrompt += "**operator** (boolean) - Требуется ли оператор:\n" +
-			"  ✅ Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
-			"  ✅ Если пользователь просит оператора → operator: true\n" +
-			"  ✅ Во всех остальных случаях → operator: false\n\n"
+			" Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			" Если пользователь просит оператора → operator: true\n" +
+			" Во всех остальных случаях → operator: false\n\n"
 	}
 
 	// Добавляем примеры
@@ -960,11 +1235,17 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 		if updated.Operator {
 			enhancedPrompt += "### Пример ответа когда цель ДОСТИГНУТА:\n" +
 				"```json\n{\n  \"message\": \"Привет, Жорик! Рад познакомиться! 😊\",\n" +
-				"  \"action\": {\"send_files\": []},\n  \"target\": true,\n  \"operator\": false\n}\n```\n\n"
+				"  \"action\": {\"send_files\": []},\n  \"target\": true,\n  \"operator\": false\n}\n```\n\n" +
+				"### Пример ответа когда цель НЕ достигнута:\n" +
+				"```json\n{\n  \"message\": \"Привет! Как дела? 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n  \"target\": false,\n  \"operator\": false\n}\n```\n\n"
 		} else {
 			enhancedPrompt += "### Пример ответа когда цель ДОСТИГНУТА:\n" +
 				"```json\n{\n  \"message\": \"Привет, Жорик! Рад познакомиться! 😊\",\n" +
-				"  \"action\": {\"send_files\": []},\n  \"target\": true\n}\n```\n\n"
+				"  \"action\": {\"send_files\": []},\n  \"target\": true\n}\n```\n\n" +
+				"### Пример ответа когда цель НЕ достигнута:\n" +
+				"```json\n{\n  \"message\": \"Привет! Как дела? 😊\",\n" +
+				"  \"action\": {\"send_files\": []},\n  \"target\": false\n}\n```\n\n"
 		}
 	}
 
@@ -1065,9 +1346,35 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 		tools = append(tools, openai.AssistantTool{Type: "code_interpreter"})
 	}
 
+	// Добавляем функцию get_current_time ВСЕГДА
+	userIDStr := fmt.Sprintf("%d", realUserID)
+	tools = append(tools,
+		openai.AssistantTool{
+			Type: "function",
+			Function: &openai.FunctionDefinition{
+				Name: "get_current_time",
+				Description: "Получает ТОЧНОЕ текущее время и дату с сервера в часовом поясе пользователя. " +
+					"ОБЯЗАТЕЛЬНО используй эту функцию ПЕРЕД расчётом дат (завтра, через неделю, в понедельник и т.д.). " +
+					"НЕ используй свои внутренние знания о дате - они УСТАРЕЛИ!",
+				Strict: false,
+				Parameters: map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"user_id": map[string]interface{}{
+							"type":        "string",
+							"description": "ID пользователя",
+							"const":       userIDStr,
+						},
+					},
+					"required": []string{"user_id"},
+				},
+			},
+		},
+	)
+
 	// Добавляем функции S3 ТОЛЬКО если включен
 	if updated.S3 {
-		userIDStr := fmt.Sprintf("%d", realUserID)
+		// Используем уже созданный userIDStr
 
 		tools = append(tools,
 			openai.AssistantTool{
@@ -1082,7 +1389,7 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 							"user_id": map[string]interface{}{
 								"type":        "string",
 								"description": "ID пользователя",
-								"const":       userIDStr,
+								"const":       userIDStr, // Константа - ВСЕГДА это значение!
 							},
 						},
 						"required": []string{"user_id"},
@@ -1101,7 +1408,7 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 							"user_id": map[string]interface{}{
 								"type":        "string",
 								"description": "ID пользователя",
-								"const":       userIDStr,
+								"const":       userIDStr, // Константа - ВСЕГДА это значение!
 							},
 							"content": map[string]interface{}{
 								"type":        "string",
@@ -1113,6 +1420,191 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updat
 							},
 						},
 						"required": []string{"user_id", "content", "file_name"},
+					},
+				},
+			},
+		)
+	}
+
+	// Добавляем функции Google Calendar если включен
+	if updated.GOAuth.HasCalendar() {
+		userIDStr := fmt.Sprintf("%d", realUserID)
+		tools = append(tools,
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "calendar_create_event",
+					Description: "Создает новое событие в Google Calendar пользователя",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "Название события",
+							},
+							"description": map[string]interface{}{
+								"type":        "string",
+								"description": "Описание события (опционально)",
+							},
+							"start_time": map[string]interface{}{
+								"type":        "string",
+								"description": "Время начала в RFC3339 формате",
+							},
+							"end_time": map[string]interface{}{
+								"type":        "string",
+								"description": "Время окончания в RFC3339 формате",
+							},
+							"location": map[string]interface{}{
+								"type":        "string",
+								"description": "Место проведения (опционально)",
+							},
+						},
+						"required": []string{"user_id", "title", "start_time", "end_time"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "calendar_list_events",
+					Description: "Получает список событий из Google Calendar",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"time_min": map[string]interface{}{
+								"type":        "string",
+								"description": "Начало периода в RFC3339 (опционально)",
+							},
+							"time_max": map[string]interface{}{
+								"type":        "string",
+								"description": "Конец периода в RFC3339 (опционально)",
+							},
+							"max_results": map[string]interface{}{
+								"type":        "integer",
+								"description": "Максимальное количество событий (по умолчанию 10)",
+							},
+						},
+						"required": []string{"user_id"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "calendar_delete_event",
+					Description: "Удаляет событие из Google Calendar",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"event_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID события для удаления",
+							},
+						},
+						"required": []string{"user_id", "event_id"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "calendar_get_event",
+					Description: "Получает детали события из Google Calendar",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":  "string",
+								"const": userIDStr,
+							},
+							"event_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID события для получения деталей",
+							},
+						},
+						"required": []string{"user_id", "event_id"},
+					},
+				},
+			},
+		)
+	}
+
+	// Добавляем функции Google Sheets если включен
+	if updated.GOAuth.HasSheets() {
+		userIDStr := fmt.Sprintf("%d", realUserID)
+		tools = append(tools,
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "sheets_read_range",
+					Description: "Читает данные из Google Sheets",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id":        map[string]interface{}{"type": "string", "const": userIDStr},
+							"spreadsheet_id": map[string]interface{}{"type": "string", "description": "ID таблицы"},
+							"range":          map[string]interface{}{"type": "string", "description": "Диапазон (например: 'Лиды!A:F' или 'Sheet1!A1:D10')"},
+						},
+						"required": []string{"user_id", "spreadsheet_id", "range"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "sheets_write_range",
+					Description: "Записывает данные в Google Sheets",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id":        map[string]interface{}{"type": "string", "const": userIDStr},
+							"spreadsheet_id": map[string]interface{}{"type": "string", "description": "ID таблицы"},
+							"range":          map[string]interface{}{"type": "string", "description": "Диапазон для записи"},
+							"values": map[string]interface{}{
+								"type":  "array",
+								"items": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+							},
+						},
+						"required": []string{"user_id", "spreadsheet_id", "range", "values"},
+					},
+				},
+			},
+			openai.AssistantTool{
+				Type: "function",
+				Function: &openai.FunctionDefinition{
+					Name:        "sheets_append_range",
+					Description: "Добавляет данные в конец Google Sheets",
+					Strict:      false,
+					Parameters: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id":        map[string]interface{}{"type": "string", "const": userIDStr},
+							"spreadsheet_id": map[string]interface{}{"type": "string", "description": "ID таблицы"},
+							"range":          map[string]interface{}{"type": "string", "description": "Диапазон колонок"},
+							"values": map[string]interface{}{
+								"type":  "array",
+								"items": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+							},
+						},
+						"required": []string{"user_id", "spreadsheet_id", "range", "values"},
 					},
 				},
 			},

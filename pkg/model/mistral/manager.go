@@ -410,7 +410,7 @@ func (m *MistralModel) removeFileFromDatabase(userId uint32, fileID string) (int
 	}
 
 	remainingCount := len(newFileIds)
-	logger.Info("Файл %s удалён из FileIds для пользователя %d (осталось файлов: %d)", fileID, userId, remainingCount, userId)
+	logger.Info("Файл %s удалён из FileIds (осталось файлов: %d)", fileID, remainingCount, userId)
 	return remainingCount, nil
 }
 
@@ -446,6 +446,6 @@ func (m *MistralModel) clearLibraryID(userId uint32) error {
 		return fmt.Errorf("не удалось обновить VectorId в БД: %w", err)
 	}
 
-	logger.Info("Library ID очищен (установлен NULL) для пользователя %d", userId, userId)
+	logger.Info("Library ID очищен (установлен NULL)", userId)
 	return nil
 }

@@ -75,7 +75,7 @@ func (s *SheetsService) getSheetsService(userId uint32) (*sheets.Service, error)
 
 		// Если токен был обновлён - сохраняем в БД
 		if freshToken.AccessToken != token.AccessToken {
-			logger.Info("Google OAuth токен был автоматически обновлён для пользователя %d", userId)
+			logger.Debug("Google OAuth токен был автоматически обновлён", userId)
 			err = s.db.SaveGoogleTokenByProvider(userId, s.provider, googleEmail, freshToken)
 			if err != nil {
 				logger.Warn("Не удалось сохранить обновлённый токен: %v", err)

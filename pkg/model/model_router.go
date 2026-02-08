@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,7 +35,7 @@ type Inter interface {
 	GetCh(respId uint64) (*Ch, error)
 	GetRespIdByDialogId(dialogId uint64) (uint64, error)
 	SaveAllContextDuringExit()
-	Request(userId uint32, modelId string, dialogId uint64, text string, files ...FileUpload) (AssistResponse, error)
+	Request(userId uint32, dialogId uint64, text string, files ...FileUpload) (AssistResponse, error)
 	CleanDialogData(dialogId uint64)
 	DeleteTempFile(fileID string) error
 	TranscribeAudio(userId uint32, audioData []byte, fileName string) (string, error)
@@ -302,6 +303,22 @@ type FileUpload struct {
 	Name     string    `json:"name"`
 	Content  io.Reader `json:"-"`
 	MimeType string    `json:"mime_type"`
+	URL      string    `json:"url,omitempty"` // Опциональный URL для изображений (вместо Content)
+}
+
+// IsImageMimeType проверяет, является ли MIME-тип изображением
+func (f *FileUpload) IsImageMimeType() bool {
+	switch f.MimeType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp", "image/jpg":
+		return true
+	default:
+		return false
+	}
+}
+
+// HasURL проверяет, содержит ли FileUpload валидный URL
+func (f *FileUpload) HasURL() bool {
+	return f.URL != "" && (strings.HasPrefix(f.URL, "http://") || strings.HasPrefix(f.URL, "https://"))
 }
 
 // ============================================================================
@@ -360,6 +377,23 @@ func NewModelRouter(ctx context.Context, conf *conf.Conf, db DB, options ...Rout
 		if err := option(router, ctx, conf, db); err != nil {
 			logger.Fatalf("ошибка применения опции: %w", err)
 		}
+	}
+
+	// Устанавливаем UniversalModel в Google модель для доступа к GetRealUserID
+	if router.google != nil {
+		logger.Debug("Google модель обнаружена, пытаемся установить UniversalModel")
+		// Используем type assertion для доступа к SetUniversalModel
+		if googleModel, ok := router.google.(interface{ SetUniversalModel(*create.UniversalModel) }); ok {
+			if router.modelsManager == nil {
+				logger.Error("КРИТИЧЕСКАЯ ОШИБКА: modelsManager == nil, не можем установить UniversalModel!")
+			} else {
+				googleModel.SetUniversalModel(router.modelsManager)
+			}
+		} else {
+			logger.Error("КРИТИЧЕСКАЯ ОШИБКА: Google модель не реализует метод SetUniversalModel!")
+		}
+	} else {
+		logger.Debug("Google модель не инициализирована, пропускаем установку UniversalModel")
 	}
 
 	// Проверяем, что хотя бы один провайдер инициализирован
@@ -589,26 +623,26 @@ func (r *ModelRouter) SaveAllContextDuringExit() {
 }
 
 // Request направляет запрос к нужной модели на основе dialogId
-func (r *ModelRouter) Request(userId uint32, modelId string, dialogId uint64, text string, files ...FileUpload) (AssistResponse, error) {
+func (r *ModelRouter) Request(userId uint32, dialogId uint64, text string, files ...FileUpload) (AssistResponse, error) {
 	// Определяем провайдера по наличию респондента (БЕЗ запроса к БД!)
 	if r.openai != nil {
 		_, err := r.openai.GetRespIdByDialogId(dialogId)
 		if err == nil {
-			return r.openai.Request(userId, modelId, dialogId, text, files...)
+			return r.openai.Request(userId, dialogId, text, files...)
 		}
 	}
 
 	if r.mistral != nil {
 		_, err := r.mistral.GetRespIdByDialogId(dialogId)
 		if err == nil {
-			return r.mistral.Request(userId, modelId, dialogId, text, files...)
+			return r.mistral.Request(userId, dialogId, text, files...)
 		}
 	}
 
 	if r.google != nil {
 		_, err := r.google.GetRespIdByDialogId(dialogId)
 		if err == nil {
-			return r.google.Request(userId, modelId, dialogId, text, files...)
+			return r.google.Request(userId, dialogId, text, files...)
 		}
 	}
 

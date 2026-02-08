@@ -128,44 +128,17 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 		return UMCR{}, fmt.Errorf("ошибка получения реального user_id: %v", err)
 	}
 
-	// Получаем текущее время в таймзоне пользователя для динамического промпта
-	currentTime := time.Now()
-	userTimezone := "UTC"
-	if m.universalModel != nil {
-		if tz, err := m.universalModel.GetUserTimeZone(userId); err == nil {
-			userTimezone = tz
-		}
-	}
-	loc, _ := time.LoadLocation(userTimezone)
-	localTime := currentTime.In(loc)
-
 	// Формируем enhancedPrompt динамически в зависимости от возможностей модели
 	enhancedPrompt := modelData.Prompt + "\n\n"
 
-	// Добавляем ТЕКУЩУЮ ДАТУ И ВРЕМЯ в начало промпта для всех моделей
-	enhancedPrompt += fmt.Sprintf("📅 ТЕКУЩАЯ ДАТА И ВРЕМЯ:\n"+
-		"- Сегодня: %s (%s)\n"+
-		"- Время: %s\n"+
-		"- Таймзона: %s\n"+
-		"- Unix timestamp: %d\n\n"+
-		"ВАЖНО: При расчёте 'завтра', 'через неделю', 'в понедельник' и т.д. используй указанную дату как БАЗУ.\n"+
-		"Примеры:\n"+
-		"- 'завтра' = %s (сегодня + 1 день)\n"+
-		"- 'послезавтра' = %s (сегодня + 2 дня)\n"+
-		"- 'через неделю' = %s (сегодня + 7 дней)\n\n",
-		localTime.Format("2006-01-02"),
-		localTime.Weekday().String(),
-		localTime.Format("15:04:05"),
-		userTimezone,
-		localTime.Unix(),
-		localTime.AddDate(0, 0, 1).Format("2006-01-02"),
-		localTime.AddDate(0, 0, 2).Format("2006-01-02"),
-		localTime.AddDate(0, 0, 7).Format("2006-01-02"),
-	)
+	// Напоминание о необходимости получить актуальное время с сервера для ВСЕХ моделей
+	enhancedPrompt += fmt.Sprintf("ТЕКУЩЕЕ ВРЕМЯ:\n"+
+		"ВАЖНО: Для получения актуальной даты и времени используй функцию get_current_time(user_id=\"%d\")\n"+
+		"НЕ используй свои внутренние знания о дате - они УСТАРЕЛИ!\n\n", realUserId)
 
 	// Добавляем важное напоминание - только для активных функций
 	if modelData.MetaAction != "" || modelData.Operator {
-		enhancedPrompt += "⚠️ ВАЖНОЕ НАПОМИНАНИЕ:\n" +
+		enhancedPrompt += "ВАЖНОЕ НАПОМИНАНИЕ:\n" +
 			"В КАЖДОМ ответе ты ОБЯЗАН:\n"
 
 		if modelData.MetaAction != "" {
@@ -179,23 +152,11 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 		enhancedPrompt += "3. НЕ ИГНОРИРУЙ эти проверки!\n\n"
 	}
 
-	// Добавляем системную информацию о user_id только если есть функции для работы с файлами
+	// Добавляем инструкции по работе с файлами (оптимизированная версия)
 	if modelData.S3 {
-		enhancedPrompt += fmt.Sprintf("СИСТЕМНАЯ ИНФОРМАЦИЯ:\n"+
-			"- Твой user_id: \"%d\" (СТРОКА, НЕ ЧИСЛО!)\n"+
-			"- При вызове ВСЕХ функций передавай user_id как СТРОКУ: {\"user_id\": \"%d\"}\n"+
-			"- НЕ спрашивай user_id у пользователя, используй ТОЛЬКО это значение\n\n", realUserId, realUserId)
-	}
-
-	// Добавляем инструкции по работе с файлами только если S3 включен
-	if modelData.S3 {
-		enhancedPrompt += "РАБОТА С ФАЙЛАМИ:\n" +
-			"1. Если пользователь просит СОЗДАТЬ новый файл - ВСЕГДА сначала вызови функцию create_file с содержимым\n" +
-			"2. После создания файла вызови get_s3_files чтобы получить актуальный список с новым файлом\n" +
-			"3. Затем отправь созданный файл в send_files с caption (твоим сообщением пользователю)\n" +
-			"4. ВАЖНО: Если отправляешь файлы, используй ТОЛЬКО поле caption, а поле message оставь ПУСТОЙ СТРОКОЙ (\"\"), чтобы избежать дублирования!\n" +
-			"5. Если пользователь просит показать существующие файлы - вызови get_s3_files и отправь нужные\n" +
-			"6. Определяй тип файла: .jpg/.png/.gif → photo, .mp4 → video, .mp3 → audio, .txt/.pdf и др → doc\n\n"
+		enhancedPrompt += "S3: get_s3_files, create_file\n" +
+			"Типы: .jpg/.png=photo, .mp4=video, .mp3=audio, остальное=doc\n" +
+			"При отправке файлов: используй caption (НЕ message)\n\n"
 	}
 
 	// Добавляем инструкции по Code Interpreter только если Interpreter включен
@@ -206,15 +167,6 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 			"- Создания графиков и визуализаций\n" +
 			"- Обработки файлов (CSV, Excel, JSON и т.д.)\n" +
 			"Используй code execution когда это необходимо\n\n"
-	}
-
-	// Добавляем определение типов файлов только если S3 включен
-	if modelData.S3 {
-		enhancedPrompt += "Определение типа файла для send_files:\n" +
-			"   - .jpg/.png/.gif/.webp → \"photo\"\n" +
-			"   - .mp4/.avi → \"video\"\n" +
-			"   - .mp3/.wav → \"audio\"\n" +
-			"   - .txt/.pdf/.doc и остальные → \"doc\"\n\n"
 	}
 
 	// Добавляем инструкции по генерации видео только если Video включен
@@ -243,78 +195,22 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 			"4. Если ты НЕ УВЕРЕН в информации - ИСПОЛЬЗУЙ ПОИСК вместо отказа!\n\n"
 	}
 
-	// Добавляем инструкции по GOOGLE CALENDAR
+	// Добавляем инструкции по GOOGLE CALENDAR (оптимизированная версия)
 	if modelData.GOAuth.HasCalendar() {
-		enhancedPrompt += "📅 GOOGLE CALENDAR - Управление событиями:\n" +
-			"У тебя есть доступ к Google Calendar пользователя. Доступные функции:\n\n" +
-			"1. **calendar_create_event** - Создание нового события:\n" +
-			fmt.Sprintf("   - user_id: \"%d\" (СТРОКА, обязательно)\n", realUserId) +
-			"   - title: название события\n" +
-			"   - description: описание (опционально)\n" +
-			"   - start_time: время начала в RFC3339 (например: \"2026-02-05T15:00:00+03:00\")\n" +
-			"   - end_time: время окончания в RFC3339\n" +
-			"   - location: место проведения (опционально)\n" +
-			"   - attendees: массив email участников (опционально)\n" +
-			"   Пример запроса: 'создай встречу \"Планерка\" завтра в 10:00 на час'\n\n" +
-			"2. **calendar_list_events** - Получение списка событий:\n" +
-			fmt.Sprintf("   - user_id: \"%d\"\n", realUserId) +
-			"   - time_min: начало периода в RFC3339 (опционально)\n" +
-			"   - time_max: конец периода в RFC3339 (опционально)\n" +
-			"   - max_results: максимум событий (по умолчанию 10)\n" +
-			"   Пример запроса: 'покажи мои встречи на неделю'\n\n" +
-			"3. **calendar_delete_event** - Удаление события:\n" +
-			fmt.Sprintf("   - user_id: \"%d\"\n", realUserId) +
-			"   - event_id: ID события из списка\n" +
-			"   Пример запроса: 'удали встречу \"Планерка\"'\n\n" +
-			"4. **calendar_get_event** - Получение деталей события:\n" +
-			fmt.Sprintf("   - user_id: \"%d\"\n", realUserId) +
-			"   - event_id: ID события\n\n" +
-			"⚠️ ВАЖНО ПРИ РАБОТЕ С ВРЕМЕНЕМ:\n" +
-			"- ВСЕГДА используй ТЕКУЩУЮ ДАТУ из раздела выше для расчётов\n" +
-			"- Формат времени: RFC3339 с таймзоной пользователя (" + userTimezone + ")\n" +
-			"- При создании рассчитывай дату относительно СЕГОДНЯ (" + localTime.Format("2006-01-02") + ")\n" +
-			"- Если время не указано - предлагай разумное (10:00, 14:00, 16:00)\n" +
-			"- Длительность по умолчанию: 1 час\n" +
-			"- Таймзона автоматически применяется системой\n\n" +
-			"ПОСЛЕ СОЗДАНИЯ/УДАЛЕНИЯ:\n" +
-			"- Подтверди действие с деталями (название, дата, время)\n" +
-			"- Покажи ссылку на событие из поля 'link'\n\n"
+		enhancedPrompt += fmt.Sprintf("CALENDAR: user_id=\"%d\"\n"+
+			"Функции: calendar_create_event, calendar_list_events, calendar_delete_event\n"+
+			"RFC3339: \"2026-02-05T15:00:00+03:00\"\n"+
+			"ВСЕГДА вызывай get_current_time ПЕРЕД расчётом дат!\n"+
+			"После операции - подтверди действие с деталями\n\n",
+			realUserId)
 	}
 
-	// Добавляем инструкции по GOOGLE SHEETS
+	// Добавляем инструкции по GOOGLE SHEETS (оптимизированная версия)
 	if modelData.GOAuth.HasSheets() {
-		enhancedPrompt += "📊 GOOGLE SHEETS - Работа с таблицами:\n" +
-			"У тебя есть доступ к Google Sheets пользователя.\n\n" +
-			fmt.Sprintf("user_id для всех функций: \"%d\" (СТРОКА)\n\n", realUserId) +
-			"⚠️ КРИТИЧЕСКИ ВАЖНО - ВСЕГДА ВЫЗЫВАЙ ФУНКЦИИ:\n" +
-			"1. Пользователь спрашивает о данных в таблице → НЕМЕДЛЕННО вызови sheets_read_range\n" +
-			"2. Нужно узнать количество строк → вызови sheets_read_range, подсчитай количество элементов в values минус заголовки\n" +
-			"3. Нужно записать данные → вызови sheets_write_range\n" +
-			"4. Нужно добавить строку → вызови sheets_append_range\n" +
-			"5. НЕ спрашивай spreadsheet_id если он УЖЕ указан в промпте - используй его!\n" +
-			"6. ДЕЙСТВУЙ: вызови функцию → получи результат → обработай\n\n" +
-			"Доступные функции:\n" +
-			"1. **sheets_read_range** - Чтение данных из таблицы:\n" +
-			"   - spreadsheet_id берётся из промпта или URL таблицы (между /d/ и /edit)\n" +
-			"   - range в формате 'Лист1!A1:D10' или 'Лиды!A:F' (весь лист)\n" +
-			"   - Пример: прочитай данные из таблицы\n" +
-			"2. **sheets_write_range** - Запись/обновление данных:\n" +
-			"   - values - двумерный массив [[\"Заголовок1\", \"Заголовок2\"], [\"Значение1\", \"Значение2\"]]\n" +
-			"   - Каждый подмассив - это одна строка\n" +
-			"   - Пример: запиши в таблицу данные\n" +
-			"3. **sheets_append_range** - Добавление строк в конец:\n" +
-			"   - Автоматически добавляет данные после последней заполненной строки\n" +
-			"   - Идеально для логов, списков, отчётов\n" +
-			"   - Пример: добавь новую строку\n" +
-			"4. **sheets_create_spreadsheet** - Создание новой таблицы:\n" +
-			"   - Можешь указать названия листов через sheet_names\n" +
-			"   - Пример: создай таблицу \"Отчёт\"\n" +
-			"5. **sheets_get_info** - Информация о таблице (листы, размеры)\n\n" +
-			"ВАЖНО:\n" +
-			"- Spreadsheet ID берётся из промпта (если указан) или из URL\n" +
-			"- Для подсчёта строк используй len(values) - 1 (минус заголовки)\n" +
-			"- Форматируй данные аккуратно в виде таблиц\n" +
-			"- После операций сообщай результат: сколько строк/ячеек обновлено\n\n"
+		enhancedPrompt += fmt.Sprintf("SHEETS: user_id=\"%d\"\n"+
+			"spreadsheet_id из промпта (ПОЛНЫЙ ID ~40 символов, НЕ название!)\n"+
+			"Функции: sheets_read_range (чтение), sheets_write_range (запись), sheets_append_range (добавление)\n"+
+			"После вызова функции - обработай результат и покажи данные пользователю\n\n", realUserId)
 	}
 
 	// Добавляем инструкции по ГЕНЕРАЦИИ ИЗОБРАЖЕНИЙ
@@ -334,9 +230,9 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	// Инструкции по target
 	if modelData.MetaAction != "" {
 		enhancedPrompt += "**target** (boolean) - Достигнута ли ЦЕЛЬ диалога:\n" +
-			"  ✅ Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
-			"  ✅ Если условие ТОЧНО выполнено → target: true\n" +
-			"  ✅ Если условие НЕ выполнено → target: false\n\n"
+			"  Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  Если условие ТОЧНО выполнено → target: true\n" +
+			"  Если условие НЕ выполнено → target: false\n\n"
 	} else {
 		enhancedPrompt += "**target**: ВСЕГДА false (цели нет)\n\n"
 	}
@@ -344,9 +240,9 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	// Инструкции по operator
 	if modelData.Operator {
 		enhancedPrompt += "**operator** (boolean) - Требуется ли оператор:\n" +
-			"  ✅ Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
-			"  ✅ Если пользователь просит оператора → operator: true\n" +
-			"  ✅ Во всех остальных случаях → operator: false\n\n"
+			"  Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  Если пользователь просит оператора → operator: true\n" +
+			"  Во всех остальных случаях → operator: false\n\n"
 	} else {
 		enhancedPrompt += "**operator**: ВСЕГДА false (вызов оператора отключен)\n\n"
 	}
@@ -1643,15 +1539,23 @@ func (m *UniversalModel) updateGoogleModelInPlace(userId uint32, existing, updat
 	}
 
 	// ============================================================================
-	// СОЗДАНИЕ ОБНОВЛЁННОГО АГЕНТА
+	// ОБНОВЛЕНИЕ КОНФИГУРАЦИИ В БД
 	// ============================================================================
 
-	// Для Google Gemini нет нужды удалять агента - его нет в классическом понимании
+	// Для Google Gemini нет нужды создавать/удалять агента в API - его нет в классическом понимании
+	// Конфигурация (System Instruction, GenerationConfig, Tools) хранится локально в БД
+	// и применяется при каждом запросе к Gemini API
 
-	// Создаем нового агента с обновленными данными
-	umcr, err := m.googleClient.createGoogleAgent(updated, userId, updated.FileIds)
-	if err != nil {
-		return fmt.Errorf("ошибка создания нового Google агента: %w", err)
+	// Устанавливаем GptType из существующей модели если не указан
+	if updated.GptType == nil {
+		updated.GptType = existing.GptType
+	}
+
+	// Формируем UMCR для сохранения в БД (без вызова API)
+	umcr := UMCR{
+		Provider: ProviderGoogle,
+		AssistID: assistId, // Сохраняем существующий assistId (название модели)
+		AllIds:   nil,      // AllIds не используется для Google (конфигурация в Data)
 	}
 
 	// Сохраняем обновленные данные в БД
@@ -1659,6 +1563,7 @@ func (m *UniversalModel) updateGoogleModelInPlace(userId uint32, existing, updat
 		return fmt.Errorf("ошибка сохранения обновленной модели в БД: %w", err)
 	}
 
+	logger.Info("Google модель успешно обновлена (без вызова API)", userId)
 	return nil
 }
 

@@ -89,7 +89,7 @@ func (s *Start) Shutdown() {
 	}
 }
 
-func (s *Start) ask(userId uint32, modelId string, dialogId uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (s *Start) ask(userId uint32, dialogId uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 	answerCh := make(chan model.AssistResponse, 1)
 	errCh := make(chan error, 1)
@@ -126,14 +126,14 @@ func (s *Start) ask(userId uint32, modelId string, dialogId uint64, arrAsk []str
 		// Ранний выход, если контекст уже отменён
 		select {
 		case <-ctx.Done():
-			logger.Debug("ask ранний выход по ctx.Done() для модели %s и диалога %d", modelId, dialogId)
+			logger.Debug("ask ранний выход по ctx.Done() диалог %d", dialogId)
 			return
 		default:
 		}
 
-		body, err := s.Mod.Request(userId, modelId, dialogId, ask, files...)
+		body, err := s.Mod.Request(userId, dialogId, ask, files...)
 		if err != nil {
-			logger.Error("ask: ошибка запроса к модели для modelId=%s, dialogId=%d: %v", modelId, dialogId, err, userId)
+			logger.Error("ask: ошибка запроса к модели, dialogId=%d: %v", dialogId, err, userId)
 			select {
 			case errCh <- fmt.Errorf("ask error making request: %w", err):
 			default:
@@ -161,15 +161,8 @@ func (s *Start) ask(userId uint32, modelId string, dialogId uint64, arrAsk []str
 	}
 }
 
-func (s *Start) Respondent(
-	u *model.RespModel,
-	questionCh chan Question,
-	answerCh chan Answer,
-	fullQuestCh chan Answer,
-	respId uint64,
-	treadId uint64,
-	errCh chan error,
-) {
+func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerCh, fullQuestCh chan Answer,
+	respId, treadId uint64, errCh chan error) {
 	var (
 		deaf                 bool   // Не слушать ввод пользователя до момента получения ответа
 		ask                  string // Вопрос пользователя
@@ -285,7 +278,7 @@ func (s *Start) Respondent(
 				userAsk := currentQuest.Question
 
 				// Отправляем запрос в AI
-				answer, err := s.AskWithRetry(u.Assist.UserId, u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+				answer, err := s.AskWithRetry(u.Assist.UserId, treadId, userAsk, currentQuest.Files...)
 				if err != nil {
 					if IsFatalError(err) {
 						s.sendError(errCh, fmt.Errorf("критическая ошибка при обработке вопроса после таймаута оператора: %v", err), u.Assist.UserId)
@@ -601,7 +594,7 @@ func (s *Start) Respondent(
 			if err != nil || (respMsg.Content.Message == "" && len(respMsg.Content.Action.SendFiles) == 0) {
 				s.sendError(errCh, fmt.Errorf("ошибка запроса к оператору или пустой ответ, фолбэк в OpenAI: %v", err), u.Assist.UserId)
 				// Отправляю запрос в OpenAI
-				answer, err = s.AskWithRetry(u.Assist.UserId, u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+				answer, err = s.AskWithRetry(u.Assist.UserId, treadId, userAsk, currentQuest.Files...)
 				if err != nil {
 					if IsFatalError(err) {
 						s.sendError(errCh, fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserId, err), u.Assist.UserId)
@@ -647,7 +640,7 @@ func (s *Start) Respondent(
 
 		} else {
 			// Отправляю запрос в OpenAI
-			answer, err = s.AskWithRetry(u.Assist.UserId, u.Assist.AssistId, treadId, userAsk, currentQuest.Files...)
+			answer, err = s.AskWithRetry(u.Assist.UserId, treadId, userAsk, currentQuest.Files...)
 			if err != nil {
 				if IsFatalError(err) {
 					s.sendError(errCh, fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserId, err), u.Assist.UserId)

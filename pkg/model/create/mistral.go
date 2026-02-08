@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
 )
@@ -295,43 +294,17 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	realUserId, err := m.universalModel.GetRealUserID(userId)
 	if err != nil {
 		return UMCR{}, fmt.Errorf("ошибка получения реального user_id: %v", err)
-	}
-
-	// Получаем текущее время в таймзоне пользователя для динамического промпта
-	currentTime := time.Now()
-	userTimezone := "UTC"
-	if m.universalModel != nil {
-		if tz, err := m.universalModel.GetUserTimeZone(userId); err == nil {
-			userTimezone = tz
-		}
-	}
-	loc, _ := time.LoadLocation(userTimezone)
-	localTime := currentTime.In(loc)
-
-	// Формируем enhancedPrompt динамически в зависимости от возможностей модели
+	} // Формируем enhancedPrompt динамически в зависимости от возможностей модели
 	enhancedPrompt := modelData.Prompt + "\n\n"
 
-	// Добавляем ТЕКУЩУЮ ДАТУ И ВРЕМЯ в начало промпта для всех моделей
-	enhancedPrompt += fmt.Sprintf("📅 ТЕКУЩАЯ ДАТА И ВРЕМЯ:\n"+
-		"- День недели: %s\n"+
-		"- Время: %s\n"+
-		"- Таймзона: %s\n\n"+
-		"ВАЖНО: При расчёте 'завтра', 'через неделю', 'в понедельник' и т.д. используй указанную информацию как БАЗУ.\n"+
-		"Примеры:\n"+
-		"- 'завтра' = %s (сегодня + 1 день)\n"+
-		"- 'послезавтра' = %s (сегодня + 2 дня)\n"+
-		"- 'через неделю' = %s (сегодня + 7 дней)\n\n",
-		localTime.Weekday().String(),
-		localTime.Format("15:04:05"),
-		userTimezone,
-		localTime.AddDate(0, 0, 1).Format("2006-01-02"),
-		localTime.AddDate(0, 0, 2).Format("2006-01-02"),
-		localTime.AddDate(0, 0, 7).Format("2006-01-02"),
-	)
+	// Напоминание о необходимости получить актуальное время с сервера для ВСЕХ моделей
+	enhancedPrompt += fmt.Sprintf("ТЕКУЩЕЕ ВРЕМЯ:\n"+
+		"ВАЖНО: Для получения актуальной даты и времени используй функцию get_current_time(user_id=\"%d\")\n"+
+		"НЕ используй свои внутренние знания о дате - они УСТАРЕЛИ!\n\n", realUserId)
 
 	// Добавляем важное напоминание - только для активных функций
 	if modelData.MetaAction != "" || modelData.Operator {
-		enhancedPrompt += "⚠️ ВАЖНОЕ НАПОМИНАНИЕ:\n" +
+		enhancedPrompt += "ВАЖНОЕ НАПОМИНАНИЕ:\n" +
 			"В КАЖДОМ ответе ты ОБЯЗАН:\n"
 
 		if modelData.MetaAction != "" {
@@ -384,13 +357,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 
 	// Добавляем инструкции по GOOGLE CALENDAR
 	if modelData.GOAuth.HasCalendar() {
-		// Получаем таймзону пользователя
-		userTimezone := "UTC"
-		if tz, err := m.universalModel.GetUserTimeZone(userId); err == nil {
-			userTimezone = tz
-		}
-
-		enhancedPrompt += "📅 GOOGLE CALENDAR - Управление событиями:\n" +
+		enhancedPrompt += "GOOGLE CALENDAR - Управление событиями:\n" +
 			"У тебя есть доступ к Google Calendar пользователя.\n\n" +
 			fmt.Sprintf("user_id для всех функций: \"%d\" (строка)\n\n", realUserId) +
 			"Доступные функции:\n" +
@@ -399,18 +366,18 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 			"- calendar_delete_event - удаление события\n" +
 			"- calendar_get_event - детали события\n\n" +
 			"ВАЖНО при работе со временем:\n" +
-			"- Формат времени: RFC3339 с таймзоной (" + userTimezone + ")\n" +
-			"- Пример: \"2026-02-05T15:00:00+03:00\"\n" +
+			"- Формат времени: RFC3339 (например: \"2026-02-05T15:00:00+03:00\")\n" +
+			"- ВСЕГДА вызывай get_current_time ПЕРЕД расчётом дат!\n" +
 			"- Длительность по умолчанию: 1 час\n" +
 			"- После создания/удаления подтверди действие и покажи ссылку\n\n"
 	}
 
 	// Добавляем инструкции по GOOGLE SHEETS
 	if modelData.GOAuth.HasSheets() {
-		enhancedPrompt += "📊 GOOGLE SHEETS - Работа с таблицами:\n" +
+		enhancedPrompt += "GOOGLE SHEETS - Работа с таблицами:\n" +
 			"У тебя есть доступ к Google Sheets пользователя.\n\n" +
 			fmt.Sprintf("user_id для всех функций: \"%d\" (строка)\n\n", realUserId) +
-			"⚠️ КРИТИЧЕСКИ ВАЖНО - ВСЕГДА ВЫЗЫВАЙ ФУНКЦИИ:\n" +
+			" КРИТИЧЕСКИ ВАЖНО - ВСЕГДА ВЫЗЫВАЙ ФУНКЦИИ:\n" +
 			"1. Пользователь спрашивает о данных в таблице → НЕМЕДЛЕННО вызови sheets_read_range\n" +
 			"2. Нужно узнать количество строк → вызови sheets_read_range, подсчитай len(values)-1 (минус заголовки)\n" +
 			"3. Нужно записать данные → вызови sheets_write_range\n" +
@@ -448,9 +415,9 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	// Инструкции по target
 	if modelData.MetaAction != "" {
 		enhancedPrompt += "**target** (boolean) - Достигнута ли ЦЕЛЬ диалога:\n" +
-			"  ✅ Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
-			"  ✅ Если условие ТОЧНО выполнено → target: true\n" +
-			"  ✅ Если условие НЕ выполнено → target: false\n\n"
+			"  Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  Если условие ТОЧНО выполнено → target: true\n" +
+			"  Если условие НЕ выполнено → target: false\n\n"
 	} else {
 		enhancedPrompt += "**target**: ВСЕГДА false (цели нет)\n\n"
 	}
@@ -458,9 +425,9 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	// Инструкции по operator
 	if modelData.Operator {
 		enhancedPrompt += "**operator** (boolean) - Требуется ли оператор:\n" +
-			"  ✅ Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
-			"  ✅ Если пользователь просит оператора → operator: true\n" +
-			"  ✅ Во всех остальных случаях → operator: false\n\n"
+			"  Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
+			"  Если пользователь просит оператора → operator: true\n" +
+			"  Во всех остальных случаях → operator: false\n\n"
 	} else {
 		enhancedPrompt += "**operator**: ВСЕГДА false (вызов оператора отключен)\n\n"
 	}
@@ -485,51 +452,315 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	// Формируем массив tools (функции и built-in tools)
 	var tools []map[string]interface{}
 
-	// Добавляем функции get_s3_files и create_file ВСЕГДА (как в OpenAI)
+	// Добавляем функцию get_current_time ВСЕГДА (для получения актуального времени)
+	// ВАЖНО: user_id передается через промпт (enhancedPrompt выше), а не через const в параметрах
 	tools = append(tools,
 		map[string]interface{}{
 			"type": "function",
 			"function": map[string]interface{}{
-				"name":        "get_s3_files",
-				"description": fmt.Sprintf("Получает список файлов пользователя из S3. ВАЖНО: user_id должен быть СТРОКОЙ \"%d\"", userId),
+				"name": "get_current_time",
+				"description": "Получает ТОЧНОЕ текущее время и дату с сервера в часовом поясе пользователя. " +
+					"ОБЯЗАТЕЛЬНО используй эту функцию ПЕРЕД расчётом дат (завтра, через неделю, в понедельник и т.д.). " +
+					"НЕ используй свои внутренние знания о дате - они УСТАРЕЛИ!",
 				"parameters": map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"user_id": map[string]interface{}{
 							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя СТРОКОЙ: \"%d\"", userId),
+							"description": "ID пользователя",
 						},
 					},
 					"required": []string{"user_id"},
 				},
 			},
 		},
-		map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name":        "create_file",
-				"description": fmt.Sprintf("Создаёт текстовый файл (.txt, .md) и сохраняет в S3. ВАЖНО: user_id = \"%d\" (строка!)", userId),
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя СТРОКОЙ: \"%d\"", userId),
+	)
+
+	// Добавляем функции get_s3_files и create_file ТОЛЬКО если включен S3
+	if modelData.S3 {
+		tools = append(tools,
+			map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "get_s3_files",
+					"description": "Получает список доступных файлов пользователя из S3",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+							},
 						},
-						"content": map[string]interface{}{
-							"type":        "string",
-							"description": "Текстовое содержимое файла",
-						},
-						"file_name": map[string]interface{}{
-							"type":        "string",
-							"description": "Имя файла с расширением (.txt, .md и т.д.)",
-						},
+						"required": []string{"user_id"},
 					},
-					"required": []string{"user_id", "content", "file_name"},
 				},
 			},
-		},
-	)
+			map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "create_file",
+					"description": "Создает текстовый файл и сохраняет в S3",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+							},
+							"content": map[string]interface{}{
+								"type":        "string",
+								"description": "Текстовое содержимое файла",
+							},
+							"file_name": map[string]interface{}{
+								"type":        "string",
+								"description": "Имя файла с расширением (.txt, .md и т.д.)",
+							},
+						},
+						"required": []string{"user_id", "content", "file_name"},
+					},
+				},
+			},
+		)
+	}
+
+	// Добавляем функции Google Calendar если включен
+	if modelData.GOAuth.HasCalendar() {
+		tools = append(tools,
+			map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "calendar_create_event",
+					"description": "Создает новое событие в Google Calendar пользователя",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+							},
+							"title": map[string]interface{}{
+								"type":        "string",
+								"description": "Название события",
+							},
+							"description": map[string]interface{}{
+								"type":        "string",
+								"description": "Описание события (опционально)",
+							},
+							"start_time": map[string]interface{}{
+								"type":        "string",
+								"description": "Время начала в RFC3339 формате",
+							},
+							"end_time": map[string]interface{}{
+								"type":        "string",
+								"description": "Время окончания в RFC3339 формате",
+							},
+							"location": map[string]interface{}{
+								"type":        "string",
+								"description": "Место проведения (опционально)",
+							},
+						},
+						"required": []string{"user_id", "title", "start_time", "end_time"},
+					},
+				},
+			},
+			map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "calendar_list_events",
+					"description": "Получает список событий из Google Calendar",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+							},
+							"time_min": map[string]interface{}{
+								"type":        "string",
+								"description": "Начало периода в RFC3339 (опционально)",
+							},
+							"time_max": map[string]interface{}{
+								"type":        "string",
+								"description": "Конец периода в RFC3339 (опционально)",
+							},
+							"max_results": map[string]interface{}{
+								"type":        "integer",
+								"description": "Максимальное количество событий (по умолчанию 10)",
+							},
+						},
+						"required": []string{"user_id"},
+					},
+				},
+			},
+			map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "calendar_delete_event",
+					"description": "Удаляет событие из Google Calendar",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+							},
+							"event_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID события для удаления",
+							},
+						},
+						"required": []string{"user_id", "event_id"},
+					},
+				},
+			},
+			map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "calendar_get_event",
+					"description": "Получает детали события из Google Calendar",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+							},
+							"event_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID события для получения деталей",
+							},
+						},
+						"required": []string{"user_id", "event_id"},
+					},
+				},
+			},
+		)
+	}
+
+	// Добавляем функции Google Sheets если включен
+	if modelData.GOAuth.HasSheets() {
+		tools = append(tools,
+			map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "sheets_read_range",
+					"description": "Читает данные из указанного диапазона в Google Sheets",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+							},
+							"spreadsheet_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID таблицы Google Sheets (из URL или промпта)",
+							},
+							"range": map[string]interface{}{
+								"type":        "string",
+								"description": "Диапазон для чтения (например: 'Лиды!A:F' или 'Sheet1!A1:D10')",
+							},
+						},
+						"required": []string{"user_id", "spreadsheet_id", "range"},
+					},
+				},
+			},
+			map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "sheets_write_range",
+					"description": "Записывает данные в указанный диапазон Google Sheets",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+							},
+							"spreadsheet_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID таблицы Google Sheets",
+							},
+							"range": map[string]interface{}{
+								"type":        "string",
+								"description": "Начальная ячейка для записи (например: 'Sheet1!A1')",
+							},
+							"values": map[string]interface{}{
+								"type":        "array",
+								"description": "Двумерный массив значений для записи",
+								"items": map[string]interface{}{
+									"type": "array",
+									"items": map[string]interface{}{
+										"type": "string",
+									},
+								},
+							},
+						},
+						"required": []string{"user_id", "spreadsheet_id", "range", "values"},
+					},
+				},
+			},
+			map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "sheets_append_range",
+					"description": "Добавляет данные в конец таблицы Google Sheets",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"user_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID пользователя",
+							},
+							"spreadsheet_id": map[string]interface{}{
+								"type":        "string",
+								"description": "ID таблицы Google Sheets",
+							},
+							"range": map[string]interface{}{
+								"type":        "string",
+								"description": "Диапазон колонок для добавления (например: 'Sheet1!A:D')",
+							},
+							"values": map[string]interface{}{
+								"type":        "array",
+								"description": "Двумерный массив значений для добавления",
+								"items": map[string]interface{}{
+									"type": "array",
+									"items": map[string]interface{}{
+										"type": "string",
+									},
+								},
+							},
+						},
+						"required": []string{"user_id", "spreadsheet_id", "range", "values"},
+					},
+				},
+			},
+		)
+	}
+
+	// Добавляем функцию lead_target если есть MetaAction
+	if modelData.MetaAction != "" {
+		tools = append(tools,
+			map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        "lead_target",
+					"description": "Вызывает метаакцию для достижения цели диалога",
+					"parameters": map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"resp_id": map[string]interface{}{
+								"type":        "integer",
+								"description": "ID респондента",
+							},
+						},
+						"required": []string{"resp_id"},
+					},
+				},
+			},
+		)
+	}
 
 	// Добавляем built-in tools (встроенные возможности Mistral)
 	// Согласно документации: https://docs.mistral.ai/agents/tools/built-in/

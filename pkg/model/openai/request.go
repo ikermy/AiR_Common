@@ -184,7 +184,7 @@ func (m *OpenAIModel) mergeResponses(responses []model.AssistResponse) model.Ass
 	return merged
 }
 
-func (m *OpenAIModel) Request(userId uint32, modelId string, dialogId uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (m *OpenAIModel) Request(userId uint32, dialogId uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 
 	if text == "" && len(files) == 0 {
@@ -300,7 +300,7 @@ func (m *OpenAIModel) Request(userId uint32, modelId string, dialogId uint64, te
 	}
 
 	runRequest := openai.RunRequest{
-		AssistantID:    modelId,
+		AssistantID:    respModel.Assist.AssistId,
 		ResponseFormat: responseFormat,
 	}
 

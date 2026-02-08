@@ -76,7 +76,7 @@ func NewAsRouterOption() model.RouterOption {
 		}
 
 		// Создаём универсальный обработчик функций с Google OAuth конфигом
-		actionHandler := model.NewUniversalActionHandler(ctx, openaiDB, create.ProviderOpenAI, &cfg.GOAuth)
+		actionHandler := model.NewUniversalActionHandler(ctx, openaiDB, cfg)
 
 		// Создаём OpenAI модель с action handler
 		openaiModel := New(ctx, cfg, openaiDB, actionHandler)
@@ -208,7 +208,7 @@ func (m *OpenAIModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId u
 		logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, assist.UserId)
 	} else if compressedData != nil {
 		// Используем функцию из пакета db для распаковки и извлечения всех параметров
-		_, _, _, _, _, _, haunter, _, _, err := comdb.DecompressAndExtractMetadata(compressedData)
+		_, _, _, _, _, _, haunter, _, _, _, _, _, _, err := comdb.DecompressAndExtractMetadata(compressedData)
 		if err != nil {
 			logger.Warn("Ошибка распаковки параметров модели: %v", err, assist.UserId)
 		} else {

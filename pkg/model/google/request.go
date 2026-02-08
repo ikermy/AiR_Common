@@ -41,11 +41,25 @@ func (dm *DialogMessage) GetCreator() string {
 // Основной метод для взаимодействия с моделью
 // google не хранит модели на своей стороне, поэтому modelId игнорируется
 // ОПТИМИЗАЦИЯ: История диалога кэшируется локально в памяти с LiveTTL для избежания постоянных обращений к БД
-func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (m *GoogleModel) Request(userId uint32, dialogId uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 
 	if text == "" && len(files) == 0 {
 		return emptyResponse, fmt.Errorf("пустое сообщение и нет файлов")
+	}
+
+	// Получаем real_user_id для использования в динамических промптах
+	var realUserID uint64
+	if m.universalModel != nil {
+		var err error
+		realUserID, err = m.universalModel.GetRealUserID(userId)
+		if err != nil {
+			logger.Warn("[USER:%d] Не удалось получить real_user_id в Request: %v, используем userId", userId, err)
+			realUserID = uint64(userId) // Fallback
+		}
+	} else {
+		logger.Warn("[USER:%d] UniversalModel не установлен в Request, используем userId как fallback", userId)
+		realUserID = uint64(userId) // Fallback
 	}
 
 	// Получаем или создаём кэш диалога
@@ -143,6 +157,29 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 		}
 	}
 
+	// КРИТИЧЕСКИ ВАЖНО: Если включены Google Sheets и пользователь спрашивает о таблице
+	// добавляем прямое напоминание использовать функции
+	if resp.AgentConfig.HasSheets && text != "" {
+		lowerText := strings.ToLower(text)
+		if strings.Contains(lowerText, "таблиц") || strings.Contains(lowerText, "crm") ||
+			strings.Contains(lowerText, "строк") || strings.Contains(lowerText, "данн") ||
+			strings.Contains(lowerText, "sheet") || strings.Contains(lowerText, "лид") {
+
+			logger.Debug("Sheets запрос обнаружен, добавляем краткое напоминание с JSON инструкцией", userId)
+
+			// Краткое напоминание с явной инструкцией вернуть JSON
+			enhancedText = fmt.Sprintf(`SHEETS: spreadsheet_id из промпта (ПОЛНЫЙ ID ~40 символов)
+
+ДЕЙСТВИЯ:
+1. Найди spreadsheet_id в системном промпте (ищи "spreadsheet_id:")
+2. Вызови: sheets_read_range(user_id="%d", spreadsheet_id="...", range="...")
+3. ОБЯЗАТЕЛЬНО верни результат в JSON:
+   {"message":"Данные из таблицы:\n...", "action":{"send_files":[]}, "target":false, "operator":false}
+
+Вопрос: %s`, realUserID, text)
+		}
+	}
+
 	// Добавляем новое сообщение пользователя (с обогащённым текстом если был RAG)
 	userMessage := m.createUserMessage(enhancedText, files)
 	history = append(history, userMessage)
@@ -156,6 +193,47 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 
 	if resp.AgentConfig.SystemInstruction != nil {
 		payload["system_instruction"] = resp.AgentConfig.SystemInstruction
+
+		// КРИТИЧЕСКИ ВАЖНО: Если есть Google Sheets - модифицируем SystemInstruction
+		// добавляя напоминание ИСПОЛЬЗОВАТЬ функции, а не отказываться
+		if resp.AgentConfig.HasSheets {
+			if sysInstr, ok := payload["system_instruction"].(map[string]interface{}); ok {
+				if parts, ok := sysInstr["parts"].([]interface{}); ok && len(parts) > 0 {
+					if firstPart, ok := parts[0].(map[string]interface{}); ok {
+						if text, ok := firstPart["text"].(string); ok {
+							enhancedSysText := text + "\n\n" +
+								"═══════════════════════════════════════════════════════════\n" +
+								"🔴 У ТЕБЯ ЕСТЬ ДОСТУП К GOOGLE SHEETS! 🔴\n" +
+								"═══════════════════════════════════════════════════════════\n" +
+								"ID ТАБЛИЦЫ может быть указан:\n" +
+								"📍 В ЭТОМ ПРОМПТЕ ВЫШЕ (например: \"ТВОЯ ТАБЛИЦА: ID 18kxy...\")\n" +
+								"📍 ИЛИ В ЗАПРОСЕ ПОЛЬЗОВАТЕЛЯ (например: \"покажи таблицу 18kxy...\")\n\n" +
+								"→ Ты ДОЛЖЕН искать ID в ОБОИХ местах!\n" +
+								"→ НЕ ПРОСИ пользователя указать ID снова!\n" +
+								"→ НЕ ГОВОРИ \"мне нужен ID\" - проверь промпт И запрос!\n\n" +
+								"🚫 КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО:\n" +
+								"❌ \"Для того чтобы прочитать данные, мне нужен ID\"\n" +
+								"❌ \"Пожалуйста, укажите ID таблицы\"\n" +
+								"❌ \"Я не могу получить содержимое без ID\"\n\n" +
+								"✅ ПРАВИЛЬНЫЕ ДЕЙСТВИЯ:\n" +
+								"1. ПРОВЕРЬ этот промпт выше → есть ли ID?\n" +
+								"2. ПРОВЕРЬ запрос пользователя → есть ли ID там?\n" +
+								"3. НАЙДИ ID в любом из мест (форматы: ID:, spreadsheet_id, длинная строка и т.д.)\n" +
+								"4. НАЙДИ лист (форматы: Лист:, sheet:, на листе, в запросе)\n" +
+								"5. НЕМЕДЛЕННО вызови: sheets_read_range(user_id=\"" + fmt.Sprintf("%d", realUserID) + "\", spreadsheet_id=\"<из_промпта_или_запроса>\", range=\"<лист>!A:Z\")\n\n" +
+								"💡 Примеры:\n" +
+								"- Промпт: \"ТВОЯ ТАБЛИЦА CRM: ID: 18kxy...\" → используй этот ID!\n" +
+								"- Запрос: \"покажи таблицу 18kxy_zkXIrTIvPk...\" → ID в запросе!\n" +
+								"- Промпт: \"Лист: Лиды\" → range=\"Лиды!A:Z\"\n" +
+								"═══════════════════════════════════════════════════════════"
+
+							firstPart["text"] = enhancedSysText
+							logger.Debug("[USER:%d] Модифицирован SystemInstruction: добавлено напоминание о Google Sheets", userId)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	if resp.AgentConfig.GenerationConfig != nil {
@@ -192,6 +270,64 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 				"- Просто вызови функцию google_search с запросом и получишь результаты из интернета."
 		}
 
+		// Проверяем наличие Google Calendar и добавляем напоминание
+		hasCalendar := false
+		for _, tool := range resp.AgentConfig.Tools {
+			if funcs, ok := tool["function_declarations"].([]interface{}); ok {
+				for _, fn := range funcs {
+					if fnMap, ok := fn.(map[string]interface{}); ok {
+						if name, ok := fnMap["name"].(string); ok && name == "calendar_create_event" {
+							hasCalendar = true
+							break
+						}
+					}
+				}
+			}
+			if hasCalendar {
+				break
+			}
+		}
+		if hasCalendar {
+			jsonReminderText += "\n\nУ ТЕБЯ ЕСТЬ ДОСТУП К GOOGLE CALENDAR!\n" +
+				"- НЕ ОТКАЗЫВАЙ говоря 'у меня нет доступа к Google Calendar'!\n" +
+				"- Используй функции: calendar_create_event, calendar_list_events, calendar_delete_event\n" +
+				"- ВЫЗЫВАЙ функции когда пользователь спрашивает о событиях/встречах!"
+		}
+
+		// Проверяем наличие Google Sheets и добавляем напоминание
+		hasSheets := false
+		for _, tool := range resp.AgentConfig.Tools {
+			if funcs, ok := tool["function_declarations"].([]interface{}); ok {
+				for _, fn := range funcs {
+					if fnMap, ok := fn.(map[string]interface{}); ok {
+						if name, ok := fnMap["name"].(string); ok && name == "sheets_read_range" {
+							hasSheets = true
+							break
+						}
+					}
+				}
+			}
+			if hasSheets {
+				break
+			}
+		}
+		if hasSheets {
+			jsonReminderText += "\n\n" +
+				"═══════════════════════════════════════════════════════════\n" +
+				"GOOGLE SHEETS - У ТЕБЯ ЕСТЬ ДОСТУП!\n" +
+				"═══════════════════════════════════════════════════════════\n" +
+				"ЗАПРЕЩЕНО говорить:\n" +
+				"❌ 'у меня нет возможности посмотреть'\n" +
+				"❌ 'у меня нет доступа к таблице'\n\n" +
+				"ОБЯЗАТЕЛЬНО:\n" +
+				"✅ Используй sheets_read_range, sheets_write_range, sheets_append_range\n" +
+				"✅ Вызывай функции СРАЗУ когда пользователь спрашивает о таблице\n" +
+				"✅ spreadsheet_id из промпта - это ТВОЯ таблица, используй его\n\n" +
+				"Пример: 'что в таблице CRM' → НЕМЕДЛЕННО вызови:\n" +
+				"sheets_read_range(user_id='...', spreadsheet_id='18kxy...', range='Лиды!A:F')\n" +
+				"═══════════════════════════════════════════════════════════"
+		}
+
 		jsonReminderMessage := GoogleContent{
 			Role: "user",
 			Parts: []map[string]interface{}{
@@ -204,10 +340,22 @@ func (m *GoogleModel) Request(userId uint32, modelId string, dialogId uint64, te
 			Role: "model",
 			Parts: []map[string]interface{}{
 				{
-					"text": fmt.Sprintf(`{"message":"Понял, все мои ответы будут строго в JSON формате%s","action":{"send_files":[]},"target":false,"operator":false}`,
+					"text": fmt.Sprintf(`{"message":"Понял, все мои ответы будут строго в JSON формате%s%s%s","action":{"send_files":[]},"target":false,"operator":false}`,
 						func() string {
 							if hasGoogleSearch {
 								return " и я буду активно использовать google_search для актуальной информации"
+							}
+							return ""
+						}(),
+						func() string {
+							if hasCalendar {
+								return ", у меня есть доступ к Google Calendar и я буду использовать функции для работы с событиями"
+							}
+							return ""
+						}(),
+						func() string {
+							if hasSheets {
+								return ", у меня есть доступ к Google Sheets и я буду использовать функции для работы с таблицами"
 							}
 							return ""
 						}()),
@@ -396,15 +544,31 @@ func (m *GoogleModel) createUserMessage(text string, files []model.FileUpload) G
 		{"text": text},
 	}
 
-	// TODO: Добавить поддержку файлов если нужно
-	// for _, file := range files {
-	//     parts = append(parts, map[string]interface{}{
-	//         "inline_data": map[string]string{
-	//             "mime_type": file.MimeType,
-	//             "data":      base64.StdEncoding.EncodeToString(file.Data),
-	//         },
-	//     })
-	// }
+	// Добавляем поддержку файлов (изображений)
+	for _, file := range files {
+		// Если это изображение с URL - используем fileUri
+		if file.HasURL() && file.IsImageMimeType() {
+			parts = append(parts, map[string]interface{}{
+				"fileData": map[string]string{
+					"mimeType": file.MimeType,
+					"fileUri":  file.URL,
+				},
+			})
+		} else if file.Content != nil {
+			// Для файлов без URL - читаем байты и используем inline_data
+			data, err := io.ReadAll(file.Content)
+			if err != nil {
+				logger.Warn("Не удалось прочитать содержимое файла %s: %v, пропускаем", file.Name, err)
+				continue
+			}
+			parts = append(parts, map[string]interface{}{
+				"inline_data": map[string]string{
+					"mime_type": file.MimeType,
+					"data":      base64.StdEncoding.EncodeToString(data),
+				},
+			})
+		}
+	}
 
 	return GoogleContent{
 		Role:  "user",
@@ -431,6 +595,7 @@ func (m *GoogleModel) createModelMessage(assistResponse model.AssistResponse) Go
 }
 
 // sendToGeminiAPI отправляет запрос к Google Gemini API
+// Автоматически обрабатывает ошибку 429 (quota exceeded) с retry логикой
 func (m *GoogleModel) sendToGeminiAPI(modelName string, payload map[string]interface{}) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -440,29 +605,68 @@ func (m *GoogleModel) sendToGeminiAPI(modelName string, payload map[string]inter
 	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s",
 		m.client.GetUrl(), modelName, m.client.GetAPIKey())
 
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, url, bytes.NewBuffer(body))
-	if err != nil {
-		return nil, fmt.Errorf("ошибка создания запроса: %v", err)
-	}
+	// Попытка запроса с автоматическим retry для ошибки 429
+	maxRetries := 2
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, url, bytes.NewBuffer(body))
+		if err != nil {
+			return nil, fmt.Errorf("ошибка создания запроса: %v", err)
+		}
 
-	req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
+		}
 
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %v", err)
-	}
+		responseBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+		if err != nil {
+			return nil, fmt.Errorf("ошибка чтения ответа: %v", err)
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			return responseBody, nil
+		}
+
+		// Обработка ошибки 429 (quota exceeded)
+		if resp.StatusCode == 429 && attempt < maxRetries {
+			// Пытаемся извлечь retryDelay из ответа
+			var errorResp struct {
+				Error struct {
+					Details []map[string]interface{} `json:"details"`
+				} `json:"error"`
+			}
+
+			retryDelay := 5 * time.Second // По умолчанию 5 секунд
+
+			if json.Unmarshal(responseBody, &errorResp) == nil {
+				for _, detail := range errorResp.Error.Details {
+					if detail["@type"] == "type.googleapis.com/google.rpc.RetryInfo" {
+						if retryDelayStr, ok := detail["retryDelay"].(string); ok {
+							// Парсим "11s" или "27.077507321s" в time.Duration
+							if duration, err := time.ParseDuration(retryDelayStr); err == nil {
+								retryDelay = duration
+							}
+						}
+					}
+				}
+			}
+
+			logger.Warn("Квота Google API превышена (429), retry через %v (попытка %d/%d)",
+				retryDelay, attempt+1, maxRetries)
+
+			time.Sleep(retryDelay)
+			continue // Повторяем запрос
+		}
+
+		// Другие ошибки или последняя попытка
 		return nil, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
 	}
 
-	return responseBody, nil
+	return nil, fmt.Errorf("превышено количество попыток retry")
 }
 
 // parseGeminiResponse парсит ответ от Google Gemini API

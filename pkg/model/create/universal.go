@@ -261,8 +261,8 @@ type UniversalModelData struct {
 	//////////////////////////////////
 	Espero   *EsperoConfig `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
 	GptType  *GptType      `json:"gpttype"`
-	Provider ProviderType  `json:"provider"`     // "openai=1", "mistral=2..."
-	GOAuth   GOAuth        `json:"google_oauth"` // Google OAuth Integration - статус подключения Google аккаунта работает для всех провайдеров
+	Provider ProviderType  `json:"provider"` // "openai=1", "mistral=2..."
+	GOAuth   GOAuth        `json:"g_oauth"`  // Google OAuth Integration - статус подключения Google аккаунта работает для всех провайдеров
 }
 
 // EsperoConfig представляет настройки ожидания из ModelDataRequest
@@ -709,7 +709,7 @@ func (m *UniversalModel) GetAllUserModelsResponse(userId uint32) (*UserModelsRes
 				record.ModelId, record.Provider, err, userId)
 			continue
 		}
-
+		logger.Warn("modelData: provider %s, calendar %v, sheets %v", modelData.Provider.String(), modelData.GOAuth.Calendar, modelData.GOAuth.Sheets, userId)
 		// Устанавливаем провайдера из user_models
 		modelData.Provider = record.Provider
 
@@ -877,8 +877,13 @@ func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecI
 		modelData.Haunter = ha
 	}
 
-	// Извлекаем google_oauth (GOAuth)
-	if goauthMap, ok := rawData["google_oauth"].(map[string]interface{}); ok {
+	// Извлекаем provider (ProviderType)
+	if prov, ok := rawData["provider"].(float64); ok {
+		modelData.Provider = ProviderType(prov)
+	}
+
+	// Извлекаем g_oauth (GOAuth)
+	if goauthMap, ok := rawData["g_oauth"].(map[string]interface{}); ok {
 		goauth := GOAuth{}
 		if calendar, ok := goauthMap["calendar"].(bool); ok {
 			goauth.Calendar = calendar
@@ -915,12 +920,17 @@ func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecI
 		modelData.Triggers = triggers
 	}
 
-	//// Извлекаем gpttype для определения model
-	//if gptType, ok := rawData["gpttype"].(map[string]interface{}); ok {
-	//	if model, ok := gptType["name"].(string); ok {
-	//		modelData.universalModel = model
-	//	}
-	//}
+	// Извлекаем gpttype (модель провайдера)
+	if gptTypeMap, ok := rawData["gpttype"].(map[string]interface{}); ok {
+		gptType := &GptType{}
+		if name, ok := gptTypeMap["name"].(string); ok {
+			gptType.Name = name
+		}
+		if id, ok := gptTypeMap["id"].(float64); ok {
+			gptType.ID = uint8(id)
+		}
+		modelData.GptType = gptType
+	}
 
 	// AssistantId НЕ хранится в Data - он приходит из user_gpt.AssistantId
 	// Будет установлен позже из БД
