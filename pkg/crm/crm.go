@@ -7,7 +7,7 @@
 //	// Стандартная инициализация
 //	crmClient := crm.New(ctx, cfg)
 //
-//	// Или с настройкой канала для альтернативных контактов (Telegram/Instagram/Widget)
+//	// Или с настройкой канала для альтернативных контактов (Telegram/Instagram/Widget/Avito)
 //	crmClient := crm.New(ctx, cfg, crm.WithAltContactChannel(crm.ChannelTelegram))
 //
 //	user, err := crmClient.Init(userID)
@@ -103,6 +103,7 @@ type AmoCRMSettings struct {
 	Telegram         int64    `json:"Telegram"`         // ID канала Telegram
 	Instagram        int64    `json:"Instagram"`        // ID канала Instagram
 	Widget           int64    `json:"Widget"`           // ID канала Widget
+	Avito            int64    `json:"Avito"`            // ID канала Avito
 }
 
 type UserCRMConfig struct {
@@ -169,6 +170,7 @@ const (
 	ChannelTelegram  AltContactChannelType = "telegram"
 	ChannelInstagram AltContactChannelType = "instagram"
 	ChannelWidget    AltContactChannelType = "widget"
+	ChannelAvito     AltContactChannelType = "avito"
 )
 
 type Option func(*CRM)
@@ -180,7 +182,7 @@ type altContactChannel struct {
 
 // WithAltContactChannel устанавливает канал для создания контактов без номера телефона
 // Используется совместно с настройкой AltContact = true
-// Возможные значения: ChannelTelegram, ChannelInstagram, ChannelWidget
+// Возможные значения: ChannelTelegram, ChannelInstagram, ChannelWidget, ChannelAvito
 //
 //nolint:unused // Экспортируемая функция для использования в других пакетах
 func WithAltContactChannel(channelType AltContactChannelType) Option {
@@ -322,6 +324,8 @@ func (c *CRM) Init(userID uint32) (*User, error) {
 			crmConfig.AltContactID = setting.AmoCRM.Instagram
 		case ChannelWidget:
 			crmConfig.AltContactID = setting.AmoCRM.Widget
+		case ChannelAvito:
+			crmConfig.AltContactID = setting.AmoCRM.Avito
 		}
 	}
 

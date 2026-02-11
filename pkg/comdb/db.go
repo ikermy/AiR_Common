@@ -86,7 +86,7 @@ const (
 	TelegramBot ChatType = 0
 	Web         ChatType = 1
 	Telegram    ChatType = 2
-	Keyboard    ChatType = 3
+	Avito       ChatType = 3
 	Widget      ChatType = 4
 	WhatsApp    ChatType = 5
 	Instagram   ChatType = 6

@@ -381,7 +381,6 @@ func NewModelRouter(ctx context.Context, conf *conf.Conf, db DB, options ...Rout
 
 	// Устанавливаем UniversalModel в Google модель для доступа к GetRealUserID
 	if router.google != nil {
-		logger.Debug("Google модель обнаружена, пытаемся установить UniversalModel")
 		// Используем type assertion для доступа к SetUniversalModel
 		if googleModel, ok := router.google.(interface{ SetUniversalModel(*create.UniversalModel) }); ok {
 			if router.modelsManager == nil {

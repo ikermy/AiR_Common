@@ -419,3 +419,64 @@ func TestCRM_PriorityPhoneOverAlt(t *testing.T) {
 
 	time.Sleep(5 * time.Second)
 }
+
+// TestCRM_AvitoChannel тестирует работу с каналом Avito
+func TestCRM_AvitoChannel(t *testing.T) {
+	t.Skip("Manual test - requires running server")
+
+	cfg := getConfig()
+	cfg.WEB.CRM = "8092"
+
+	ctx := context.Background()
+
+	// Создаём CRM с настройкой канала Avito
+	crm := New(ctx, cfg, WithAltContactChannel(ChannelAvito))
+
+	// Инициализируем пользователя
+	user, err := crm.Init(23)
+	if err != nil {
+		t.Fatalf("Failed to initialize User: %v", err)
+	}
+
+	// Создаём сообщение с альтернативным контактом Avito (без телефона)
+	msg := user.MSG("user", "Avito User", "Тестовое сообщение через Avito").
+		WithAltContact("avito_user_12345").
+		NewDialog(true)
+
+	// Отправляем сообщение
+	if err := user.SendMessage(msg); err != nil {
+		t.Fatalf("Failed to send message: %v", err)
+	}
+
+	// Ждём обработки сообщения воркером
+	time.Sleep(5 * time.Second)
+
+	// Проверяем кэш
+	contactCount, altContactCount, leadCount := user.testGetCacheStats()
+	t.Logf("Cache stats - Contacts: %d, AltContacts: %d, Leads: %d", contactCount, altContactCount, leadCount)
+
+	if altContactCount == 0 {
+		t.Error("Expected altContactCache to have entries for Avito channel")
+	}
+
+	// Отправляем второе сообщение тому же контакту (должно взять из кэша)
+	msg2 := user.MSG("assist", "Avito User", "Ответ через Avito").
+		WithAltContact("avito_user_12345")
+
+	if err := user.SendMessage(msg2); err != nil {
+		t.Fatalf("Failed to send message 2: %v", err)
+	}
+
+	// Ждём обработки второго сообщения
+	time.Sleep(5 * time.Second)
+
+	// Проверяем, что количество в кэше не изменилось (используется кэш)
+	contactCount2, altContactCount2, leadCount2 := user.testGetCacheStats()
+	t.Logf("After msg2 - Contacts: %d, AltContacts: %d, Leads: %d", contactCount2, altContactCount2, leadCount2)
+
+	if altContactCount2 != altContactCount {
+		t.Errorf("Expected same altContact count, got %d, want %d", altContactCount2, altContactCount)
+	}
+
+	time.Sleep(2 * time.Second)
+}
