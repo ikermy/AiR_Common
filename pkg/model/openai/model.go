@@ -1,9 +1,6 @@
 package openai
 
 import (
-	comdb "AiR_Landing/internal/app/_db"
-	"AiR_Landing/internal/app/model"
-	"AiR_Landing/internal/app/model/create"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,8 +12,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/logger"
+	"github.com/ikermy/AiR_Common/pkg/model"
+	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"github.com/sashabaranov/go-openai"
 )
 
