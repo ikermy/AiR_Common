@@ -113,7 +113,6 @@ func (d *DB) SaveGoogleTokenByProvider(userId uint32, provider create.ProviderTy
 		}
 	}
 
-	logger.Debug("Google OAuth токен успешно сохранен, provider=%d, email=%s", provider, googleEmail, userId)
 	return nil
 }
 
@@ -200,17 +199,17 @@ func (d *DB) RefreshGoogleTokenIfNeededByProvider(userId uint32, provider create
 
 	// Если токена нет, это не ошибка - просто не настроен
 	if token == nil {
-		logger.Debug("Google OAuth токен не найден, provider=%d, пропускаем обновление", provider, userId)
+		//logger.Debug("Google OAuth токен не найден, provider=%d, пропускаем обновление", provider, userId)
 		return nil
 	}
 
 	// Проверяем, истекает ли токен в ближайшие 5 минут
 	if time.Until(token.Expiry) > 5*time.Minute {
-		logger.Debug("Google OAuth токен, provider=%d еще действителен (истекает через %v)", provider, time.Until(token.Expiry), userId)
+		//logger.Debug("Google OAuth токен, provider=%d еще действителен (истекает через %v)", provider, time.Until(token.Expiry), userId)
 		return nil
 	}
 
-	logger.Debug("Google OAuth токен, provider=%d истекает скоро, выполняю обновление...", provider, userId)
+	//logger.Debug("Google OAuth токен, provider=%d истекает скоро, выполняю обновление...", provider, userId)
 
 	// Обновляем токен через OAuth2
 	tokenSource := oauthConfig.TokenSource(context.Background(), token)
@@ -224,7 +223,7 @@ func (d *DB) RefreshGoogleTokenIfNeededByProvider(userId uint32, provider create
 		return fmt.Errorf("ошибка сохранения обновленного токена: %w", err)
 	}
 
-	logger.Info("Google OAuth токен успешно обновлен, provider=%d", provider, userId)
+	//logger.Debug("Google OAuth токен успешно обновлен, provider=%d", provider, userId)
 	return nil
 }
 
@@ -267,6 +266,5 @@ func (d *DB) DeleteGoogleTokenByProvider(userId uint32, provider create.Provider
 		return nil
 	}
 
-	logger.Info("Google OAuth токен удалён из БД, provider=%d", provider, userId)
 	return nil
 }

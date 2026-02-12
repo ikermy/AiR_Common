@@ -92,7 +92,7 @@ type GoogleManager interface {
 
 // ActionHandler интерфейс для обработки функций ассистента
 type ActionHandler interface {
-	RunAction(ctx context.Context, functionName, arguments string) string
+	RunAction(ctx context.Context, functionName, arguments string, provider create.ProviderType) string
 	GetTools(provider create.ProviderType) interface{} // Возвращает инструменты для конкретного провайдера
 }
 
@@ -381,6 +381,7 @@ func NewModelRouter(ctx context.Context, conf *conf.Conf, db DB, options ...Rout
 
 	// Устанавливаем UniversalModel в Google модель для доступа к GetRealUserID
 	if router.google != nil {
+		logger.Debug("Google модель обнаружена, пытаемся установить UniversalModel")
 		// Используем type assertion для доступа к SetUniversalModel
 		if googleModel, ok := router.google.(interface{ SetUniversalModel(*create.UniversalModel) }); ok {
 			if router.modelsManager == nil {

@@ -253,7 +253,7 @@ func (m *MistralModel) Request(userId uint32, dialogId uint64, text string, file
 	logger.Debug("Mistral RAW ответ: Message='%s', HasFunc=%v, FuncName='%s'", response.Message, response.HasFunc, response.FuncName, userId)
 
 	// Обрабатываем ответ
-	assistResponse := m.processResponse(response, respModel.RealUserId)
+	assistResponse := m.processResponse(response, respModel.RealUserId, respModel.Assist.Provider)
 
 	// Обрабатываем цепочку вызовов функций (если есть)
 	// ВАЖНО: Mistral может вызывать несколько функций подряд (например: get_current_time -> sheets_write_range)
@@ -263,7 +263,7 @@ func (m *MistralModel) Request(userId uint32, dialogId uint64, text string, file
 		functionCallCount++
 		logger.Debug("Mistral вызвал функцию #%d: %s с аргументами: %s", functionCallCount, response.FuncName, response.FuncArgs, userId)
 
-		funcResult := m.actionHandler.RunAction(m.ctx, response.FuncName, response.FuncArgs)
+		funcResult := m.actionHandler.RunAction(m.ctx, response.FuncName, response.FuncArgs, respModel.Assist.Provider)
 		logger.Debug("Результат функции #%d %s: %s", functionCallCount, response.FuncName, funcResult, userId)
 
 		// Сохраняем результат функции в контекст для истории
@@ -372,7 +372,7 @@ func (m *MistralModel) Request(userId uint32, dialogId uint64, text string, file
 			//logger.Debug("RAW ответ агента: Message='%s', HasFunc=%v, FuncName='%s'", finalResponse.Message, finalResponse.HasFunc, finalResponse.FuncName, userId)
 
 			response = finalResponse
-			assistResponse = m.processResponse(finalResponse, respModel.RealUserId)
+			assistResponse = m.processResponse(finalResponse, respModel.RealUserId, respModel.Assist.Provider)
 
 			// Если это НЕ вызов функции, выходим из цикла - получен финальный ответ
 			if !finalResponse.HasFunc {
@@ -410,7 +410,7 @@ func (m *MistralModel) Request(userId uint32, dialogId uint64, text string, file
 }
 
 // processResponse обрабатывает ответ от Mistral
-func (m *MistralModel) processResponse(response Response, realUserId uint64) model.AssistResponse {
+func (m *MistralModel) processResponse(response Response, realUserId uint64, provider create.ProviderType) model.AssistResponse {
 	messageText := strings.TrimSpace(response.Message)
 
 	// СНАЧАЛА парсим JSON из ответа (если есть) чтобы получить красивые имена файлов
@@ -508,7 +508,7 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64) mod
 			args := fmt.Sprintf(`{"user_id":"%d","image_data":"%s","file_name":"%s"}`,
 				realUserId, base64Encode(imageData), fileName)
 
-			result := m.actionHandler.RunAction(m.ctx, "save_image_data", args)
+			result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider)
 
 			var saveResult struct {
 				URL   string `json:"url"`

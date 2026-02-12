@@ -709,7 +709,6 @@ func (m *UniversalModel) GetAllUserModelsResponse(userId uint32) (*UserModelsRes
 				record.ModelId, record.Provider, err, userId)
 			continue
 		}
-		logger.Warn("modelData: provider %s, calendar %v, sheets %v", modelData.Provider.String(), modelData.GOAuth.Calendar, modelData.GOAuth.Sheets, userId)
 		// Устанавливаем провайдера из user_models
 		modelData.Provider = record.Provider
 

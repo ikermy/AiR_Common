@@ -1,6 +1,8 @@
 package openai
 
 import (
+	"AiR_Landing/internal/app/model"
+	"AiR_Landing/internal/app/model/create"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,8 +11,6 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/ikermy/AiR_Common/pkg/model"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"github.com/sashabaranov/go-openai"
 )
 

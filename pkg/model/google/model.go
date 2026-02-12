@@ -266,7 +266,6 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 			logger.Error("Не удалось получить real_user_id для userId=%d: %v. Функции S3, Calendar и Sheets будут ОТКЛЮЧЕНЫ!", userId, err, userId)
 			hasRealUserID = false
 		} else {
-			logger.Info("[USER:%d] ✅ Получен real_user_id=%d для использования в функциях", userId, realUserID)
 			hasRealUserID = true
 		}
 	} else {

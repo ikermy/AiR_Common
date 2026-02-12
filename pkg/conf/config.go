@@ -19,7 +19,6 @@ type Conf struct {
 	GLOB     GLOB
 	OPER     OPER
 	GOAuth   GOAuth
-	Avito    AVITO
 	Contacts ContactsServiceConfig
 }
 
@@ -101,11 +100,6 @@ type GOAuth struct {
 	RedirectURI  string `mapstructure:"redirect_uri"`
 	ClientID     string `mapstructure:"client_id"`
 	ClientSecret string `mapstructure:"client_secret"`
-}
-
-type AVITO struct {
-	ClientID     string `mapstructure:"avito_client_id"`
-	ClientSecret string `mapstructure:"avito_client_secret"`
 }
 
 func NewConf() (*Conf, error) {
@@ -229,13 +223,6 @@ func NewConf() (*Conf, error) {
 		return nil, fmt.Errorf("ошибка разбора секции google_oauth: %w", err)
 	}
 	conf.GOAuth = gOAuthConfig
-
-	// Avito секция
-	var avitoConfig AVITO
-	if err := v.UnmarshalKey("avito", &avitoConfig); err != nil {
-		return nil, fmt.Errorf("ошибка разбора секции avito: %w", err)
-	}
-	conf.Avito = avitoConfig
 
 	// Contacts секция (опциональная)
 	var contactsConfig ContactsServiceConfig

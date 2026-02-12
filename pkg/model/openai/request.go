@@ -1,6 +1,8 @@
 package openai
 
 import (
+	"AiR_Landing/internal/app/model"
+	"AiR_Landing/internal/app/model/create"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,8 +10,6 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/logger"
-	"github.com/ikermy/AiR_Common/pkg/model"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -36,7 +36,7 @@ func (j JSONSchemaDefinition) MarshalJSON() ([]byte, error) {
 	return json.Marshal((Alias)(j))
 }
 
-func (m *OpenAIModel) handleRequiredAction(ctx context.Context, run *openai.Run) (*openai.Run, error) {
+func (m *OpenAIModel) handleRequiredAction(ctx context.Context, run *openai.Run, provider create.ProviderType) (*openai.Run, error) {
 	if run.RequiredAction == nil || run.RequiredAction.SubmitToolOutputs == nil {
 		return run, nil
 	}
@@ -47,7 +47,7 @@ func (m *OpenAIModel) handleRequiredAction(ctx context.Context, run *openai.Run)
 		var output openai.ToolOutput
 
 		if m.actionHandler != nil {
-			result := m.actionHandler.RunAction(ctx, toolCall.Function.Name, toolCall.Function.Arguments)
+			result := m.actionHandler.RunAction(ctx, toolCall.Function.Name, toolCall.Function.Arguments, provider)
 			output = openai.ToolOutput{
 				ToolCallID: toolCall.ID,
 				Output:     result,
@@ -72,7 +72,7 @@ func (m *OpenAIModel) handleRequiredAction(ctx context.Context, run *openai.Run)
 	return &updatedRun, nil
 }
 
-func (m *OpenAIModel) waitForRunCompletion(ctx context.Context, run *openai.Run) (*openai.Run, error) {
+func (m *OpenAIModel) waitForRunCompletion(ctx context.Context, run *openai.Run, provider create.ProviderType) (*openai.Run, error) {
 	currentRun := run
 
 	for currentRun.Status == openai.RunStatusQueued ||
@@ -80,7 +80,7 @@ func (m *OpenAIModel) waitForRunCompletion(ctx context.Context, run *openai.Run)
 		currentRun.Status == openai.RunStatusRequiresAction {
 
 		if currentRun.Status == openai.RunStatusRequiresAction {
-			updatedRun, err := m.handleRequiredAction(ctx, currentRun)
+			updatedRun, err := m.handleRequiredAction(ctx, currentRun, provider)
 			if err != nil {
 				return nil, err
 			}
@@ -317,7 +317,7 @@ func (m *OpenAIModel) Request(userId uint32, dialogId uint64, text string, files
 		return emptyResponse, fmt.Errorf("не удалось создать запуск: %w", err)
 	}
 
-	completedRun, err := m.waitForRunCompletion(m.ctx, &run)
+	completedRun, err := m.waitForRunCompletion(m.ctx, &run, respModel.Assist.Provider)
 	if err != nil {
 		return emptyResponse, err
 	}

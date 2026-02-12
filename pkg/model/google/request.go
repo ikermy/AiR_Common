@@ -393,14 +393,14 @@ func (m *GoogleModel) Request(userId uint32, dialogId uint64, text string, files
 	}
 
 	// 5. Парсим ответ (с обработкой function calls)
-	assistResponse, err := m.parseGeminiResponseWithFunctionHandling(response, history, payload, resp.AgentConfig.ModelName)
+	assistResponse, err := m.parseGeminiResponseWithFunctionHandling(response, history, payload, resp.AgentConfig.ModelName, resp.Assist.Provider)
 	if err != nil {
 		return emptyResponse, fmt.Errorf("ошибка парсинга ответа: %w", err)
 	}
 
 	// 6. Обрабатываем автоматическую генерацию видео (если включена и есть запрос)
 	if userId > 0 && text != "" {
-		assistResponse, err = m.processVideoGeneration(userId, text, assistResponse, resp.AgentConfig)
+		assistResponse, err = m.processVideoGeneration(userId, text, assistResponse, resp.AgentConfig, resp.Assist.Provider)
 		if err != nil {
 			logger.Warn("Ошибка обработки генерации видео: %v", err)
 		}
@@ -408,7 +408,7 @@ func (m *GoogleModel) Request(userId uint32, dialogId uint64, text string, files
 
 	// 6.1. Обрабатываем автоматическую генерацию изображений (если включена и есть запрос)
 	if userId > 0 && text != "" {
-		assistResponse, err = m.processImageGeneration(userId, text, assistResponse, resp.AgentConfig)
+		assistResponse, err = m.processImageGeneration(userId, text, assistResponse, resp.AgentConfig, resp.Assist.Provider)
 		if err != nil {
 			logger.Warn("Ошибка обработки генерации изображения: %v", err)
 		}
@@ -670,7 +670,7 @@ func (m *GoogleModel) sendToGeminiAPI(modelName string, payload map[string]inter
 }
 
 // parseGeminiResponse парсит ответ от Google Gemini API
-func (m *GoogleModel) parseGeminiResponse(responseBody []byte) (model.AssistResponse, error) {
+func (m *GoogleModel) parseGeminiResponse(responseBody []byte, provider create.ProviderType) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 
 	var apiResp struct {
@@ -712,7 +712,7 @@ func (m *GoogleModel) parseGeminiResponse(responseBody []byte) (model.AssistResp
 		//logger.Debug("Получено %d function calls для обработки", len(functionCalls))
 
 		for _, fc := range functionCalls {
-			result, err := m.handleFunctionCall(fc)
+			result, err := m.handleFunctionCall(fc, provider)
 			if err != nil {
 				logger.Warn("Ошибка обработки function call: %v", err)
 				continue
@@ -810,7 +810,7 @@ func (m *GoogleModel) parseGeminiResponse(responseBody []byte) (model.AssistResp
 // parseGeminiResponseWithFunctionHandling парсит ответ и обрабатывает function calls через multi-turn conversation
 // Если модель вызывает функцию без текста, отправляем результат обратно модели для продолжения
 func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byte, history []GoogleContent,
-	payload map[string]interface{}, modelName string) (model.AssistResponse, error) {
+	payload map[string]interface{}, modelName string, provider create.ProviderType) (model.AssistResponse, error) {
 
 	var emptyResponse model.AssistResponse
 
@@ -865,7 +865,7 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 
 		// Обрабатываем все функции и собираем результаты
 		for _, fc := range functionCalls {
-			result, err := m.handleFunctionCall(fc)
+			result, err := m.handleFunctionCall(fc, provider)
 			if err != nil {
 				logger.Warn("Ошибка обработки function call: %v", err)
 				continue
@@ -894,14 +894,14 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 		}
 
 		// Рекурсивно парсим ответ (модель должна вернуть текст)
-		return m.parseGeminiResponseWithFunctionHandling(response, history, payload, modelName)
+		return m.parseGeminiResponseWithFunctionHandling(response, history, payload, modelName, provider)
 	}
 
 	// Если есть function calls И текст - обрабатываем функции (но текст используем как ответ)
 	if len(functionCalls) > 0 && len(textParts) > 0 {
 		//logger.Debug("Модель вернула текст и вызвала функции")
 		for _, fc := range functionCalls {
-			result, err := m.handleFunctionCall(fc)
+			result, err := m.handleFunctionCall(fc, provider)
 			if err != nil {
 				logger.Warn("Ошибка обработки function call: %v", err)
 				continue
@@ -1004,7 +1004,7 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 }
 
 // handleFunctionCall обрабатывает вызов функции от модели
-func (m *GoogleModel) handleFunctionCall(functionCall map[string]interface{}) (map[string]interface{}, error) {
+func (m *GoogleModel) handleFunctionCall(functionCall map[string]interface{}, provider create.ProviderType) (map[string]interface{}, error) {
 	functionName, ok := functionCall["name"].(string)
 	if !ok {
 		return nil, fmt.Errorf("function call не содержит имени")
@@ -1022,7 +1022,7 @@ func (m *GoogleModel) handleFunctionCall(functionCall map[string]interface{}) (m
 
 	// Все функции обрабатываются через action handler
 	if m.actionHandler != nil {
-		result := m.actionHandler.RunAction(m.ctx, functionName, string(argsJSON))
+		result := m.actionHandler.RunAction(m.ctx, functionName, string(argsJSON), provider)
 
 		var resultMap map[string]interface{}
 		if err := json.Unmarshal([]byte(result), &resultMap); err != nil {
@@ -1082,7 +1082,7 @@ func (m *GoogleModel) mergeResponses(responses []model.AssistResponse) model.Ass
 
 // processVideoGeneration автоматически генерирует видео если модель вызвала generate_video
 // или если в промпте агента включен флаг Video и обнаружены ключевые слова
-func (m *GoogleModel) processVideoGeneration(userId uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig) (model.AssistResponse, error) {
+func (m *GoogleModel) processVideoGeneration(userId uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
 	// Проверяем включена ли генерация видео в конфигурации
 	if !m.isVideoEnabled(agentConfig) {
 		return response, nil
@@ -1146,7 +1146,7 @@ func (m *GoogleModel) processVideoGeneration(userId uint32, userText string, res
 	args := fmt.Sprintf(`{"user_id":"%d","image_data":"%s","file_name":"%s"}`,
 		userId, videoBase64, fileName)
 
-	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args)
+	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider)
 
 	// Парсим результат сохранения
 	var saveResult struct {
@@ -1250,7 +1250,7 @@ func getStringField(m map[string]interface{}, key string) string {
 
 // processImageGeneration автоматически генерирует изображение если модель включила Image
 // и обнаружены ключевые слова в запросе пользователя
-func (m *GoogleModel) processImageGeneration(userId uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig) (model.AssistResponse, error) {
+func (m *GoogleModel) processImageGeneration(userId uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
 	// Проверяем включена ли генерация изображений в конфигурации
 	if !agentConfig.Image {
 		return response, nil
@@ -1316,7 +1316,7 @@ func (m *GoogleModel) processImageGeneration(userId uint32, userText string, res
 	args := fmt.Sprintf(`{"user_id":"%d","image_data":"%s","file_name":"%s"}`,
 		userId, imageBase64, fileName)
 
-	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args)
+	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider)
 
 	// Парсим результат сохранения
 	var saveResult struct {

@@ -36,7 +36,7 @@ func NewUniversalActionHandler(ctx context.Context, db comdb.Exterior, cfg *conf
 	}
 }
 
-func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, arguments string) string {
+func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, arguments string, provider create.ProviderType) string {
 	switch functionName {
 
 	case "lead_target":
@@ -389,9 +389,9 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		var url string
 		if mode.ProductionMode {
-			url = fmt.Sprintf("http://localhost:%s/calendar/create", h.port)
+			url = fmt.Sprintf("http://localhost:%s/calendar/create?provider=%d", h.port, provider)
 		} else {
-			url = fmt.Sprintf("https://localhost:%s/calendar/create", h.port)
+			url = fmt.Sprintf("https://localhost:%s/calendar/create?provider=%d", h.port, provider)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
@@ -434,11 +434,11 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		var url string
 		if mode.ProductionMode {
-			url = fmt.Sprintf("http://localhost:%s/calendar/list?id=%s&time_min=%s&time_max=%s&max_results=%d",
-				h.port, params.UserID, params.TimeMin, params.TimeMax, params.MaxResults)
+			url = fmt.Sprintf("http://localhost:%s/calendar/list?id=%s&time_min=%s&time_max=%s&max_results=%d&provider=%d",
+				h.port, params.UserID, params.TimeMin, params.TimeMax, params.MaxResults, provider)
 		} else {
-			url = fmt.Sprintf("https://localhost:%s/calendar/list?id=%s&time_min=%s&time_max=%s&max_results=%d",
-				h.port, params.UserID, params.TimeMin, params.TimeMax, params.MaxResults)
+			url = fmt.Sprintf("https://localhost:%s/calendar/list?id=%s&time_min=%s&time_max=%s&max_results=%d&provider=%d",
+				h.port, params.UserID, params.TimeMin, params.TimeMax, params.MaxResults, provider)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -478,11 +478,11 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		var url string
 		if mode.ProductionMode {
-			url = fmt.Sprintf("http://localhost:%s/calendar/delete?id=%s&event_id=%s",
-				h.port, params.UserID, params.EventID)
+			url = fmt.Sprintf("http://localhost:%s/calendar/delete?id=%s&event_id=%s&provider=%d",
+				h.port, params.UserID, params.EventID, provider)
 		} else {
-			url = fmt.Sprintf("https://localhost:%s/calendar/delete?id=%s&event_id=%s",
-				h.port, params.UserID, params.EventID)
+			url = fmt.Sprintf("https://localhost:%s/calendar/delete?id=%s&event_id=%s&provider=%d",
+				h.port, params.UserID, params.EventID, provider)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "DELETE", url, nil)
@@ -522,11 +522,11 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		var url string
 		if mode.ProductionMode {
-			url = fmt.Sprintf("http://localhost:%s/calendar/get?id=%s&event_id=%s",
-				h.port, params.UserID, params.EventID)
+			url = fmt.Sprintf("http://localhost:%s/calendar/get?id=%s&event_id=%s&provider=%d",
+				h.port, params.UserID, params.EventID, provider)
 		} else {
-			url = fmt.Sprintf("https://localhost:%s/calendar/get?id=%s&event_id=%s",
-				h.port, params.UserID, params.EventID)
+			url = fmt.Sprintf("https://localhost:%s/calendar/get?id=%s&event_id=%s&provider=%d",
+				h.port, params.UserID, params.EventID, provider)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -572,11 +572,11 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		// HTTP запрос к локальному endpoint (внутренний вызов)
 		var url string
 		if mode.ProductionMode {
-			url = fmt.Sprintf("http://localhost:%s/sheets/read?id=%s&spreadsheet_id=%s&range=%s",
-				h.port, params.UserID, params.SpreadsheetID, params.Range)
+			url = fmt.Sprintf("http://localhost:%s/sheets/read?id=%s&spreadsheet_id=%s&range=%s&provider=%d",
+				h.port, params.UserID, params.SpreadsheetID, params.Range, provider)
 		} else {
-			url = fmt.Sprintf("https://localhost:%s/sheets/read?id=%s&spreadsheet_id=%s&range=%s",
-				h.port, params.UserID, params.SpreadsheetID, params.Range)
+			url = fmt.Sprintf("https://localhost:%s/sheets/read?id=%s&spreadsheet_id=%s&range=%s&provider=%d",
+				h.port, params.UserID, params.SpreadsheetID, params.Range, provider)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
@@ -629,9 +629,9 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		var url string
 		if mode.ProductionMode {
-			url = fmt.Sprintf("http://localhost:%s/sheets/write", h.port)
+			url = fmt.Sprintf("http://localhost:%s/sheets/write?provider=%d", h.port, provider)
 		} else {
-			url = fmt.Sprintf("https://localhost:%s/sheets/write", h.port)
+			url = fmt.Sprintf("https://localhost:%s/sheets/write?provider=%d", h.port, provider)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
@@ -680,9 +680,9 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		var url string
 		if mode.ProductionMode {
-			url = fmt.Sprintf("http://localhost:%s/sheets/append", h.port)
+			url = fmt.Sprintf("http://localhost:%s/sheets/append?provider=%d", h.port, provider)
 		} else {
-			url = fmt.Sprintf("https://localhost:%s/sheets/append", h.port)
+			url = fmt.Sprintf("https://localhost:%s/sheets/append?provider=%d", h.port, provider)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
