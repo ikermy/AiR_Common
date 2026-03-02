@@ -25,6 +25,7 @@ const (
 )
 
 var generalLogger *log.Logger
+var logFile *lumberjack.Logger
 
 var levelColors = map[string]string{
 	"[INFO]":    ColorWhite,
@@ -36,7 +37,7 @@ var levelColors = map[string]string{
 
 // Set инициализирует логгер с ротацией файлов
 func Set(path string) {
-	logFile := &lumberjack.Logger{
+	logFile = &lumberjack.Logger{
 		Filename:   path,
 		MaxSize:    1,
 		MaxBackups: 3,
@@ -45,6 +46,13 @@ func Set(path string) {
 	}
 	multiWriter := io.MultiWriter(os.Stdout, logFile)
 	generalLogger = log.New(multiWriter, "", 0)
+}
+
+// Close корректно закрывает файл логов (lumberjack millRun)
+func Close() {
+	if logFile != nil {
+		_ = logFile.Close()
+	}
 }
 
 // --- публичные методы ---

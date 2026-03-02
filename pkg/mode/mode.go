@@ -20,6 +20,8 @@ const (
 	MistralAgentsURL = "https://api.mistral.ai/v1/agents/completions"
 	// Google API settings
 	GoogleAgentsURL = "https://generativelanguage.googleapis.com/v1beta"
+	// OpenAI API settings
+	OpenAIAgentsURL = "https://api.openai.com/v1"
 )
 
 var (
