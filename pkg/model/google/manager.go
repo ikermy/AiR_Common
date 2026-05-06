@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
@@ -14,52 +13,6 @@ func (m *GoogleModel) CreateModel(userId uint32, provider create.ProviderType, m
 	modelsManager := &create.UniversalModel{}
 
 	return modelsManager.CreateModel(userId, provider, modelData, fileIDs)
-}
-
-// DeleteModel удаляет модель Google
-func (m *GoogleModel) DeleteModel(userId uint32) error {
-	if m.client == nil {
-		return fmt.Errorf("google клиент не инициализирован")
-	}
-
-	// Получаем все модели пользователя
-	userModels, err := m.db.GetAllUserModels(userId)
-	if err != nil {
-		return fmt.Errorf("ошибка получения моделей пользователя: %w", err)
-	}
-
-	// Ищем активную модель Google
-	var activeModel *create.UserModelRecord
-	for i := range userModels {
-		if userModels[i].IsActive && userModels[i].Provider == create.ProviderGoogle {
-			activeModel = &userModels[i]
-			break
-		}
-	}
-
-	if activeModel == nil {
-		return fmt.Errorf("активная Google модель не найдена")
-	}
-
-	// Удаляем агента через клиент (это просто логирование для Google)
-	if err := m.client.DeleteGoogleAgent(activeModel.AssistId); err != nil {
-		logger.Warn("Ошибка удаления Google агента %s: %v", activeModel.AssistId, err)
-	}
-
-	// Удаление из БД происходит через modelsManager
-	logger.Info("Модель Google удалена", userId)
-
-	return nil
-}
-
-// UpdateModel обновляет модель Google
-func (m *GoogleModel) UpdateModel(userId uint32, modelJSON []byte) error {
-	if m.client == nil {
-		return fmt.Errorf("google клиент не инициализирован")
-	}
-
-	// TODO: Реализовать обновление модели
-	return fmt.Errorf("UpdateModel не реализован")
 }
 
 // ============================================================================
@@ -81,8 +34,8 @@ func (m *GoogleModel) UploadDocumentWithEmbedding(userId uint32, docName, conten
 		return "", fmt.Errorf("ошибка генерации эмбеддинга: %w", err)
 	}
 
-	// 2. Создаём уникальный ID
-	docID := fmt.Sprintf("doc_%d_%d", modelId, time.Now().UnixNano())
+	// 2. Создаём уникальный ID с префиксом google_doc_ для автоопределения провайдера
+	docID := fmt.Sprintf("google_doc_%d_%d", userId, time.Now().Unix())
 
 	// 3. Сохраняем в MariaDB с привязкой к modelId
 	err = m.saveEmbedding(userId, modelId, docID, docName, content, embedding, metadata)
@@ -90,12 +43,11 @@ func (m *GoogleModel) UploadDocumentWithEmbedding(userId uint32, docName, conten
 		return "", fmt.Errorf("ошибка сохранения в БД: %w", err)
 	}
 
-	logger.Info("UploadDocumentWithEmbedding: документ '%s' загружен для modelId=%d, эмбеддинг сохранён в MariaDB (dim=%d)",
-		docName, modelId, len(embedding))
+	//logger.Debug("UploadDocumentWithEmbedding: документ '%s' загружен для modelId=%d, эмбеддинг сохранён в MariaDB (dim=%d)",
+	//	docName, modelId, len(embedding))
 	return docID, nil
 }
 
-// SearchSimilarDocuments ищет похожие документы в БД по эмбеддингу
 // SearchSimilarDocuments ищет похожие документы по запросу через векторный поиск
 func (m *GoogleModel) SearchSimilarDocuments(userId uint32, query string, limit int) ([]create.VectorDocument, error) {
 	// Получаем modelId активной Google модели
@@ -156,7 +108,6 @@ func (m *GoogleModel) getActiveModelId(userId uint32) (uint64, error) {
 	// Получаем все модели пользователя и находим Google модель
 	allModels, err := m.db.GetAllUserModels(userId)
 	if err != nil {
-		logger.Error("getActiveModelId: ошибка GetAllUserModels: %v", err, userId)
 		return 0, fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
 
@@ -170,11 +121,11 @@ func (m *GoogleModel) getActiveModelId(userId uint32) (uint64, error) {
 	}
 
 	if model == nil {
-		logger.Error("getActiveModelId: Google модель не найдена", userId)
+		//logger.Error("getActiveModelId: Google модель не найдена", userId)
 		//for i, m := range allModels {
 		//	logger.Debug("  Модель %d: ID=%d, Provider=%d, IsActive=%v", i+1, m.ModelId, m.Provider, m.IsActive)
 		//}
-		return 0, fmt.Errorf("Google модель не найдена", userId)
+		return 0, fmt.Errorf("Google модель не найдена для пользователя %d", userId)
 	}
 
 	//logger.Debug("getActiveModelId: найдена Google модель с ModelId=%d", model.ModelId)

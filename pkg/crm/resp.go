@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/ikermy/AiR_Common/pkg/logger"
 )
 
 // ChannelsSettings AmoCRMSettings структура настроек AmoCRM канала
@@ -153,9 +151,7 @@ func (u *User) ChannelsSettings(userID uint32) (*ChannelsSettings, error) {
 		return nil, fmt.Errorf("ошибка получения настроек каналов: %v", err)
 	}
 	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Error("ошибка закрытия тела ответа: %v", closeErr)
-		}
+		_ = resp.Body.Close()
 	}()
 
 	body, err := io.ReadAll(resp.Body)
@@ -194,9 +190,7 @@ func (u *User) ContactID(contact string) (Contact, error) {
 		return Contact{}, fmt.Errorf("ошибка получения id контакта: %v", err)
 	}
 	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Error("ошибка закрытия тела ответа: %v", closeErr)
-		}
+		_ = resp.Body.Close()
 	}()
 
 	body, err := io.ReadAll(resp.Body)
@@ -226,9 +220,7 @@ func (u *User) FindContactByAltContact(altContact string) (Contact, error) {
 		return Contact{}, fmt.Errorf("ошибка поиска контакта по альтернативному имени: %v", err)
 	}
 	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Error("ошибка закрытия тела ответа: %v", closeErr)
-		}
+		_ = resp.Body.Close()
 	}()
 
 	body, err := io.ReadAll(resp.Body)
@@ -267,9 +259,7 @@ func (u *User) CreateContact(contact *CreateContact) (Contact, error) {
 		return Contact{}, fmt.Errorf("ошибка создания контакта: %v", err)
 	}
 	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Error("ошибка закрытия тела ответа: %v", closeErr)
-		}
+		_ = resp.Body.Close()
 	}()
 
 	body, err := io.ReadAll(resp.Body)
@@ -302,9 +292,7 @@ func (u *User) FindLeadByContactID(contactID string) ([]Lead, error) {
 		return nil, fmt.Errorf("ошибка получения лидов для контакта %s: %v", contactID, err)
 	}
 	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Error("ошибка закрытия тела ответа: %v", closeErr)
-		}
+		_ = resp.Body.Close()
 	}()
 
 	body, err := io.ReadAll(resp.Body)
@@ -323,7 +311,6 @@ func (u *User) FindLeadByContactID(contactID string) ([]Lead, error) {
 	}
 
 	if len(leadResp.Leads) == 0 {
-		logger.Debug("Лиды не найдены для контакта %s", contactID, u.conf.UserID)
 		return []Lead{}, nil
 	}
 
@@ -344,9 +331,7 @@ func (u *User) NewLead(lead *CreateLead) (Lead, error) {
 		return Lead{}, fmt.Errorf("ошибка создания лида: %v", err)
 	}
 	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Error("ошибка закрытия тела ответа: %v", closeErr)
-		}
+		_ = resp.Body.Close()
 	}()
 
 	body, err := io.ReadAll(resp.Body)
@@ -363,8 +348,8 @@ func (u *User) NewLead(lead *CreateLead) (Lead, error) {
 		return Lead{}, fmt.Errorf("сервер вернул ошибку при создании лида: %s", createResp.Message)
 	}
 
-	logger.Info("Лид успешно создан: ID=%s, Name=%s, ContactID=%s",
-		createResp.Lead.ID, createResp.Lead.Name, createResp.Lead.ContactID, u.conf.UserID)
+	//logger.Debug("Лид успешно создан: ID=%s, Name=%s, ContactID=%s",
+	//	createResp.Lead.ID, createResp.Lead.Name, createResp.Lead.ContactID, u.conf.UserID)
 
 	return createResp.Lead, nil
 }
@@ -390,9 +375,7 @@ func (u *User) AddNote(note AddNote) error {
 		return fmt.Errorf("ошибка добавления заметки: %v", err)
 	}
 	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Error("ошибка закрытия тела ответа: %v", closeErr)
-		}
+		_ = resp.Body.Close()
 	}()
 
 	body, err := io.ReadAll(resp.Body)
@@ -425,9 +408,7 @@ func (u *User) UpdateLeadState(leadID string) error {
 		return fmt.Errorf("ошибка обновления лида: %v", err)
 	}
 	defer func() {
-		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.Error("ошибка закрытия тела ответа: %v", closeErr)
-		}
+		_ = resp.Body.Close()
 	}()
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -451,7 +432,7 @@ func (u *User) UpdateLeadState(leadID string) error {
 		return fmt.Errorf("сервер вернул ошибку при обновлении лида: %s", updateResp.Message)
 	}
 
-	logger.Info("Лид успешно обновлён: LeadID=%s", leadID, u.conf.UserID)
+	//logger.Debug("Лид успешно обновлён: LeadID=%s", leadID, u.conf.UserID)
 
 	return nil
 }

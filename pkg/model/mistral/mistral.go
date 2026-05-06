@@ -1,25 +1,18 @@
 package mistral
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"strings"
 
 	"github.com/ikermy/AiR_Common/pkg/conf"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 )
-
-// MistralMessage представляет сообщение для Mistral API
-type MistralMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
 
 // MistralAgentClient - обертка для работы с агентами и обычными моделями
 type MistralAgentClient struct {
@@ -41,6 +34,13 @@ func NewMistralAgentClient(parent context.Context, conf *conf.Conf) *MistralAgen
 	}
 }
 
+// TokenUsage представляет информацию о расходе токенов
+type TokenUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 type Response struct {
 	Message         string
 	FuncName        string
@@ -48,6 +48,7 @@ type Response struct {
 	ToolCallID      string // ID вызова функции для отправки результата
 	HasFunc         bool
 	GeneratedImages []GeneratedImage // Сгенерированные изображения
+	Usage           *TokenUsage      // Информация о расходе токенов
 }
 
 // GeneratedImage представляет сгенерированное изображение
@@ -55,59 +56,6 @@ type GeneratedImage struct {
 	FileID   string `json:"file_id"`
 	FileName string `json:"file_name"`
 	FileType string `json:"file_type"` // png, jpg, etc.
-}
-
-// ChatWithModel отправляет массив сообщений обычной модели через HTTP API
-func (m *MistralAgentClient) ChatWithModel(model string, messages []MistralMessage) (string, error) {
-	payload := map[string]interface{}{
-		"model":    model,
-		"messages": messages,
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("ошибка сериализации запроса: %v", err)
-	}
-
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, m.url, bytes.NewBuffer(body))
-	if err != nil {
-		return "", fmt.Errorf("ошибка создания запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("ошибка чтения ответа: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	var response map[string]interface{}
-	if err := json.Unmarshal(responseBody, &response); err != nil {
-		return "", fmt.Errorf("ошибка парсинга JSON: %v", err)
-	}
-
-	if choices, ok := response["choices"].([]interface{}); ok && len(choices) > 0 {
-		if choice, ok := choices[0].(map[string]interface{}); ok {
-			if message, ok := choice["message"].(map[string]interface{}); ok {
-				if content, ok := message["content"].(string); ok {
-					return content, nil
-				}
-			}
-		}
-	}
-
-	return "", fmt.Errorf("пустой ответ от модели")
 }
 
 // Shutdown корректно завершает работу клиента
@@ -167,7 +115,7 @@ func (m *MistralAgentClient) CreateLibrary(name, description string) (*MistralLi
 	if err != nil {
 		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -202,7 +150,7 @@ func (m *MistralAgentClient) DeleteLibrary(libraryID string) error {
 	if err != nil {
 		return fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
 		responseBody, _ := io.ReadAll(resp.Body)
@@ -240,7 +188,7 @@ func (m *MistralAgentClient) UploadDocumentToLibrary(libraryID, fileName string,
 	if err != nil {
 		return "", fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -275,7 +223,7 @@ func (m *MistralAgentClient) DeleteDocumentFromLibrary(libraryID, documentID str
 	if err != nil {
 		return fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
 		responseBody, _ := io.ReadAll(resp.Body)
@@ -301,7 +249,7 @@ func (m *MistralAgentClient) GetDocumentStatus(libraryID, documentID string) (st
 	if err != nil {
 		return "", fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -336,7 +284,7 @@ func (m *MistralAgentClient) DownloadFile(fileID string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyText, _ := io.ReadAll(resp.Body)
@@ -355,6 +303,7 @@ func (m *MistralAgentClient) DownloadFile(fileID string) ([]byte, error) {
 type ConversationResponse struct {
 	ConversationID string               `json:"conversation_id"`
 	Outputs        []ConversationOutput `json:"outputs"`
+	Usage          *TokenUsage          `json:"usage,omitempty"` // Информация о токенах
 }
 
 // ConversationOutput представляет один output в ответе
@@ -408,7 +357,7 @@ func (m *MistralAgentClient) StartConversation(agentID string, inputs interface{
 	if err != nil {
 		return ConversationResponse{}, fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	responseBody := new(bytes.Buffer)
 	responseBody.ReadFrom(resp.Body)
@@ -455,7 +404,7 @@ func (m *MistralAgentClient) ContinueConversation(conversationID string, inputs 
 	if err != nil {
 		return ConversationResponse{}, fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	responseBody := new(bytes.Buffer)
 	responseBody.ReadFrom(resp.Body)
@@ -513,13 +462,12 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 	if err != nil {
 		return ConversationResponse{}, fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	responseBody := new(bytes.Buffer)
 	responseBody.ReadFrom(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		logger.Error("SendFunctionResult: API вернул статус %d для conversation_id=%s, ответ: %s", resp.StatusCode, conversationID, responseBody.String())
 		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, responseBody.String())
 	}
 
@@ -527,7 +475,6 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 
 	var result ConversationResponse
 	if err := json.Unmarshal(responseBody.Bytes(), &result); err != nil {
-		logger.Error("SendFunctionResult: ошибка парсинга JSON для conversation_id=%s: %v, тело ответа: %s", conversationID, err, responseBody.String())
 		return ConversationResponse{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
@@ -535,85 +482,339 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 	return result, nil
 }
 
-// FileUploadResponse представляет ответ от Files API при загрузке файла
-type FileUploadResponse struct {
-	ID       string `json:"id"`
-	Object   string `json:"object"`
-	Purpose  string `json:"purpose"`
-	Filename string `json:"filename"`
-	Bytes    int    `json:"bytes"`
-}
+// ============================================================================
+// STREAMING METHODS - Методы для работы в режиме Server-Sent Events (SSE)
+// ============================================================================
 
-// UploadFile загружает файл в Mistral Files API для временного использования
-// Документация: https://docs.mistral.ai/api/#tag/files/operation/files_api_routes_upload_file
-func (m *MistralAgentClient) UploadFile(fileName string, fileData []byte) (*FileUploadResponse, error) {
-	// Создаём multipart request
-	var requestBody bytes.Buffer
-	writer := multipart.NewWriter(&requestBody)
+// StartConversationStreaming начинает новый диалог с агентом в streaming режиме
+// onDelta вызывается для каждого delta события с текстом или JSON событиями function calls
+// Возвращает ConversationResponse с накопленными данными и usage токенов
+func (m *MistralAgentClient) StartConversationStreaming(agentID string, inputs interface{}, onDelta func(string) error) (ConversationResponse, error) {
+	conversationsURL := "https://api.mistral.ai/v1/conversations"
 
-	// Определяем purpose на основе расширения файла
-	// audio - для аудио файлов (mp3, ogg, wav, m4a, etc)
-	// chat - для документов и изображений по умолчанию
-	purpose := "chat"
-	lowerFileName := strings.ToLower(fileName)
-	if strings.HasSuffix(lowerFileName, ".mp3") ||
-		strings.HasSuffix(lowerFileName, ".ogg") ||
-		strings.HasSuffix(lowerFileName, ".wav") ||
-		strings.HasSuffix(lowerFileName, ".m4a") ||
-		strings.HasSuffix(lowerFileName, ".flac") ||
-		strings.HasSuffix(lowerFileName, ".opus") {
-		purpose = "audio"
+	payload := map[string]interface{}{
+		"agent_id": agentID,
+		"inputs":   inputs,
+		"stream":   true, // Включаем streaming
 	}
 
-	// Добавляем purpose
-	if err := writer.WriteField("purpose", purpose); err != nil {
-		return nil, fmt.Errorf("ошибка добавления поля purpose: %w", err)
-	}
-
-	// Добавляем файл
-	part, err := writer.CreateFormFile("file", fileName)
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка создания form file: %w", err)
+		return ConversationResponse{}, fmt.Errorf("ошибка сериализации запроса: %v", err)
 	}
 
-	if _, err := part.Write(fileData); err != nil {
-		return nil, fmt.Errorf("ошибка записи данных файла: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("ошибка закрытия writer: %w", err)
-	}
-
-	// Отправляем запрос
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, "https://api.mistral.ai/v1/files", &requestBody)
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, conversationsURL, bytes.NewBuffer(body))
 	if err != nil {
-		return nil, fmt.Errorf("ошибка создания HTTP запроса: %w", err)
+		return ConversationResponse{}, fmt.Errorf("ошибка создания запроса: %v", err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream") // SSE
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка HTTP запроса: %w", err)
+		return ConversationResponse{}, fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
-	responseBody, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		bodyText, _ := io.ReadAll(resp.Body)
+		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(bodyText))
+	}
+
+	// Читаем SSE поток
+	return m.readStreamingResponse(resp.Body, onDelta)
+}
+
+// ContinueConversationStreaming продолжает диалог в streaming режиме
+func (m *MistralAgentClient) ContinueConversationStreaming(conversationID string, inputs interface{}, onDelta func(string) error) (ConversationResponse, error) {
+	conversationsURL := fmt.Sprintf("https://api.mistral.ai/v1/conversations/%s", conversationID)
+
+	payload := map[string]interface{}{
+		"inputs": inputs,
+		"stream": true,
+		"store":  true,
+	}
+
+	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %w", err)
+		return ConversationResponse{}, fmt.Errorf("ошибка сериализации запроса: %v", err)
 	}
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, conversationsURL, bytes.NewBuffer(body))
+	if err != nil {
+		return ConversationResponse{}, fmt.Errorf("ошибка создания запроса: %v", err)
 	}
 
-	var result FileUploadResponse
-	if err := json.Unmarshal(responseBody, &result); err != nil {
-		return nil, fmt.Errorf("ошибка парсинга JSON: %w", err)
+	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ConversationResponse{}, fmt.Errorf("ошибка HTTP запроса: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyText, _ := io.ReadAll(resp.Body)
+		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(bodyText))
 	}
 
-	return &result, nil
+	return m.readStreamingResponse(resp.Body, onDelta)
+}
+
+// SendMultipleFunctionResultsStreaming отправляет результаты НЕСКОЛЬКИХ функций в streaming режиме
+// functionResults - массив объектов с полями: tool_call_id, result, object, type
+func (m *MistralAgentClient) SendMultipleFunctionResultsStreaming(conversationID string, functionResults []map[string]interface{}, onDelta func(string) error) (ConversationResponse, error) {
+	conversationsURL := fmt.Sprintf("https://api.mistral.ai/v1/conversations/%s", conversationID)
+
+	payload := map[string]interface{}{
+		"inputs":            functionResults,
+		"stream":            true,
+		"store":             true,
+		"handoff_execution": "server",
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return ConversationResponse{}, fmt.Errorf("ошибка сериализации запроса: %v", err)
+	}
+
+	//logger.Debug("SendMultipleFunctionResultsStreaming: отправка %d результатов функций для conversation=%s",
+	//	len(functionResults), conversationID)
+
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, conversationsURL, bytes.NewBuffer(body))
+	if err != nil {
+		return ConversationResponse{}, fmt.Errorf("ошибка создания запроса: %v", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ConversationResponse{}, fmt.Errorf("ошибка HTTP запроса: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyText, _ := io.ReadAll(resp.Body)
+		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(bodyText))
+	}
+
+	return m.readStreamingResponse(resp.Body, onDelta)
+}
+
+// readStreamingResponse читает SSE поток и обрабатывает события
+// Mistral API формат отличается от OpenAI - события приходят как JSON объекты без явного type
+func (m *MistralAgentClient) readStreamingResponse(body io.Reader, onDelta func(string) error) (ConversationResponse, error) {
+	scanner := bufio.NewScanner(body)
+	var result ConversationResponse
+	var outputs []ConversationOutput
+	var textParts []string
+	var usageData *TokenUsage
+	var conversationID string
+
+	// Для накопления function call arguments (по tool_call_id)
+	functionCallsMap := make(map[string]*ConversationOutput)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// SSE формат: "data: {...json...}"
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+
+		data := strings.TrimPrefix(line, "data: ")
+
+		// Пропускаем "[DONE]" маркер
+		if data == "[DONE]" {
+			break
+		}
+
+		// Парсим JSON событие
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			//logger.Warn("readStreamingResponse: ошибка парсинга SSE события: %v, data: %s", err, data)
+			continue
+		}
+
+		// Извлекаем тип события
+		eventType, _ := event["type"].(string)
+
+		// Обрабатываем различные типы событий Mistral API
+		switch eventType {
+		case "message.output.delta":
+			// Текстовая delta - извлекаем из поля "content"
+			if content, ok := event["content"].(string); ok && content != "" {
+				textParts = append(textParts, content)
+				if onDelta != nil {
+					if err := onDelta(content); err != nil {
+						//logger.Warn("readStreamingResponse: ошибка в onDelta callback: %v", err)
+					}
+				}
+			}
+
+		case "conversation.response.started":
+			// Начало ответа - извлекаем conversation_id
+			if convID, ok := event["conversation_id"].(string); ok {
+				conversationID = convID
+			}
+
+		case "conversation.response.done":
+			// Завершение ответа - извлекаем usage
+			if usage, ok := event["usage"].(map[string]interface{}); ok {
+				usageData = &TokenUsage{}
+				if pt, ok := usage["prompt_tokens"].(float64); ok {
+					usageData.PromptTokens = int(pt)
+				}
+				if ct, ok := usage["completion_tokens"].(float64); ok {
+					usageData.CompletionTokens = int(ct)
+				}
+				if tt, ok := usage["total_tokens"].(float64); ok {
+					usageData.TotalTokens = int(tt)
+				}
+			}
+
+		case "conversation.response.error":
+			// Ошибка во время обработки ответа
+			errorMsg := "unknown error"
+			if msg, ok := event["message"].(string); ok {
+				errorMsg = msg
+			}
+			if code, ok := event["code"].(float64); ok {
+				errorMsg = fmt.Sprintf("%s (code: %.0f)", errorMsg, code)
+			}
+			//logger.Warn("readStreamingResponse: conversation.response.error - %s", errorMsg)
+			return ConversationResponse{}, fmt.Errorf("conversation error: %s", errorMsg)
+
+		case "function.call.delta":
+			// Накопление аргументов вызова функции (приходят по частям)
+			toolCallID, _ := event["tool_call_id"].(string)
+			if toolCallID == "" {
+				continue
+			}
+
+			// Получаем или создаем функцию в map
+			funcCall, exists := functionCallsMap[toolCallID]
+			if !exists {
+				funcCall = &ConversationOutput{
+					Type:       "function.call",
+					ToolCallID: toolCallID,
+					Arguments:  "",
+				}
+				// Извлекаем name если есть
+				if name, ok := event["name"].(string); ok {
+					funcCall.Name = name
+				}
+				functionCallsMap[toolCallID] = funcCall
+			}
+
+			// Накапливаем аргументы
+			if argsDelta, ok := event["arguments"].(string); ok && argsDelta != "" {
+				funcCall.Arguments += argsDelta
+			}
+
+		case "function.call":
+			// Вызов функции (если поддерживается в streaming)
+			var output ConversationOutput
+			output.Type = "function.call"
+
+			if name, ok := event["name"].(string); ok {
+				output.Name = name
+			}
+			if toolCallID, ok := event["tool_call_id"].(string); ok {
+				output.ToolCallID = toolCallID
+			}
+			if args, ok := event["arguments"].(string); ok {
+				output.Arguments = args
+			}
+
+			outputs = append(outputs, output)
+
+			// Отправляем событие вызова функции через callback
+			if onDelta != nil {
+				eventJSON, _ := json.Marshal(map[string]interface{}{
+					"type":         "function_call",
+					"name":         output.Name,
+					"tool_call_id": output.ToolCallID,
+					"arguments":    output.Arguments,
+				})
+				if err := onDelta(string(eventJSON)); err != nil {
+					//logger.Warn("readStreamingResponse: ошибка отправки function_call события: %v", err)
+				}
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return ConversationResponse{}, fmt.Errorf("ошибка чтения SSE потока: %w", err)
+	}
+
+	// Добавляем накопленные function calls в outputs
+	for _, funcCall := range functionCallsMap {
+		outputs = append(outputs, *funcCall)
+
+		// Отправляем событие вызова функции через callback
+		if onDelta != nil {
+			eventJSON, _ := json.Marshal(map[string]interface{}{
+				"type":         "function_call",
+				"name":         funcCall.Name,
+				"tool_call_id": funcCall.ToolCallID,
+				"arguments":    funcCall.Arguments,
+			})
+			if err := onDelta(string(eventJSON)); err != nil {
+				//logger.Warn("readStreamingResponse: ошибка отправки function_call события: %v", err)
+			}
+		}
+	}
+
+	// Если outputs пустой, но есть текст - формируем output из накопленного текста
+	if len(outputs) == 0 && len(textParts) > 0 {
+		textContent := strings.Join(textParts, "")
+		contentJSON, _ := json.Marshal(textContent)
+		outputs = append(outputs, ConversationOutput{
+			Type:    "message.output",
+			Content: contentJSON,
+		})
+	}
+
+	// Формируем финальный результат
+	result.Outputs = outputs
+	result.Usage = usageData // Сохраняем информацию о токенах
+	if conversationID != "" {
+		result.ConversationID = conversationID
+	}
+
+	// Отправляем информацию о токенах клиенту в виде JSON события
+	if usageData != nil && onDelta != nil {
+		tokenUsage := map[string]interface{}{
+			"type": "token_usage",
+			"usage": map[string]interface{}{
+				"prompt_tokens":     usageData.PromptTokens,
+				"completion_tokens": usageData.CompletionTokens,
+				"total_tokens":      usageData.TotalTokens,
+			},
+		}
+
+		if usageJSON, err := json.Marshal(tokenUsage); err == nil {
+			if streamErr := onDelta(string(usageJSON)); streamErr != nil {
+				//logger.Warn("readStreamingResponse: ошибка при отправке token_usage: %v", streamErr)
+			}
+		}
+	}
+
+	// Логируем информацию о токенах
+	//if usageData != nil {
+	//	logger.Info("[MISTRAL TOKEN USAGE] Input: %d | Output: %d | Total: %d",
+	//		usageData.PromptTokens, usageData.CompletionTokens, usageData.TotalTokens)
+	//}
+
+	return result, nil
 }
 
 // DeleteFile удаляет файл из Mistral Files API по его ID
@@ -637,12 +838,12 @@ func (m *MistralAgentClient) DeleteFile(fileID string) error {
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			logger.Error("DeleteFile: ошибка закрытия response body: %v", err)
+			//logger.Error("DeleteFile: ошибка закрытия response body: %v", err)
 		}
 	}()
 
 	// Проверяем статус ответа
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != 204 {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		responseBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
 	}
@@ -653,7 +854,7 @@ func (m *MistralAgentClient) DeleteFile(fileID string) error {
 // ParseConversationResponse преобразует ConversationResponse в Response для совместимости
 func ParseConversationResponse(convResp ConversationResponse) Response {
 	if len(convResp.Outputs) == 0 {
-		return Response{}
+		return Response{Usage: convResp.Usage} // Хотя бы Usage передаем
 	}
 
 	// Берём последний output (самый свежий ответ)
@@ -670,10 +871,11 @@ func ParseConversationResponse(convResp ConversationResponse) Response {
 				FuncArgs:   lastOutput.Arguments,
 				ToolCallID: lastOutput.ToolCallID, // Сохраняем для отправки результата
 				HasFunc:    true,
+				Usage:      convResp.Usage, // Передаем информацию о токенах
 			}
 		}
 
-		logger.Warn("ParseConversationResponse: type=function.call, но поле name пустое")
+		//logger.Warn("ParseConversationResponse: type=function.call, но поле name пустое")
 		return Response{}
 	}
 
@@ -712,7 +914,7 @@ func ParseConversationResponse(convResp ConversationResponse) Response {
 		} else {
 			// Content может быть пустым для function.call
 			if lastOutput.Type != "function.call" {
-				logger.Warn("ParseConversationResponse: не удалось распарсить content ни как строку, ни как массив: %v", err)
+				//logger.Warn("ParseConversationResponse: не удалось распарсить content ни как строку, ни как массив: %v", err)
 			}
 		}
 	}
@@ -723,5 +925,6 @@ func ParseConversationResponse(convResp ConversationResponse) Response {
 		Message:         message,
 		HasFunc:         false,
 		GeneratedImages: generatedImages,
+		Usage:           convResp.Usage, // Передаем информацию о токенах
 	}
 }

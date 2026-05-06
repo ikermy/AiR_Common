@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 )
@@ -112,11 +111,11 @@ func isRetryableErrorPattern(err error) bool {
 }
 
 // AskWithRetry выполняет запрос к модели с retry-логикой
-func (s *Start) AskWithRetry(userId uint32, dialogId uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (s *Start) AskWithRetry(userId uint32, respId, dialogID uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var lastErr error
 
 	for attempt := 0; attempt < mode.RetryMaxAttempts; attempt++ {
-		response, err := s.ask(userId, dialogId, arrAsk, files...)
+		response, err := s.ask(userId, respId, dialogID, arrAsk, files...)
 
 		if err == nil {
 			return response, nil
@@ -126,7 +125,7 @@ func (s *Start) AskWithRetry(userId uint32, dialogId uint64, arrAsk []string, fi
 
 		// Критическая ошибка — немедленный возврат
 		if isFatalErrorPattern(err) {
-			logger.Warn("Критическая ошибка для диалога %d: %v", dialogId, err)
+			//logger.Warn("Критическая ошибка для диалога %d: %v", dialogID, err)
 			return response, &FatalError{Err: fmt.Errorf("критическая ошибка: %w", err)}
 		}
 
@@ -137,7 +136,7 @@ func (s *Start) AskWithRetry(userId uint32, dialogId uint64, arrAsk []string, fi
 			}
 
 			delay := time.Duration(mode.RetryBaseDelay) * time.Second * time.Duration(math.Pow(2, float64(attempt)))
-			logger.Debug("Retry attempt %d/%d for dialog %d, waiting %v", attempt+1, mode.RetryMaxAttempts, dialogId, delay)
+			//logger.Debug("Retry attempt %d/%d for dialog %d, waiting %v", attempt+1, mode.RetryMaxAttempts, dialogID, delay)
 
 			select {
 			case <-s.ctx.Done():
@@ -148,11 +147,11 @@ func (s *Start) AskWithRetry(userId uint32, dialogId uint64, arrAsk []string, fi
 		}
 
 		// Некритическая ошибка (400, 404, 429, context canceled и др.) — сразу возвращаем
-		logger.Debug("Non-critical error for dialog %d: %v", dialogId, err)
+		//logger.Debug("Non-critical error for dialog %d: %v", dialogID, err)
 		return response, &NonCriticalError{Err: err}
 	}
 
 	// Все retry исчерпаны
-	logger.Warn("Все %d попыток неуспешны для диалога %d", mode.RetryMaxAttempts, dialogId)
+	//logger.Warn("Все %d попыток неуспешны для диалога %d", mode.RetryMaxAttempts, dialogID)
 	return model.AssistResponse{}, &NonCriticalError{Err: fmt.Errorf("все %d попыток неуспешны: %w", mode.RetryMaxAttempts, lastErr)}
 }

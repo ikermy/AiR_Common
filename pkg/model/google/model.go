@@ -2,6 +2,7 @@ package google
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -9,7 +10,6 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
@@ -28,7 +28,8 @@ type GoogleModel struct {
 	db             DB
 	responders     sync.Map // respId -> *GoogleRespModel
 	waitChannels   sync.Map
-	dialogCache    sync.Map // dialogId -> *DialogCache (локальный кэш истории диалогов)
+	dialogCache    sync.Map // dialogID -> *DialogCache (локальный кэш истории диалогов)
+	embeddingCache sync.Map // hash(text) -> *CachedEmbedding (кэш эмбеддингов для RAG)
 	UserModelTTl   time.Duration
 	actionHandler  model.ActionHandler
 	universalModel *create.UniversalModel // Для доступа к GetRealUserID
@@ -41,13 +42,24 @@ type GoogleModel struct {
 type GoogleRespModel struct {
 	Ctx      context.Context
 	Cancel   context.CancelFunc
-	Chan     *model.Ch // Канал для этого респондента
+	Chan     *model.Ch            // Канал для этого респондента (основной, deprecated - используйте ChanMap)
+	ChanMap  map[uint64]*model.Ch // Map каналов для поддержки множественных dialogID (унификация с OpenAI)
 	TTL      time.Time
 	Assist   model.Assistant
 	RespName string
 	Services Services
 	// Кэш конфигурации агента для быстрого доступа
 	AgentConfig *GoogleAgentConfig
+}
+
+// GetChannel реализует интерфейс model.ChannelProvider
+func (r *GoogleRespModel) GetChannel() *model.Ch {
+	return r.Chan
+}
+
+// GetChannelMap реализует интерфейс model.ChannelProvider
+func (r *GoogleRespModel) GetChannelMap() map[uint64]*model.Ch {
+	return r.ChanMap
 }
 
 // GoogleAgentConfig хранит конфигурацию агента для Google модели
@@ -68,7 +80,7 @@ type GoogleAgentConfig struct {
 	WebSearch  bool   `json:"web_search"`  // Веб-поиск (google_search)
 	Video      bool   `json:"video"`       // Генерация видео (Google Veo)
 	Haunter    bool   `json:"haunter"`     // Модель используется для поиска лидов
-	Search     bool   `json:"search"`      // Поиск по векторному хранилищу (эмбеддингам в MariaDB)
+	VSearch    bool   `json:"search"`      // Поиск по векторному хранилищу (эмбеддингам в MariaDB)
 	Operator   bool   `json:"operator"`    // Вызов оператора включён
 	MetaAction string `json:"meta_action"` // Целевое действие модели
 
@@ -81,9 +93,16 @@ type GoogleAgentConfig struct {
 
 // DialogCache кэширует историю диалога в памяти для быстрого доступа
 type DialogCache struct {
-	DialogId uint64
+	dialogID uint64
 	Contents []GoogleContent // История диалога в формате Google Gemini
-	ExpireAt time.Time       // Время истечения кэша (вычисляется как time.Now() + GoogleDialogLiveTimeout)
+	ExpireAt time.Time       // Время истечения кэша (вычисляется как time.Now() + DialogLiveTimeout)
+}
+
+// CachedEmbedding кэширует результаты GenerateEmbedding для избежания повторных API вызовов
+type CachedEmbedding struct {
+	Embedding []float32 // Векторное представление текста (768 dimensions для gemini-embedding-001)
+	ExpireAt  time.Time // Время истечения кэша (TTL 5 минут)
+	Hash      string    // SHA256 hash текста (первые 16 символов для ключа)
 }
 
 // GoogleContent представляет сообщение в формате Google Gemini
@@ -166,30 +185,6 @@ func (m *GoogleModel) NewMessage(operator model.Operator, msgType string, conten
 	return msg
 }
 
-// GetOrCreateResponder получает или создаёт респондента для dialogId
-func (m *GoogleModel) GetOrCreateResponder(dialogId uint64, userId uint32) (*GoogleRespModel, error) {
-	// Создаём нового респондента
-	// Примечание: сохранение в responders происходит в GetOrSetRespGPT с правильным ключом (respId)
-	ctx, cancel := context.WithCancel(m.ctx)
-
-	respModel := &GoogleRespModel{
-		Ctx:      ctx,
-		Cancel:   cancel,
-		Chan:     nil, // Будет инициализирован в GetOrSetRespGPT
-		TTL:      time.Now().Add(m.UserModelTTl),
-		RespName: fmt.Sprintf("google-resp-%d", dialogId),
-	}
-
-	// Загружаем конфигурацию агента из БД
-	if err := m.loadAgentConfig(userId, respModel); err != nil {
-		return nil, fmt.Errorf("ошибка загрузки конфигурации агента: %w", err)
-	}
-
-	logger.Debug("Создан новый Google респондент для dialogId %d", dialogId)
-
-	return respModel, nil
-}
-
 // loadAgentConfig загружает конфигурацию агента для Google модели
 // Пытается загрузить из AllIds, если пусто - создает конфигурацию по умолчанию
 // Также проверяет наличие эмбеддингов в таблице vector_embeddings
@@ -223,24 +218,42 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 	// Загружаем полные данные модели из БД для получения всех параметров
 	compressedData, _, err := m.db.ReadUserModelByProvider(userId, create.ProviderGoogle)
 	if err != nil {
-		logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, userId)
+		//logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, userId)
 	} else if compressedData != nil {
-		// Используем функцию из пакета db для распаковки и извлечения всех параметров
-		metaAction, _, _, image, webSearch, video, haunter, search, operator, s3, interpreter, calendar, sheets, extractErr := comdb.DecompressAndExtractMetadata(compressedData)
-		if extractErr != nil {
-			logger.Warn("Ошибка распаковки параметров модели: %v", extractErr, userId)
+		// Распаковываем данные модели чтобы получить Prompt (SystemInstruction)
+		if m.universalModel != nil {
+			modelData, decompressErr := m.universalModel.DecompressModelData(compressedData, nil)
+			if decompressErr != nil {
+				//logger.Warn("Ошибка распаковки данных модели: %v", decompressErr, userId)
+			} else {
+				// КРИТИЧЕСКИ ВАЖНО: Загружаем SystemInstruction из Prompt
+				if modelData.Prompt != "" {
+					agentConfig.SystemInstruction = map[string]interface{}{
+						"parts": []map[string]interface{}{
+							{
+								"text": modelData.Prompt,
+							},
+						},
+					}
+					//} else {
+					//	logger.Warn("Prompt пустой в БД!", userId)
+				}
+
+				// Загружаем остальные параметры
+				agentConfig.Image = modelData.Image
+				agentConfig.WebSearch = modelData.WebSearch
+				agentConfig.Video = modelData.Video
+				agentConfig.Haunter = modelData.Haunter
+				agentConfig.VSearch = modelData.Search
+				agentConfig.Operator = modelData.Operator
+				agentConfig.MetaAction = modelData.MetaAction
+				agentConfig.S3 = modelData.S3
+				agentConfig.Interpreter = modelData.Interpreter
+				agentConfig.HasCalendar = modelData.GOAuth.Calendar
+				agentConfig.HasSheets = modelData.GOAuth.Sheets
+			}
 		} else {
-			agentConfig.Image = image
-			agentConfig.WebSearch = webSearch
-			agentConfig.Video = video
-			agentConfig.Haunter = haunter
-			agentConfig.Search = search
-			agentConfig.Operator = operator
-			agentConfig.MetaAction = metaAction
-			agentConfig.S3 = s3
-			agentConfig.Interpreter = interpreter
-			agentConfig.HasCalendar = calendar
-			agentConfig.HasSheets = sheets
+			return fmt.Errorf("UniversalModel не установлен, невозможно загрузить данные модели для пользователя %d", userId)
 		}
 	}
 
@@ -254,23 +267,14 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 
 	// Получаем real_user_id для использования в функциях
 	// КРИТИЧЕСКИ ВАЖНО: без real_user_id функции S3, Calendar и Sheets работать не будут!
-	var realUserID uint64
 	var hasRealUserID bool
 
-	logger.Debug("[USER:%d] Проверка universalModel: установлен=%v", userId, m.universalModel != nil)
-
-	if m.universalModel != nil {
-		var err error
-		realUserID, err = m.universalModel.GetRealUserID(userId)
-		if err != nil {
-			logger.Error("Не удалось получить real_user_id для userId=%d: %v. Функции S3, Calendar и Sheets будут ОТКЛЮЧЕНЫ!", userId, err, userId)
-			hasRealUserID = false
-		} else {
-			hasRealUserID = true
-		}
-	} else {
-		logger.Warn("UniversalModel не установлен для Google модели! Функции S3, Calendar и Sheets будут ОТКЛЮЧЕНЫ!", userId)
+	realUserID, err := m.universalModel.GetRealUserID(userId)
+	if err != nil {
+		//logger.Error("Не удалось получить real_user_id для userId=%d: %v. Функции S3, Calendar и Sheets будут ОТКЛЮЧЕНЫ!", userId, err, userId)
 		hasRealUserID = false
+	} else {
+		hasRealUserID = true
 	}
 
 	// Формируем function_declarations для различных сервисов
@@ -576,14 +580,14 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 
 	// Проверяем наличие эмбеддингов в таблице vector_embeddings
 	// Это важно для Google моделей, т.к. эмбеддинги хранятся в отдельной таблице
-	// ВАЖНО: Загружаем эмбеддинги ТОЛЬКО если флаг Search включен
-	if agentConfig.Search {
-		embeddings, err := m.db.ListModelEmbeddings(found.ModelId)
+	// ВАЖНО: Загружаем эмбеддинги ТОЛЬКО если флаг VSearch включен
+	if agentConfig.VSearch {
+		embeddings, err := m.db.ListModelEmbeddings(found.ModelId, create.ProviderGoogle)
 		if err != nil {
-			logger.Warn("Ошибка получения эмбеддингов для modelId=%d: %v", found.ModelId, err, userId)
+			//logger.Warn("Ошибка получения эмбеддингов для modelId=%d: %v", found.ModelId, err, userId)
 		} else if len(embeddings) > 0 {
 			agentConfig.HasVector = true
-			logger.Debug("Найдено %d эмбеддингов в vector_embeddings для modelId=%d", len(embeddings), found.ModelId, userId)
+			//logger.Debug("Найдено %d эмбеддингов в vector_embeddings для modelId=%d", len(embeddings), found.ModelId, userId)
 
 			// Извлекаем уникальные doc_id как VectorIds
 			vectorIdsMap := make(map[string]bool)
@@ -595,20 +599,19 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 				agentConfig.VectorIds = append(agentConfig.VectorIds, id)
 			}
 		} else {
-			logger.Debug("Search включен для modelId=%d, но эмбеддинги отсутствуют", found.ModelId, userId)
+			//logger.Debug("VSearch включен для modelId=%d, но эмбеддинги отсутствуют", found.ModelId, userId)
 		}
-	} else {
-		logger.Debug("Search отключен для modelId=%d, пропускаем загрузку эмбеддингов", found.ModelId, userId)
+		//} else {
+		//	logger.Debug("VSearch отключен для modelId=%d, пропускаем загрузку эмбеддингов", found.ModelId, userId)
 	}
 
 	respModel.AgentConfig = &agentConfig
 	respModel.Assist.AssistId = found.AssistId
 
 	// Логируем загруженную конфигурацию для отладки
-	logger.Debug("[USER:%d] Загружена конфигурация Google агента: model=%s, tools=%d, WebSearch=%v, S3=%v, Calendar=%v, Sheets=%v, Interpreter=%v, Search=%v, hasVector=%v",
-		userId, agentConfig.ModelName, len(agentConfig.Tools),
-		agentConfig.WebSearch, agentConfig.S3, agentConfig.HasCalendar, agentConfig.HasSheets,
-		agentConfig.Interpreter, agentConfig.Search, agentConfig.HasVector)
+	//logger.Debug("Загружена конфигурация Google агента: model=%s, tools=%d, WebSearch=%v, S3=%v, Calendar=%v, Sheets=%v, Interpreter=%v, VSearch=%v, hasVector=%v",
+	//	agentConfig.ModelName, len(agentConfig.Tools), agentConfig.WebSearch, agentConfig.S3, agentConfig.HasCalendar, agentConfig.HasSheets,
+	//	agentConfig.Interpreter, agentConfig.VSearch, agentConfig.HasVector, userId)
 
 	return nil
 }
@@ -626,7 +629,7 @@ func (m *GoogleModel) CleanupExpiredResponders() {
 			}
 
 			m.responders.Delete(respId)
-			logger.Debug("Удален неактивный Google респондент для respId %d", respId)
+			//logger.Debug("Удален неактивный Google респондент для respId %d", respId)
 		}
 
 		return true
@@ -634,26 +637,32 @@ func (m *GoogleModel) CleanupExpiredResponders() {
 }
 
 // Shutdown корректно завершает работу модели
-func (m *GoogleModel) Shutdown() {
+func (m *GoogleModel) Shutdown(shutCh chan<- map[string]any) {
 	m.shutdownOnce.Do(func() {
-		logger.Infoln("Начало shutdown для GoogleModel")
-
-		// Останавливаем все респонденты
-		m.responders.Range(func(key, value interface{}) bool {
-			respModel := value.(*GoogleRespModel)
-			if respModel.Cancel != nil {
-				respModel.Cancel()
-			}
-			return true
-		})
-
-		// Отменяем главный контекст
-		if m.cancel != nil {
-			m.cancel()
-		}
-
-		logger.Infoln("GoogleModel shutdown завершен")
+		shutCh <- map[string]any{"msg": "начало shutdown",
+			"mod":  "GoogleModel",
+			"type": 0, // 0 - Info
+			"uid":  0}
 	})
+
+	// Останавливаем все респонденты
+	m.responders.Range(func(key, value interface{}) bool {
+		respModel := value.(*GoogleRespModel)
+		if respModel.Cancel != nil {
+			respModel.Cancel()
+		}
+		return true
+	})
+
+	// Отменяем главный контекст
+	if m.cancel != nil {
+		m.cancel()
+	}
+
+	shutCh <- map[string]any{"msg": "shutdown завершен",
+		"mod":  "GoogleModel",
+		"type": 0, // 0 - Info
+		"uid":  0}
 }
 
 // TranscribeAudio транскрибирует аудио в текст (обёртка для клиента)
@@ -675,45 +684,68 @@ func (m *GoogleModel) GenerateVideo(userId uint32, prompt string, aspectRatio st
 }
 
 // GetOrSetRespGPT получает или создаёт респондента (адаптер для совместимости с Inter)
-func (m *GoogleModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId uint64, respName string) (*model.RespModel, error) {
+func (m *GoogleModel) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64, respName string) (*model.RespModel, error) {
 	// Проверяем кэш по respId (как в OpenAI версии)
 	if val, ok := m.responders.Load(respId); ok {
 		respModel := val.(*GoogleRespModel)
 		respModel.TTL = time.Now().Add(m.UserModelTTl) // Обновляем TTL
 		respModel.Assist = assist
 		respModel.RespName = respName
+
+		// ВАЖНО: Проверяем наличие канала для данного dialogID
+		if respModel.ChanMap == nil {
+			respModel.ChanMap = make(map[uint64]*model.Ch)
+		}
+
+		// Если канал для этого dialogID не существует - создаем новый
+		if _, exists := respModel.ChanMap[dialogID]; !exists {
+			// Создаем новый канал для нового диалога
+			newCh := &model.Ch{
+				DialogID: dialogID,
+				TxCh:     make(chan model.Message, create.TxChanBuffer), // Буфер как в CreateBaseResponder
+				RxCh:     make(chan model.Message, create.RxChanBuffer),
+			}
+			respModel.ChanMap[dialogID] = newCh
+
+			// Обновляем основной Chan для совместимости (deprecated)
+			respModel.Chan = newCh
+
+			//logger.Debug("Создан новый канал для существующего респондента: dialogID=%d, respId=%d, буфер TxCh=%d",
+			//	dialogID, respId, cap(newCh.TxCh), assist.UserId)
+		}
+
 		// Конвертируем в model.RespModel
 		return m.convertToModelRespModel(respModel), nil
 	}
 
-	// Google использует свою структуру GoogleRespModel
-	// Для совместимости создаём адаптер
-	googleResp, err := m.GetOrCreateResponder(dialogId, assist.UserId)
-	if err != nil {
-		return nil, err
-	}
+	// Используем helper-функцию для создания базовых компонентов
+	ctx, cancel, ch, ttl := model.CreateBaseResponder(m.ctx, m.UserModelTTl, assist, dialogID, respName)
 
-	// Инициализируем канал с правильной структурой
-	googleResp.Chan = &model.Ch{
-		TxCh:     make(chan model.Message, 1),
-		RxCh:     make(chan model.Message, 1),
-		UserId:   assist.UserId,
-		DialogId: dialogId,
+	googleResp := &GoogleRespModel{
+		Ctx:      ctx,
+		Cancel:   cancel,
+		Chan:     ch,                                 // Deprecated: для обратной совместимости
+		ChanMap:  map[uint64]*model.Ch{dialogID: ch}, // Унифицированный map каналов
+		TTL:      ttl,
+		Assist:   assist,
 		RespName: respName,
+		Services: Services{},
 	}
 
-	googleResp.Assist = assist
-	googleResp.RespName = respName
+	// Загружаем конфигурацию агента из БД
+	if err := m.loadAgentConfig(assist.UserId, googleResp); err != nil {
+		cancel() // Очищаем ресурсы при ошибке
+		return nil, fmt.Errorf("ошибка загрузки конфигурации агента: %w", err)
+	}
 
 	// Сохраняем по respId (как в OpenAI версии)
 	m.responders.Store(respId, googleResp)
 
-	// Сигнализируем об готовности канала для ожидающих горутин
-	if waitChIface, exists := m.waitChannels.Load(respId); exists {
-		waitCh := waitChIface.(chan struct{})
-		close(waitCh)
-		m.waitChannels.Delete(respId)
-	}
+	//logger.Debug("Создан новый Google респондент для dialogID %d, respId=%d с каналом TxCh (буфер=%d)",
+	//	dialogID, respId, cap(ch.TxCh), assist.UserId)
+
+	// Уведомляем ожидающие горутины о создании респондента
+	model.NotifyWaitChannels(&m.waitChannels, respId)
 
 	// Конвертируем в model.RespModel
 	return m.convertToModelRespModel(googleResp), nil
@@ -721,55 +753,41 @@ func (m *GoogleModel) GetOrSetRespGPT(assist model.Assistant, dialogId, respId u
 
 // GetCh получает канал по respId, ждёт его создания если необходимо
 func (m *GoogleModel) GetCh(respId uint64) (*model.Ch, error) {
-	waitChInterface, exists := m.waitChannels.Load(respId)
-	var waitCh chan struct{}
-
-	if !exists {
-		waitCh = make(chan struct{})
-		m.waitChannels.Store(respId, waitCh)
-	} else {
-		waitCh = waitChInterface.(chan struct{})
-	}
-
-	userCh, err := m.getTryCh(respId)
-	if err == nil {
-		return userCh, nil
-	}
-
-	select {
-	case <-waitCh:
-		return m.getTryCh(respId)
-	case <-m.ctx.Done():
-		return nil, fmt.Errorf("отменено контекстом ожидание канала для responderId %d", respId)
-	case <-time.After(1 * time.Second):
-		return nil, fmt.Errorf("тайм-аут при ожидании канала для responderId %d", respId)
-	}
+	return model.GetChannel(
+		respId,
+		m.ctx,
+		&m.waitChannels,
+		&m.responders,
+		func(val interface{}) (*model.Ch, error) {
+			respModel := val.(*GoogleRespModel)
+			return model.ExtractChannelWithPriority(respModel)
+		},
+	)
 }
 
 func (m *GoogleModel) getTryCh(respId uint64) (*model.Ch, error) {
-	val, ok := m.responders.Load(respId)
-	if !ok {
-		return nil, fmt.Errorf("RespModel не найден для respId %d", respId)
-	}
-
-	respModel := val.(*GoogleRespModel)
-	if respModel.Chan == nil {
-		return nil, fmt.Errorf("канал не найден для respId %d", respId)
-	}
-
-	return respModel.Chan, nil
+	return model.GetChannel(
+		respId,
+		m.ctx,
+		&m.waitChannels,
+		&m.responders,
+		func(val interface{}) (*model.Ch, error) {
+			respModel := val.(*GoogleRespModel)
+			return model.ExtractChannelWithPriority(respModel)
+		},
+	)
 }
 
-// GetRespIdByDialogId получает respId по dialogId
-func (m *GoogleModel) GetRespIdByDialogId(dialogId uint64) (uint64, error) {
-	// Ищем responder по dialogId в Chan
+// GetRespIdBydialogID получает respId по dialogID
+func (m *GoogleModel) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
+	// Ищем responder по dialogID в Chan
 	var foundRespId uint64
 	found := false
 
 	m.responders.Range(func(key, value interface{}) bool {
 		respModel := value.(*GoogleRespModel)
 
-		if respModel.Chan != nil && respModel.Chan.DialogId == dialogId {
+		if respModel.Chan != nil && respModel.Chan.DialogID == dialogID {
 			respId, ok := key.(uint64)
 			if ok {
 				foundRespId = respId
@@ -781,7 +799,7 @@ func (m *GoogleModel) GetRespIdByDialogId(dialogId uint64) (uint64, error) {
 	})
 
 	if !found {
-		return 0, fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
+		return 0, fmt.Errorf("RespModel не найден для dialogID %d", dialogID)
 	}
 
 	return foundRespId, nil
@@ -794,9 +812,9 @@ func (m *GoogleModel) SaveAllContextDuringExit() {
 }
 
 // CleanDialogData очищает данные диалога
-func (m *GoogleModel) CleanDialogData(dialogId uint64) {
-	// Получаем respId по dialogId
-	respId, err := m.GetRespIdByDialogId(dialogId)
+func (m *GoogleModel) CleanDialogData(dialogID uint64) {
+	// Получаем respId по dialogID
+	respId, err := m.GetRespIdBydialogID(dialogID)
 	if err != nil {
 		return
 	}
@@ -808,7 +826,7 @@ func (m *GoogleModel) CleanDialogData(dialogId uint64) {
 			respModel.Cancel()
 		}
 		m.responders.Delete(respId)
-		logger.Info("Очищены данные диалога %d (respId: %d)", dialogId, respId)
+		//logger.Debug("Очищены данные диалога %d (respId: %d)", dialogID, respId)
 	}
 }
 
@@ -823,7 +841,7 @@ func (m *GoogleModel) CleanUp() {
 			m.CleanupExpiredResponders()
 			m.cleanupExpiredWaitChannels()
 		case <-m.ctx.Done():
-			logger.Info("GoogleModel: CleanUp остановлен")
+			//logger.Info("GoogleModel: CleanUp остановлен")
 			return
 		}
 	}
@@ -837,37 +855,35 @@ func (m *GoogleModel) cleanupExpiredWaitChannels() {
 		// Удаляем такой waitCh чтобы не было утечек памяти
 		if _, ok := m.responders.Load(respId); !ok {
 			m.waitChannels.Delete(respId)
-			logger.Debug("Удален заблокированный waitCh для respId %d", respId)
+			//logger.Debug("Удален заблокированный waitCh для respId %d", respId)
 		}
 		return true
 	})
 }
 
 // convertToModelRespModel конвертирует GoogleRespModel в model.RespModel
-// Создает map с одним каналом для совместимости с интерфейсом model.RespModel
+// Использует ChanMap для унификации с OpenAI
 func (m *GoogleModel) convertToModelRespModel(internal *GoogleRespModel) *model.RespModel {
-	// Создаем map с одним каналом для совместимости
-	chanMap := make(map[uint64]*model.Ch)
-	if internal.Chan != nil {
-		chanMap[internal.Chan.DialogId] = internal.Chan
-	}
-
 	return &model.RespModel{
 		Ctx:      internal.Ctx,
 		Cancel:   internal.Cancel,
-		Chan:     chanMap,
+		Chan:     internal.ChanMap, // Используем унифицированный ChanMap
 		TTL:      internal.TTL,
 		Assist:   internal.Assist,
 		RespName: internal.RespName,
+		Services: model.Services{
+			Listener:   &internal.Services.Listener,
+			Respondent: &internal.Services.Respondent,
+		},
 	}
 }
 
 // getOrCreateDialogCache получает или создаёт кэш диалога с обновлением ExpireAt
-func (m *GoogleModel) getOrCreateDialogCache(dialogId uint64) *DialogCache {
-	expireAt := time.Now().Add(create.GoogleDialogLiveTimeout)
+func (m *GoogleModel) getOrCreateDialogCache(dialogID uint64) *DialogCache {
+	expireAt := time.Now().Add(create.DialogLiveTimeout)
 
 	// Пытаемся получить существующий кэш
-	if cacheIface, ok := m.dialogCache.Load(dialogId); ok {
+	if cacheIface, ok := m.dialogCache.Load(dialogID); ok {
 		cache := cacheIface.(*DialogCache)
 		cache.ExpireAt = expireAt // Обновляем время истечения
 		return cache
@@ -875,50 +891,95 @@ func (m *GoogleModel) getOrCreateDialogCache(dialogId uint64) *DialogCache {
 
 	// Создаём новый кэш
 	cache := &DialogCache{
-		DialogId: dialogId,
+		dialogID: dialogID,
 		Contents: []GoogleContent{},
 		ExpireAt: expireAt,
 	}
 
-	m.dialogCache.Store(dialogId, cache)
+	m.dialogCache.Store(dialogID, cache)
 
 	return cache
 }
 
 // addMessageToCache добавляет сообщение в кэш диалога с ограничением по количеству
-// Если превышен лимит GoogleDialogHistoryLimit, удаляет старые сообщения
-func (m *GoogleModel) addMessageToCache(dialogId uint64, content GoogleContent) {
-	cache := m.getOrCreateDialogCache(dialogId)
+// Если превышен лимит DialogHistoryLimit, удаляет старые сообщения
+func (m *GoogleModel) addMessageToCache(dialogID uint64, content GoogleContent) {
+	cache := m.getOrCreateDialogCache(dialogID)
 	cache.Contents = append(cache.Contents, content)
 
-	// Ограничиваем количество сообщений до GoogleDialogHistoryLimit
-	maxMessages := int(create.GoogleDialogHistoryLimit)
+	// Ограничиваем количество сообщений до DialogHistoryLimit
+	maxMessages := int(create.DialogHistoryLimit)
 	if len(cache.Contents) > maxMessages {
 		// Удаляем старые сообщения, оставляя только последние maxMessages
 		cache.Contents = cache.Contents[len(cache.Contents)-maxMessages:]
 		//logger.Debug("Достигнут лимит сообщений в кэше диалога %d (%d), удалены старые сообщения",
-		//	dialogId, maxMessages)
+		//	dialogID, maxMessages)
 	}
 }
 
 // getDialogHistoryFromCache получает историю диалога из кэша
-func (m *GoogleModel) getDialogHistoryFromCache(dialogId uint64) ([]GoogleContent, bool) {
-	if cacheIface, ok := m.dialogCache.Load(dialogId); ok {
+func (m *GoogleModel) getDialogHistoryFromCache(dialogID uint64) ([]GoogleContent, bool) {
+	if cacheIface, ok := m.dialogCache.Load(dialogID); ok {
 		cache := cacheIface.(*DialogCache)
 
 		// Копируем содержимое для безопасности (поскольку Contents может быть изменён в другой горутине)
 		contents := make([]GoogleContent, len(cache.Contents))
 		copy(contents, cache.Contents)
 
-		//logger.Debug("Получена история из кэша диалога %d, сообщений: %d", dialogId, len(contents))
+		//logger.Debug("Получена история из кэша диалога %d, сообщений: %d", dialogID, len(contents))
 		return contents, true
 	}
 
-	//logger.Debug("Кэш не найден для диалога %d", dialogId)
+	//logger.Debug("Кэш не найден для диалога %d", dialogID)
 	return nil, false
 }
 
-// periodicFlush удаляет из кэша диалоги с истёкшим ExpireAt
+// getCachedEmbedding проверяет кэш эмбеддингов и возвращает закэшированный результат
+func (m *GoogleModel) getCachedEmbedding(text string) ([]float32, bool) {
+	hash := m.hashText(text)
+
+	if cacheIface, ok := m.embeddingCache.Load(hash); ok {
+		cached := cacheIface.(*CachedEmbedding)
+
+		// Проверяем не истёк ли кэш
+		if time.Now().Before(cached.ExpireAt) {
+			return cached.Embedding, true
+		}
+
+		// Кэш истёк - удаляем
+		m.embeddingCache.Delete(hash)
+	}
+
+	return nil, false
+}
+
+// setCachedEmbedding сохраняет эмбеддинг в кэш с TTL 5 минут
+func (m *GoogleModel) setCachedEmbedding(text string, embedding []float32) {
+	hash := m.hashText(text)
+
+	cached := &CachedEmbedding{
+		Embedding: embedding,
+		ExpireAt:  time.Now().Add(5 * time.Minute),
+		Hash:      hash,
+	}
+
+	m.embeddingCache.Store(hash, cached)
+}
+
+// hashText создаёт короткий hash текста (первые 16 символов SHA256)
+func (m *GoogleModel) hashText(text string) string {
+	h := sha256.New()
+	h.Write([]byte(text))
+	fullHash := fmt.Sprintf("%x", h.Sum(nil))
+
+	// Возвращаем первые 16 символов (риск коллизий исчезающе мал)
+	if len(fullHash) > 16 {
+		return fullHash[:16]
+	}
+	return fullHash
+}
+
+// periodicFlush удаляет из кэша диалоги с истёкшим ExpireAt и истекшие респонденты
 func (m *GoogleModel) periodicFlush() {
 	ticker := time.NewTicker(30 * time.Second) // Проверяем каждые 30 секунд
 	defer ticker.Stop()
@@ -927,23 +988,72 @@ func (m *GoogleModel) periodicFlush() {
 		select {
 		case <-ticker.C:
 			now := time.Now()
-			expiredCount := 0
+			expiredDialogCount := 0
+			expiredRespCount := 0
+			expiredEmbeddingCount := 0
 
+			// Очистка кэша диалогов
 			m.dialogCache.Range(func(key, value interface{}) bool {
-				dialogId := key.(uint64)
+				dialogID := key.(uint64)
 				cache := value.(*DialogCache)
 
 				if now.After(cache.ExpireAt) {
-					m.dialogCache.Delete(dialogId)
-					//logger.Debug("Удален кэш диалога %d из-за истечения ExpireAt", dialogId)
-					expiredCount++
+					m.dialogCache.Delete(dialogID)
+					//logger.Debug("Удален кэш диалога %d из-за истечения ExpireAt", dialogID)
+					expiredDialogCount++
 				}
 
 				return true
 			})
 
-			if expiredCount > 0 {
-				//logger.Debug("periodicFlush: удалено %d кэшей диалогов", expiredCount)
+			// Очистка кэша эмбеддингов
+			m.embeddingCache.Range(func(key, value interface{}) bool {
+				cached := value.(*CachedEmbedding)
+
+				if now.After(cached.ExpireAt) {
+					m.embeddingCache.Delete(key)
+					expiredEmbeddingCount++
+				}
+
+				return true
+			})
+
+			// Очистка истекших респондентов (аналогично OpenAI)
+			m.responders.Range(func(key, value interface{}) bool {
+				responder := value.(*GoogleRespModel)
+				ttlExpired := responder.TTL.Before(now)
+
+				respId, ok := key.(uint64)
+				if !ok {
+					//logger.Error("Некорректный тип ключа responders: %T, ожидался uint64", key)
+					return true
+				}
+
+				if ttlExpired {
+					// Отменяем контекст респондента
+					if responder.Cancel != nil {
+						responder.Cancel()
+					}
+
+					// Закрываем канал респондента
+					// ВАЖНО: В Google Chan - это *model.Ch (одиночный канал), а не map[uint64]*model.Ch
+					if responder.Chan != nil {
+						// Канал закроется автоматически при отмене контекста через Cancel()
+						// Дополнительное закрытие не требуется (может вызвать панику)
+					}
+
+					// Удаляем респондента
+					m.responders.Delete(respId)
+					expiredRespCount++
+					//logger.Info("Удален просроченный GoogleRespModel для respId=%d (TTL истёк)", respId)
+				}
+
+				return true
+			})
+
+			if expiredDialogCount > 0 || expiredRespCount > 0 || expiredEmbeddingCount > 0 {
+				//logger.Debug("periodicFlush: удалено %d кэшей диалогов, %d респондентов, %d эмбеддингов",
+				//	expiredDialogCount, expiredRespCount, expiredEmbeddingCount)
 			}
 
 		case <-m.ctx.Done():
@@ -953,8 +1063,18 @@ func (m *GoogleModel) periodicFlush() {
 	}
 }
 
-// clearDialogCache очищает кэш конкретного диалога
-func (m *GoogleModel) clearDialogCache(dialogId uint64) {
-	m.dialogCache.Delete(dialogId)
-	//logger.Debug("Очищен кэш диалога %d", dialogId)
+// InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
+func (m *GoogleModel) InvalidateUserAgentConfigCache(userId uint32) {
+	var invalidatedCount int
+	m.responders.Range(func(key, value interface{}) bool {
+		respModel := value.(*GoogleRespModel)
+		if respModel.Assist.UserId == userId {
+			m.responders.Delete(key)
+			invalidatedCount++
+		}
+		return true
+	})
+	if invalidatedCount > 0 {
+		//logger.Debug("Инвалидирован кэш конфигурации модели для userId=%d (удалено %d респондентов)", userId, invalidatedCount)
+	}
 }

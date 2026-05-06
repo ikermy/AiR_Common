@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.41.9"
-git tag -a v1.41.9 -m "logger close"
+git commit -m "v1.42.0"
+git tag -a v1.42.0 -m "test"
 git push origin master
-git push origin v1.41.9
+git push origin v1.42.0

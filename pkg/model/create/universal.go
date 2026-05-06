@@ -12,15 +12,52 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/conf"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
-	"github.com/sashabaranov/go-openai"
 )
 
+//var OpenAIExtandingCacheModels = []string{
+//	"gpt-5.2", "gpt-5.1-codex-max", "gpt-5.1", "gpt-5.1-codex",
+//	"gpt-5.1-codex-mini", "gpt-5.1-chat-latest", "gpt-5", "gpt-5-codex", "gpt-4.1",
+//}
+
+var OpenAIExtandingCacheModels = []string{
+	"gpt-5.5-instant",
+	"gpt-5.5-pro",
+	"gpt-5.4-pro",
+	"gpt-5.4-mini",
+	"gpt-5.3-codex",
+	"gpt-5-mini",
+	"gpt-4.1",
+	"gpt-4.1-mini",
+}
+
 const (
-	GoogleDialogHistoryLimit = uint8(20)         // Максимальное количество сообщений в истории диалога для Google Gemini
-	GoogleDialogLiveTimeout  = 180 * time.Second // Тайм-аут времени жизни диалога Google Gemini до сброса локальной истории сообщений
+	// RealtimeDefaultModel фиксированная realtime-модель OpenAI
+	RealtimeDefaultModel = "gpt-realtime-mini"
+	//RealtimeDefaultModel = "gpt-realtime"
+
+	// RealtimeBaseURL базовый WebSocket URL для OpenAI Realtime API
+	RealtimeBaseURL = "wss://api.openai.com/v1/realtime"
+
+	// Параметры сессии Realtime API
+	RealtimeTemperature  = 0.7
+	RealtimeMaxOutTokens = 500
+
+	GoogleVideoModel = "veo-3.1-fast-generate-preview"
+	GoogleAudioModel = "gemini-2.5-flash-lite"
+
+	DialogHistoryLimit     = uint8(20)         // Максимальное количество сообщений в истории диалога для Google Gemini
+	DialogLiveTimeout      = 180 * time.Second // Тайм-аут времени жизни диалога + секунд до сброса локальной истории сообщений
+	TxChanBuffer           = 100               // Буфер канала ответов ассистента критично для режима Streaming
+	RxChanBuffer           = 10                // Буфер канала сообщений от пользователя критично для режима когда отключенное игнорирование вопросов пользователя
+	MaxFunctionCalls       = 10                // Лимит для предотвращения бесконечных циклов
+	SimilarEmbeddingsLimit = 3                 // Макс. количество похожих эмбеддингов для возврата при поиске в БД (можно увеличить при необходимости, но влияет на производительность
+	ApplayRAGTimeaut       = 15 * time.Second  // Тайм-аут для применения RAG (поиск в документах) к ответу модели, чтобы не задерживать ответ слишком долго
 )
+
+// ============================================================================
+// PROVIDER TYPE
+// ============================================================================
 
 // ProviderType определяет тип провайдера модели (используется в БД)
 type ProviderType uint8
@@ -81,22 +118,28 @@ type DB interface {
 
 	// GetUserVectorStorage получает ID векторного хранилища (deprecated: используйте ReadUserModelByProvider)
 	GetUserVectorStorage(userId uint32) (string, error)
+
 	// GetOrSetUserStorageLimit получает или устанавливает лимит хранилища
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
 
 	// GetAllUserModels GetUserModels получает все модели пользователя из user_models
 	GetAllUserModels(userId uint32) ([]UserModelRecord, error)
+
 	// GetActiveModel получает активную модель пользователя
 	GetActiveModel(userId uint32) (*UserModelRecord, error)
+
 	// GetModelByProvider получает АКТИВНУЮ модель пользователя по провайдеру
 	GetModelByProvider(userId uint32, provider ProviderType) (*UserModelRecord, error)
+
 	// GetModelByProviderAnyStatus получает модель пользователя по провайдеру независимо от статуса активности
 	GetModelByProviderAnyStatus(userId uint32, provider ProviderType) (*UserModelRecord, error)
 
 	// SetActiveModel переключает активную модель (в транзакции)
 	SetActiveModel(userId uint32, modelId uint64) error
+
 	// SetActiveModelByProvider устанавливает активную модель по провайдеру
 	SetActiveModelByProvider(userId uint32, provider ProviderType) error
+
 	// RemoveModelFromUser удаляет связь модель-пользователь
 	RemoveModelFromUser(userId uint32, modelId uint64) error
 
@@ -106,10 +149,10 @@ type DB interface {
 	// ============================================================================
 
 	// SaveEmbedding сохраняет векторный эмбеддинг документа в БД с привязкой к модели
-	SaveEmbedding(userId uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata DocumentMetadata) error
+	SaveEmbedding(userId uint32, modelId uint64, provider ProviderType, docID, docName, content string, embedding []float32, metadata DocumentMetadata) error
 
-	// ListUserEmbeddings возвращает список всех документов конкретной модели с эмбеддингами
-	ListModelEmbeddings(modelId uint64) ([]VectorDocument, error)
+	// ListModelEmbeddings возвращает список всех документов конкретной модели и провайдера с эмбеддингами
+	ListModelEmbeddings(modelId uint64, provider ProviderType) ([]VectorDocument, error)
 
 	// DeleteEmbedding удаляет эмбеддинг документа по ID модели и docID
 	DeleteEmbedding(modelId uint64, docID string) error
@@ -117,8 +160,8 @@ type DB interface {
 	// DeleteAllModelEmbeddings удаляет все эмбеддинги конкретной модели
 	DeleteAllModelEmbeddings(modelId uint64) error
 
-	// SearchSimilarEmbeddings ищет похожие документы в рамках конкретной модели используя VEC_Distance_Cosine
-	SearchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]VectorDocument, error)
+	// SearchSimilarEmbeddings ищет похожие документы в рамках конкретной модели и провайдера используя VEC_Distance_Cosine
+	SearchSimilarEmbeddings(modelId uint64, provider ProviderType, queryEmbedding []float32, limit int) ([]VectorDocument, error)
 
 	// GetUserTimeZone получает часовой пояс пользователя из БД
 	UserTimeZone(userId uint32) (string, error)
@@ -177,7 +220,7 @@ type UMCR struct {
 
 type UniversalModel struct {
 	ctx           context.Context
-	openaiClient  *openai.Client
+	openaiClient  *OpenAIAgentClient  // Клиент для работы с OpenAI
 	mistralClient *MistralAgentClient // Клиент для работы с Mistral
 	googleClient  *GoogleAgentClient  // Клиент для работы с Google
 	landingPort   string
@@ -190,18 +233,26 @@ func New(ctx context.Context, db DB, conf *conf.Conf) *UniversalModel {
 	m := &UniversalModel{
 		ctx:         ctx,
 		db:          db,
-		landingPort: conf.WEB.Land,
+		landingPort: conf.WEB.Land, // TODO нужно изменить правила Nginx и убрать порт
 	}
 
 	// Инициализируем OpenAI клиент, если ключ предоставлен
-	m.openaiClient = openai.NewClient(conf.GPT.OpenAIKey)
+	m.openaiClient = &OpenAIAgentClient{
+		apiKey: conf.GPT.OpenAIKey,
+		url:    mode.OpenAIAgentsURL,
+		ctx:    ctx,
+		httpClient: &http.Client{
+			Timeout: 60 * time.Second,
+		},
+		universalModel: m, // Передаем ссылку на universalModel для доступа к GetRealUserID
+	}
 
 	// Инициализируем Mistral клиент, если ключ предоставлен
 	m.mistralClient = &MistralAgentClient{
 		apiKey:         conf.GPT.MistralKey,
 		url:            mode.MistralAgentsURL,
 		ctx:            ctx,
-		universalModel: m, // Передаем ссылку на universalModel для доступа к GetRealUserID
+		universalModel: m,
 	}
 
 	// Инициализируем google клиент, если ключ предоставлен
@@ -242,27 +293,82 @@ func (g GOAuth) HasSheets() bool {
 
 // UniversalModelData универсальная структура хранения данных моделей
 type UniversalModelData struct {
-	Name        string   `json:"name"`        // Имя модели только для удобства идентификации
-	Prompt      string   `json:"prompt"`      // Промпт модели
-	MetaAction  string   `json:"mact"`        // Заданая цель модели (уведомление о достижении целы) вызывается меткой в структуре ответа "target"
-	Triggers    []string `json:"trig"`        // Триггеры модели
-	FileIds     []Ids    `json:"fileIds"`     // ID файлов для загрзки в векторное хранилище?
-	VecIds      VecIds   `json:"vecIds"`      // ID файлов в векторном хранилище
-	Operator    bool     `json:"operator"`    // Вызов ответом от модели "operator" флаг переключения на оператора
-	Search      bool     `json:"search"`      // Поиск по векторному хранилищу, если загружены файлы для дообучения модели
-	Interpreter bool     `json:"interpreter"` // Генерация кода (Code Interpreter) для OpenAI
-	S3          bool     `json:"s3"`          // Работа моделей с файлами в S3-хранилище
-	Haunter     bool     `json:"haunter"`     // Модель будет использоваться для поиска лидов
-	// Mistral-специфичные возможности
-	Image     bool `json:"image"`      // Генерация изображений (Mistral, Google)
-	WebSearch bool `json:"web_search"` // Веб-поиск (Mistral, Google)
+	Name        string       `json:"name"`                   // Имя модели только для удобства идентификации
+	Prompt      string       `json:"prompt"`                 // Промпт модели
+	MetaAction  string       `json:"mact"`                   // Заданая цель модели (уведомление о достижении целы) вызывается меткой в структуре ответа "target"
+	Triggers    []string     `json:"trig"`                   // Триггеры модели
+	FileIds     []Ids        `json:"fileIds"`                // ID файлов для загрзки в векторное хранилище?
+	VecIds      VecIds       `json:"vecIds"`                 // ID файлов в векторном хранилище
+	Operator    bool         `json:"operator"`               // Вызов ответом от модели "operator" флаг переключения на оператора
+	Search      bool         `json:"search"`                 // Поиск по векторному хранилищу, если загружены файлы для дообучения модели
+	Interpreter bool         `json:"interpreter"`            // Генерация кода (Code Interpreter) для OpenAI
+	S3          bool         `json:"s3"`                     // Работа моделей с файлами в S3-хранилище
+	Haunter     bool         `json:"haunter"`                // Модель будет использоваться для поиска лидов
+	Image       bool         `json:"image"`                  // Генерация изображений (Mistral, Google)
+	WebSearch   bool         `json:"web_search"`             // Веб-поиск
+	Realtime    bool         `json:"realtime"`               // Голосовой режим реального времени (только OpenAI Realtime API)
+	RealtimeVAD *RealtimeVAD `json:"realtime_vad,omitempty"` // Параметры VAD и генерации для Realtime режима
 	// Google-специфичные возможности
 	Video bool `json:"video"` // Генерация видео (Google Veo/Imagen 3)
 	//////////////////////////////////
-	Espero   *EsperoConfig `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
-	GptType  *GptType      `json:"gpttype"`
-	Provider ProviderType  `json:"provider"` // "openai=1", "mistral=2..."
-	GOAuth   GOAuth        `json:"g_oauth"`  // Google OAuth Integration - статус подключения Google аккаунта работает для всех провайдеров
+	Espero   EsperoConfig `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
+	GptType  *GptType     `json:"gpttype"`
+	Provider ProviderType `json:"provider"` // "openai=1", "mistral=2..."
+	GOAuth   GOAuth       `json:"g_oauth"`  // Google OAuth Integration - статус подключения Google аккаунта работает для всех провайдеров
+}
+
+// RealtimeVAD параметры голосовой активности (VAD) и генерации для OpenAI Realtime API.
+// Все поля опциональны — nil/0 означает «использовать значение по умолчанию».
+type RealtimeVAD struct {
+	// VAD — детекция речи (server_vad)
+	Threshold         *float64 `json:"threshold,omitempty"`           // 0.0–1.0, дефолт 0.5
+	PrefixPaddingMs   *int     `json:"prefix_padding_ms,omitempty"`   // мс перед речью, дефолт 200
+	SilenceDurationMs *int     `json:"silence_duration_ms,omitempty"` // мс тишины до конца фразы, дефолт 500
+	InterruptResponse *bool    `json:"interrupt_response,omitempty"`  // прерывать ответ при речи, дефолт true
+
+	// Параметры генерации (передаются только в session.update, НЕ в response.create)
+	Temperature             *float64  `json:"temperature,omitempty"`                // 0.6–1.2
+	MaxResponseOutputTokens *IntOrInf `json:"max_response_output_tokens,omitempty"` // число или "inf"
+
+	// Транскрибировать входящую речь в текст для логирования в БД
+	InputAudioTranscription *bool `json:"input_audio_transcription,omitempty"` // дефолт true
+
+	// Управление приветствием при начале диалога
+	InitialGreeting *bool `json:"initial_greeting,omitempty"` // включить/отключить приветствие (дефолт true)
+	// Промпт приветствия добавляется в sendInitialGreeting
+	Greeting *string `json:"greeting,omitempty"` // явная фраза приветствия (если nil — использовать дефолт)
+
+	// Выбор голоса модели
+	Voice *string `json:"voice,omitempty"` // имя голоса для генерации речи (дефолт verse)
+}
+
+// IntOrInf хранит значение max_response_output_tokens: 0 → "inf", >0 → число.
+type IntOrInf struct {
+	Value int // 0 означает "inf"
+}
+
+func (v IntOrInf) MarshalJSON() ([]byte, error) {
+	if v.Value == 0 {
+		return []byte(`"inf"`), nil
+	}
+	return json.Marshal(v.Value)
+}
+
+func (v *IntOrInf) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		if s == "inf" {
+			v.Value = 0
+			return nil
+		}
+		return fmt.Errorf("IntOrInf: неизвестная строка %q", s)
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("IntOrInf: ожидалось число или \"inf\": %w", err)
+	}
+	v.Value = n
+	return nil
 }
 
 // EsperoConfig представляет настройки ожидания из ModelDataRequest
@@ -276,6 +382,141 @@ type EsperoConfig struct {
 type UserModelsResponse struct {
 	Models         map[string]*UniversalModelData `json:"models"`          // Модели по провайдерам ("openai", "mistral")
 	ActiveProvider string                         `json:"active_provider"` // Активный провайдер
+}
+
+// ============================================================================
+// UNIVERSAL PROMPT BUILDER - устранение дублирования кода между провайдерами
+// ============================================================================
+
+// BuildEnhancedPrompt создаёт ОБЩУЮ часть промпта для всех провайдеров
+// Возвращает базовый промпт с инструкциями по:
+// - Текущему времени
+// - Важным напоминаниям (target/operator)
+// - S3 файлам
+// - Code Interpreter
+// - Генерации изображений/видео
+// - Google Calendar
+// - Google Sheets
+// - Web VSearch
+// - Поиску в документах
+// - Правилам отправки файлов
+//
+// НЕ включает провайдер-специфичные инструкции по формату JSON ответа
+func BuildEnhancedPrompt(modelData *UniversalModelData, realUserID uint64) string {
+	enhancedPrompt := modelData.Prompt + "\n\n"
+
+	// Напоминание о необходимости получить актуальное время
+	enhancedPrompt += fmt.Sprintf("ВРЕМЯ: Используй get_current_time(user_id=\"%d\") для актуальной даты. Твои данные устарели.\n\n", realUserID)
+
+	// Важное напоминание для активных функций
+	if modelData.MetaAction != "" || modelData.Operator {
+		enhancedPrompt += "ВАЖНО в КАЖДОМ ответе:\n"
+		if modelData.MetaAction != "" {
+			enhancedPrompt += "- Проверь условие ЦЕЛИ и установи target\n"
+		}
+		if modelData.Operator {
+			enhancedPrompt += "- Проверь нужен ли оператор и установи operator\n"
+		}
+		enhancedPrompt += "\n"
+	}
+
+	// S3 файлы
+	if modelData.S3 {
+		enhancedPrompt += fmt.Sprintf("S3_FILES (user_id=\"%d\"):\n"+
+			"Для создания файла:\n"+
+			"1. Вызови create_file(user_id=\"%d\",content=\"текст\",file_name=\"story.pdf\")\n"+
+			"2. Функция вернет готовый объект файла: {Url:\"https://...\", file_name:\"story.pdf\", type:\"doc\", caption:\"\"}\n"+
+			"3. Помести этот объект в твой JSON ответ: action.send_files = [объект_из_ответа]\n"+
+			"ЗАПРЕЩЕНО: выдумывать URL или создавать объект вручную!\n"+
+			"Типы: txt/pdf→doc, jpg/png→photo, mp4→video, mp3→audio\n\n", realUserID, realUserID)
+	}
+
+	// Code Interpreter
+	if modelData.Interpreter {
+		enhancedPrompt += "CODE_INTERPRETER: Выполняй Python для анализа, графиков, файлов.\n\n"
+	}
+
+	// Генерация изображений
+	if modelData.Image {
+		enhancedPrompt += "IMAGE_GEN: Опиши что рисуешь, система сгенерирует. НЕ добавляй в send_files.\n\n"
+	}
+
+	// Генерация видео
+	if modelData.Video {
+		enhancedPrompt += "VIDEO_GEN (Google Veo): Опиши что создаёшь, система сгенерирует. НЕ добавляй в send_files.\n\n"
+	}
+
+	// Google Calendar
+	if modelData.GOAuth.HasCalendar() {
+		enhancedPrompt += fmt.Sprintf("CALENDAR (user_id=\"%d\"):\n"+
+			"Функции: create_event, list_events, delete_event, get_event\n"+
+			"Формат: RFC3339+таймзона (\"2026-02-15T14:00:00-03:00\")\n"+
+			"Всегда вызывай get_current_time перед датами!\n"+
+			"УДАЛЕНИЕ: Если знаешь event_id→delete_event, иначе list→delete. ЗАПРЕТ create при удалении.\n"+
+			"БЕЗ таймзоны=ошибка 400!\n\n", realUserID)
+	}
+
+	// Google Sheets
+	if modelData.GOAuth.HasSheets() {
+		enhancedPrompt += fmt.Sprintf("SHEETS (user_id=\"%d\"):\n"+
+			"ВСЕГДА вызывай функции! НЕ говори \"нет доступа\".\n"+
+			"Функции: read_range, write_range, append_range\n"+
+			"Формат range: 'Лист!A:F' или 'Sheet1!A1:D10'\n"+
+			"Подсчёт строк: read_range→len(values)-1\n"+
+			"При датах: СНАЧАЛА get_current_time\n\n", realUserID)
+	}
+
+	// Web VSearch
+	if modelData.WebSearch {
+		enhancedPrompt += "WEB_SEARCH: Используй для новостей, актуальных данных (курсы, погода), проверки фактов.\n\n"
+	}
+
+	// File VSearch
+	if modelData.Search {
+		enhancedPrompt += "FILE_SEARCH: Ищи в загруженных документах. Ссылайся на источники.\n\n"
+	}
+
+	// Правила send_files
+	if modelData.S3 || modelData.Interpreter || modelData.Image {
+		enhancedPrompt += "SEND_FILES: [] если нет файлов. При упоминании файлов→добавь в send_files (type,Url,file_name,caption).\n\n"
+	}
+
+	return enhancedPrompt
+}
+
+// BuildOpenAIPromptSuffix добавляет OpenAI-специфичные инструкции по формату ответа
+// schemaJSON - сгенерированная JSON Schema (из GenerateModelSchema)
+func BuildOpenAIPromptSuffix(modelData *UniversalModelData, schemaJSON []byte) string {
+	suffix := "ФОРМАТ JSON:\n"
+
+	// Добавляем JSON Schema
+	var prettyJSON bytes.Buffer
+	if err := json.Indent(&prettyJSON, schemaJSON, "", "  "); err == nil {
+		suffix += prettyJSON.String() + "\n\n"
+	} else {
+		suffix += string(schemaJSON) + "\n\n"
+	}
+
+	// Правила
+	suffix += "ПРАВИЛА:\n" +
+		"message - текст ответа\n" +
+		"action.send_files - массив ([] если нет)\n"
+
+	// Target
+	if modelData.MetaAction != "" {
+		suffix += "target - проверь ЦЕЛЬ из инструкций, установи true/false\n"
+	} else {
+		suffix += "target - ВСЕГДА false\n"
+	}
+
+	// Operator
+	if modelData.Operator {
+		suffix += "operator - проверь условие вызова, установи true/false\n"
+	}
+
+	suffix += "\nВозвращай только валидный JSON."
+
+	return suffix
 }
 
 // CreateModel создаёт новую модель (универсальный метод)
@@ -292,7 +533,7 @@ func (m *UniversalModel) CreateModel(userId uint32, provider ProviderType, model
 
 	switch provider {
 	case ProviderOpenAI:
-		return m.createOpenAIModel(userId, modelData, fileIDs)
+		return m.createModel(userId, modelData, fileIDs)
 	case ProviderMistral:
 		return m.createMistralModel(userId, modelData, fileIDs)
 	case ProviderGoogle:
@@ -381,7 +622,7 @@ func (m *UniversalModel) ReadModel(userId uint32, provider *ProviderType) (*Univ
 	}
 
 	// Используем вспомогательный метод для распаковки
-	modelData, err := m.decompressModelData(compressedData, vecIds, userId)
+	modelData, err := m.DecompressModelData(compressedData, vecIds)
 	if err != nil {
 		return nil, err
 	}
@@ -389,8 +630,8 @@ func (m *UniversalModel) ReadModel(userId uint32, provider *ProviderType) (*Univ
 	// Устанавливаем провайдера и AssistantId из БД
 	modelData.Provider = record.Provider
 
-	logger.Info("Модель успешно загружена (Provider: %s, Name: %s, IsActive: %v)",
-		modelData.Provider, modelData.Name, record.IsActive, userId)
+	//logger.Debug("Модель успешно загружена (Provider: %s, Name: %s, IsActive: %v)",
+	//	modelData.Provider, modelData.Name, record.IsActive, userId)
 
 	return modelData, nil
 }
@@ -398,24 +639,6 @@ func (m *UniversalModel) ReadModel(userId uint32, provider *ProviderType) (*Univ
 // GetModelAsJSON получает ВСЕ модели пользователя и возвращает их как JSON
 // Предназначен для HTTP API endpoints - возвращает готовый JSON для отправки клиенту.
 // Возвращает объект с моделями по провайдерам и информацией об активной модели:
-//
-//	{
-//	  "models": {
-//	    "openai": { "name": "...", "fileIds": [...], ... },
-//	    "mistral": { "name": "...", ... }
-//	  },
-//	  "active_provider": "openai"
-//	}
-//
-// Если у пользователя нет моделей - возвращает пустой объект {}.
-// Параметр provider игнорируется (оставлен для обратной совместимости).
-//
-// Использование в HTTP handler:
-//
-//	jsonData, err := openaiClient.GetAllModelAsJSON(userId, nil)
-//	if err != nil { return err }
-//	w.Header().Set("Content-Type", "application/json")
-//	w.Write(jsonData)
 func (m *UniversalModel) GetModelAsJSON(userId uint32) (json.RawMessage, error) {
 	// Получаем все модели пользователя
 	response, err := m.GetAllUserModelsResponse(userId)
@@ -426,7 +649,6 @@ func (m *UniversalModel) GetModelAsJSON(userId uint32) (json.RawMessage, error) 
 	if len(response.Models) == 0 {
 		return json.RawMessage(`{}`), nil
 	}
-
 	// Сериализуем в JSON
 	result, err := json.Marshal(response)
 	if err != nil {
@@ -467,7 +689,7 @@ func (m *UniversalModel) DeleteModel(userId uint32, provider ProviderType, delet
 	// В зависимости от провайдера удаляем модель
 	switch modelRecord.Provider {
 	case ProviderOpenAI:
-		err = m.deleteOpenAIModel(userId, modelRecord, deleteFiles, progressCallback)
+		err = m.deleteModel(userId, modelRecord, deleteFiles, progressCallback)
 		if err != nil {
 			return err
 		}
@@ -502,16 +724,16 @@ func (m *UniversalModel) DeleteModel(userId uint32, provider ProviderType, delet
 	if modelRecord.IsActive {
 		remainingModels, err := m.db.GetAllUserModels(userId)
 		if err != nil {
-			logger.Warn("Ошибка получения оставшихся моделей: %v", err, userId)
+			//logger.Warn("Ошибка получения оставшихся моделей: %v", err, userId)
 		} else if len(remainingModels) > 0 {
 			// Переключаем на первую оставшуюся модель по провайдеру
 			newActiveProvider := remainingModels[0].Provider
 			err = m.db.SetActiveModelByProvider(userId, newActiveProvider)
 			if err != nil {
-				logger.Error("Ошибка автоматического переключения активной модели: %v", err, userId)
+				//logger.Error("Ошибка автоматического переключения активной модели: %v", err, userId)
 			} else {
-				logger.Info("Активная модель автоматически переключена на провайдер %s после удаления",
-					newActiveProvider.String(), userId)
+				//logger.Debug("Активная модель автоматически переключена на провайдер %s после удаления",
+				//	newActiveProvider.String(), userId)
 				if progressCallback != nil {
 					progressCallback(fmt.Sprintf("✅ Активная модель переключена на %s", newActiveProvider.String()))
 				}
@@ -599,7 +821,7 @@ func (m *UniversalModel) UpdateModelEveryWhere(userId uint32, data *UniversalMod
 		return fmt.Errorf("данные модели провайдера %s не найдены для пользователя %d", provider, userId)
 	}
 
-	existing, err := m.decompressModelData(compressedData, vecIds, userId)
+	existing, err := m.DecompressModelData(compressedData, vecIds)
 	if err != nil {
 		return fmt.Errorf("ошибка распаковки данных модели: %w", err)
 	}
@@ -648,19 +870,19 @@ func (m *UniversalModel) GetUserModels(userId uint32) ([]UniversalModelData, err
 		// Читаем данные модели по провайдеру
 		compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
 		if err != nil {
-			logger.Warn("Пропуск модели %d (Provider: %s): ошибка чтения данных: %v", record.ModelId, record.Provider, err, userId)
+			//logger.Warn("Пропуск модели %d (Provider: %s): ошибка чтения данных: %v", record.ModelId, record.Provider, err, userId)
 			continue
 		}
 
 		if compressedData == nil {
-			logger.Warn("Пропуск модели %d (Provider: %s): данные отсутствуют", record.ModelId, record.Provider, userId)
+			//logger.Warn("Пропуск модели %d (Provider: %s): данные отсутствуют", record.ModelId, record.Provider, userId)
 			continue
 		}
 
 		// Распаковка данных
-		modelData, err := m.decompressModelData(compressedData, vecIds, userId)
+		modelData, err := m.DecompressModelData(compressedData, vecIds)
 		if err != nil {
-			logger.Warn("Пропуск модели %d (Provider: %s): ошибка распаковки: %v", record.ModelId, record.Provider, err, userId)
+			//logger.Warn("Пропуск модели %d (Provider: %s): ошибка распаковки: %v", record.ModelId, record.Provider, err, userId)
 			continue
 		}
 
@@ -669,7 +891,7 @@ func (m *UniversalModel) GetUserModels(userId uint32) ([]UniversalModelData, err
 		models = append(models, *modelData)
 	}
 
-	logger.Info("Загружено %d моделей", len(models), userId)
+	//logger.Debug("Загружено %d моделей", len(models), userId)
 	return models, nil
 }
 
@@ -680,7 +902,6 @@ func (m *UniversalModel) GetAllUserModelsResponse(userId uint32) (*UserModelsRes
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
-
 	response := &UserModelsResponse{
 		Models: make(map[string]*UniversalModelData),
 	}
@@ -691,22 +912,22 @@ func (m *UniversalModel) GetAllUserModelsResponse(userId uint32) (*UserModelsRes
 		// Читаем данные модели по провайдеру
 		compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
 		if err != nil {
-			logger.Warn("Пропуск модели %d (Provider: %s): ошибка чтения данных: %v",
-				record.ModelId, record.Provider, err, userId)
+			//logger.Warn("Пропуск модели %d (Provider: %s): ошибка чтения данных: %v",
+			//	record.ModelId, record.Provider, err, userId)
 			continue
 		}
 
 		if compressedData == nil {
-			logger.Warn("Пропуск модели %d (Provider: %s): данные отсутствуют",
-				record.ModelId, record.Provider, userId)
+			//logger.Warn("Пропуск модели %d (Provider: %s): данные отсутствуют",
+			//	record.ModelId, record.Provider, userId)
 			continue
 		}
 
 		// Распаковка данных
-		modelData, err := m.decompressModelData(compressedData, vecIds, userId)
+		modelData, err := m.DecompressModelData(compressedData, vecIds)
 		if err != nil {
-			logger.Warn("Пропуск модели %d (Provider: %s): ошибка распаковки: %v",
-				record.ModelId, record.Provider, err, userId)
+			//logger.Warn("Пропуск модели %d (Provider: %s): ошибка распаковки: %v",
+			//	record.ModelId, record.Provider, err, userId)
 			continue
 		}
 		// Устанавливаем провайдера из user_models
@@ -726,7 +947,6 @@ func (m *UniversalModel) GetAllUserModelsResponse(userId uint32) (*UserModelsRes
 		response.ActiveProvider = activeProvider.String()
 	}
 
-	logger.Info("Загружено %d моделей (активный: %s)", len(response.Models), response.ActiveProvider, userId)
 	return response, nil
 }
 
@@ -738,7 +958,7 @@ func (m *UniversalModel) GetActiveUserModel(userId uint32) (*UniversalModelData,
 	}
 
 	if record == nil {
-		logger.Debug("Активная модель не найдена", userId)
+		//logger.Debug("Активная модель не найдена", userId)
 		return nil, nil
 	}
 
@@ -752,7 +972,7 @@ func (m *UniversalModel) GetActiveUserModel(userId uint32) (*UniversalModelData,
 		return nil, nil
 	}
 
-	modelData, err := m.decompressModelData(compressedData, vecIds, userId)
+	modelData, err := m.DecompressModelData(compressedData, vecIds)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка распаковки активной модели: %w", err)
 	}
@@ -760,8 +980,8 @@ func (m *UniversalModel) GetActiveUserModel(userId uint32) (*UniversalModelData,
 	// Устанавливаем провайдера и AssistantId из БД
 	modelData.Provider = record.Provider
 
-	logger.Info("Загружена активная модель (Provider: %s, Name: %s)",
-		modelData.Provider, modelData.Name, userId)
+	//logger.Debug("Загружена активная модель (Provider: %s, Name: %s)",
+	//	modelData.Provider, modelData.Name, userId)
 
 	return modelData, nil
 }
@@ -788,7 +1008,7 @@ func (m *UniversalModel) GetUserModelByProvider(userId uint32, provider Provider
 		return nil, nil
 	}
 
-	modelData, err := m.decompressModelData(compressedData, vecIds, userId)
+	modelData, err := m.DecompressModelData(compressedData, vecIds)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка распаковки модели: %w", err)
 	}
@@ -796,8 +1016,8 @@ func (m *UniversalModel) GetUserModelByProvider(userId uint32, provider Provider
 	// Устанавливаем провайдера и AssistantId из БД
 	modelData.Provider = record.Provider
 
-	logger.Info("Загружена модель провайдера %s (ID: %d)",
-		provider, modelData.Provider, userId)
+	//logger.Debug("Загружена модель провайдера %s (ID: %d)",
+	//	provider, modelData.Provider, userId)
 
 	return modelData, nil
 }
@@ -809,13 +1029,13 @@ func (m *UniversalModel) SetActiveModelByProvider(userId uint32, provider Provid
 		return fmt.Errorf("ошибка переключения активной модели: %w", err)
 	}
 
-	logger.Info("Активная модель переключена на %d", provider, userId)
+	//logger.Debug("Активная модель переключена на %d", provider, userId)
 	return nil
 }
 
-// decompressModelData - распаковывает данные модели из БД и преобразует в UniversalModelData
+// DecompressModelData - распаковывает данные модели из БД и преобразует в UniversalModelData
 // Данные в БД хранятся в формате ModelDataRequest (name, prompt, mact, trig, и т.д.)
-func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecIds, userId uint32) (*UniversalModelData, error) {
+func (m *UniversalModel) DecompressModelData(compressedData []byte, vecIds *VecIds) (*UniversalModelData, error) {
 	// Распаковываем gzip
 	reader, err := gzip.NewReader(bytes.NewReader(compressedData))
 	if err != nil {
@@ -823,7 +1043,7 @@ func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecI
 	}
 	defer func() {
 		if e := reader.Close(); e != nil {
-			logger.Warn("error closing gzip reader: %v", e)
+			//logger.Warn("error closing gzip reader: %v", e)
 		}
 	}()
 
@@ -860,28 +1080,64 @@ func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecI
 	if interpreter, ok := rawData["interpreter"].(bool); ok {
 		modelData.Interpreter = interpreter
 	}
-	// Mistral-специфичные возможности
 	if image, ok := rawData["image"].(bool); ok {
 		modelData.Image = image
 	}
 	if webSearch, ok := rawData["web_search"].(bool); ok {
 		modelData.WebSearch = webSearch
 	}
+	if realtime, ok := rawData["realtime"].(bool); ok {
+		modelData.Realtime = realtime
+	}
+	if vadMap, ok := rawData["realtime_vad"].(map[string]interface{}); ok {
+		vad := &RealtimeVAD{}
+		if v, ok := vadMap["threshold"].(float64); ok {
+			vad.Threshold = &v
+		}
+		if v, ok := vadMap["prefix_padding_ms"].(float64); ok {
+			iv := int(v)
+			vad.PrefixPaddingMs = &iv
+		}
+		if v, ok := vadMap["silence_duration_ms"].(float64); ok {
+			iv := int(v)
+			vad.SilenceDurationMs = &iv
+		}
+		if v, ok := vadMap["interrupt_response"].(bool); ok {
+			vad.InterruptResponse = &v
+		}
+		if v, ok := vadMap["temperature"].(float64); ok {
+			vad.Temperature = &v
+		}
+		if v, ok := vadMap["max_response_output_tokens"]; ok {
+			ioi := &IntOrInf{}
+			if raw, err := json.Marshal(v); err == nil {
+				_ = json.Unmarshal(raw, ioi)
+			}
+			vad.MaxResponseOutputTokens = ioi
+		}
+		if v, ok := vadMap["input_audio_transcription"].(bool); ok {
+			vad.InputAudioTranscription = &v
+		}
+		if v, ok := vadMap["initial_greeting"].(bool); ok {
+			vad.InitialGreeting = &v
+		}
+		if v, ok := vadMap["greeting"].(string); ok {
+			vad.Greeting = &v
+		}
+		if v, ok := vadMap["voice"].(string); ok {
+			vad.Voice = &v
+		}
+		modelData.RealtimeVAD = vad
+	}
 	if s3, ok := rawData["s3"].(bool); ok {
 		modelData.S3 = s3
 	}
-
-	// Извлекаем haunter
 	if ha, ok := rawData["haunter"].(bool); ok {
 		modelData.Haunter = ha
 	}
-
-	// Извлекаем provider (ProviderType)
 	if prov, ok := rawData["provider"].(float64); ok {
 		modelData.Provider = ProviderType(prov)
 	}
-
-	// Извлекаем g_oauth (GOAuth)
 	if goauthMap, ok := rawData["g_oauth"].(map[string]interface{}); ok {
 		goauth := GOAuth{}
 		if calendar, ok := goauthMap["calendar"].(bool); ok {
@@ -892,10 +1148,8 @@ func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecI
 		}
 		modelData.GOAuth = goauth
 	}
-
-	// Извлекаем espero
 	if esperoMap, ok := rawData["espero"].(map[string]interface{}); ok {
-		espero := &EsperoConfig{}
+		espero := EsperoConfig{}
 		if limit, ok := esperoMap["limit"].(float64); ok {
 			espero.Limit = uint16(limit)
 		}
@@ -907,8 +1161,6 @@ func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecI
 		}
 		modelData.Espero = espero
 	}
-
-	// Извлекаем triggers (массив строк)
 	if trig, ok := rawData["trig"].([]interface{}); ok {
 		triggers := make([]string, 0, len(trig))
 		for _, t := range trig {
@@ -945,11 +1197,63 @@ func (m *UniversalModel) decompressModelData(compressedData []byte, vecIds *VecI
 		}
 	}
 
-	// ИСПРАВЛЕНО: НЕ перезаписываем S3 из лимита хранилища!
-	// S3 уже корректно прочитан из сохраненных данных модели выше (строка ~859)
+	// Применяем дефолтные значения для RealtimeVAD
+	if modelData.RealtimeVAD != nil {
+		modelData.RealtimeVAD = applyRealtimeVADDefaults(modelData.RealtimeVAD)
+	}
+
+	// Не перезаписываем S3 из лимита хранилища!
+	// S3 уже корректно прочитан из сохраненных данных модели
 	// Старая логика ошибочно всегда устанавливала S3=true если у пользователя есть лимит
 
 	return modelData, nil
+}
+
+// applyRealtimeVADDefaults применяет дефолтные значения к RealtimeVAD
+// Дефолты: Threshold=0.5, PrefixPaddingMs=200, SilenceDurationMs=500,
+// InterruptResponse=true, InputAudioTranscription=true, InitialGreeting=true
+func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
+	if vad == nil {
+		return nil
+	}
+
+	// Threshold: дефолт 0.5
+	if vad.Threshold == nil {
+		v := 0.5
+		vad.Threshold = &v
+	}
+
+	// PrefixPaddingMs: дефолт 200
+	if vad.PrefixPaddingMs == nil {
+		v := 200
+		vad.PrefixPaddingMs = &v
+	}
+
+	// SilenceDurationMs: дефолт 500
+	if vad.SilenceDurationMs == nil {
+		v := 500
+		vad.SilenceDurationMs = &v
+	}
+
+	// InterruptResponse: дефолт true
+	if vad.InterruptResponse == nil {
+		v := true
+		vad.InterruptResponse = &v
+	}
+
+	// InputAudioTranscription: дефолт true
+	if vad.InputAudioTranscription == nil {
+		v := true
+		vad.InputAudioTranscription = &v
+	}
+
+	// InitialGreeting: дефолт true
+	if vad.InitialGreeting == nil {
+		v := true
+		vad.InitialGreeting = &v
+	}
+
+	return vad
 }
 
 // GetRealUserID получает реальный userId через HTTP запрос к landing серверу
@@ -977,7 +1281,7 @@ func (m *UniversalModel) GetRealUserID(userId uint32) (uint64, error) {
 	}
 	defer func() {
 		if e := resp.Body.Close(); e != nil {
-			logger.Warn("error closing response body: %v", e)
+			//logger.Warn("error closing response body: %v", e)
 		}
 	}()
 
@@ -999,18 +1303,110 @@ func (m *UniversalModel) GetRealUserID(userId uint32) (uint64, error) {
 	return userID, nil
 }
 
-// GetUserTimeZone получает таймзону пользователя из БД
-func (m *UniversalModel) GetUserTimeZone(userId uint32) (string, error) {
-	if m.db == nil {
-		return "UTC", fmt.Errorf("database connection is nil")
+// ParseModelSchemaJSON парсит статическую JSON Schema в map[string]interface{}
+// для использования в response_schema (Google) и json_schema.schema (OpenAI)
+// Универсальный метод для обоих провайдеров
+// ПРИМЕЧАНИЕ: Эта статическая схема используется только для некоторых случаев.
+// OpenAI модели используют динамическую схему из generateModelSchema (open.go)
+func ParseModelSchemaJSON(includeAdditionalProperties bool) map[string]interface{} {
+	// Базовая схема БЕЗ additionalProperties (для Google)
+	var modelSchemaJSON string
+
+	if includeAdditionalProperties {
+		// Для OpenAI - С additionalProperties
+		modelSchemaJSON = `{
+		"type": "object",
+		"properties": {
+			"message": {
+				"type": "string"
+			},
+			"action": {
+				"type": "object",
+				"properties": {
+					"send_files": {
+						"type": "array",
+						"default": [],
+						"items": {
+							"type": "object",
+							"properties": {
+								"type": {
+									"type": "string",
+									"enum": ["photo", "video", "audio", "doc"]
+								},
+								"url": {
+									"type": "string"
+								},
+								"file_name": {
+									"type": "string"
+								},
+								"caption": {
+									"type": "string"
+								}
+							},
+							"required": ["type", "url", "file_name", "caption"],
+							"additionalProperties": false
+						}
+					}
+				},
+				"required": ["send_files"],
+				"additionalProperties": false
+			},
+			"target": { "type": "boolean" },
+			"operator": { "type": "boolean" }
+		},
+		"required": ["message", "action", "target", "operator"],
+		"additionalProperties": false
+	}`
+	} else {
+		// Для Google - БЕЗ additionalProperties (Google не поддерживает это поле)
+		modelSchemaJSON = `{
+		"type": "object",
+		"properties": {
+			"message": {
+				"type": "string"
+			},
+			"action": {
+				"type": "object",
+				"properties": {
+					"send_files": {
+						"type": "array",
+						"default": [],
+						"items": {
+							"type": "object",
+							"properties": {
+								"type": {
+									"type": "string",
+									"enum": ["photo", "video", "audio", "doc"]
+								},
+								"url": {
+									"type": "string"
+								},
+								"file_name": {
+									"type": "string"
+								},
+								"caption": {
+									"type": "string"
+								}
+							},
+							"required": ["type", "url", "file_name", "caption"]
+						}
+					}
+				},
+				"required": ["send_files"]
+			},
+			"target": { "type": "boolean" },
+			"operator": { "type": "boolean" }
+		},
+		"required": ["message", "action", "target", "operator"]
+	}`
 	}
 
-	timezone, err := m.db.UserTimeZone(userId)
+	var schema map[string]interface{}
+	err := json.Unmarshal([]byte(modelSchemaJSON), &schema)
 	if err != nil {
-		// Возвращаем UTC как fallback при ошибке
-		logger.Warn("Не удалось получить таймзону пользователя %d: %v, используется UTC", userId, err)
-		return "UTC", nil
+		// Это не должно произойти, т.к. modelSchemaJSON - валидный JSON
+		//logger.Error("[ParseModelSchemaJSON] Ошибка парсинга ModelSchemaJSON: %v", err)
+		return map[string]interface{}{} // Возвращаем пустую схему в крайнем случае
 	}
-
-	return timezone, nil
+	return schema
 }

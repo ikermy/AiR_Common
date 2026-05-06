@@ -2,8 +2,6 @@ package crm
 
 import (
 	"fmt"
-
-	"github.com/ikermy/AiR_Common/pkg/logger"
 )
 
 type Message struct {
@@ -83,7 +81,7 @@ func (u *User) SendMessage(msg *Message) error {
 
 	select {
 	case u.msg <- msg:
-		logger.Debug("Сообщение отправлено в User канал для контакта %s", msg.Phone, u.conf.UserID)
+		//logger.Debug("Сообщение отправлено в User канал для контакта %s", msg.Phone, u.conf.UserID)
 		return nil
 	case <-u.ctx.Done():
 		return fmt.Errorf("отправка отменена: %w", u.ctx.Err())

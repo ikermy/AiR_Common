@@ -7,13 +7,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
 // ============================================================================
-// GOOGLE GEMINI + MARIADB VECTOR STORAGE
-// - Embedding API: генерация эмбеддингов через Google (text-embedding-004, 768 dim)
+// GOOGLE EMBEDDINGS + MARIADB VECTOR STORAGE
+// - Embedding API: генерация эмбеддингов через Google (gemini-embedding-001, 768 dim)
 // - Vector Storage: хранение эмбеддингов в MariaDB 12
 // - Similarity Search: поиск по косинусному сходству в БД
 // ============================================================================
@@ -26,14 +25,13 @@ func (m *GoogleModel) DeleteTempFile(fileID string) error {
 	}
 	err := m.client.DeleteAudioFile(fileID)
 	if err != nil {
-		logger.Warn("DeleteTempFile: ошибка удаления файла %s: %v", fileID, err)
 		return err
 	}
 	//logger.Debug("DeleteTempFile: файл %s успешно удалён", fileID)
 	return nil
 }
 
-func (m *GoogleModel) GetFileAsReader(userId uint32, url string) (io.Reader, error) {
+func (m *GoogleModel) GetFileAsReader(_ uint32, url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла")
 	}
@@ -73,7 +71,8 @@ func (m *GoogleModel) downloadFileFromGoogle(fileURI string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
+
 	if resp.StatusCode != http.StatusOK {
 		responseBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
@@ -90,16 +89,31 @@ func (m *GoogleModel) downloadFileFromGoogle(fileURI string) ([]byte, error) {
 // EMBEDDING API - Генерация эмбеддингов через Google
 // ============================================================================
 
-// GenerateEmbedding генерирует векторный эмбеддинг для текста через Google Embedding API
-// Использует модель text-embedding-004 (768 dimensions)
+// GenerateEmbedding генерирует векторный эмбеддинг для текста через Google Embeddings API
+// Использует модель gemini-embedding-001 (768 dimensions)
 // Возвращает []float32 с эмбеддингом или ошибку
 //
+// ОПТИМИЗАЦИЯ: Использует кэш для избежания повторных API вызовов (TTL 5 минут)
 // ПРИМЕЧАНИЕ: Использует функцию create.GenerateGoogleEmbedding() из пакета create
 // для избежания дублирования кода с GoogleAgentClient.GenerateEmbedding()
 //
 // Используется внутри UploadDocumentWithEmbedding, SearchSimilarDocuments и других публичных методов GoogleModel
 func (m *GoogleModel) GenerateEmbedding(text string) ([]float32, error) {
-	return create.GenerateGoogleEmbedding(m.ctx, m.client.GetAPIKey(), text)
+	// Проверяем кэш
+	if cached, found := m.getCachedEmbedding(text); found {
+		return cached, nil
+	}
+
+	// Вызываем Google API
+	embedding, err := create.GenerateGoogleEmbedding(m.ctx, m.client.GetAPIKey(), text)
+	if err != nil {
+		return nil, err
+	}
+
+	// Сохраняем в кэш
+	m.setCachedEmbedding(text, embedding)
+
+	return embedding, nil
 }
 
 // ============================================================================
@@ -111,13 +125,13 @@ func (m *GoogleModel) deleteDocument(modelId uint64, docID string) error {
 }
 
 func (m *GoogleModel) listModelDocuments(modelId uint64) ([]create.VectorDocument, error) {
-	return m.db.ListModelEmbeddings(modelId)
+	return m.db.ListModelEmbeddings(modelId, create.ProviderGoogle)
 }
 
 func (m *GoogleModel) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]create.VectorDocument, error) {
-	return m.db.SearchSimilarEmbeddings(modelId, queryEmbedding, limit)
+	return m.db.SearchSimilarEmbeddings(modelId, create.ProviderGoogle, queryEmbedding, limit)
 }
 
 func (m *GoogleModel) saveEmbedding(userId uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
-	return m.db.SaveEmbedding(userId, modelId, docID, docName, content, embedding, metadata)
+	return m.db.SaveEmbedding(userId, modelId, create.ProviderGoogle, docID, docName, content, embedding, metadata)
 }

@@ -13,10 +13,8 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
-
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -46,7 +44,6 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		}
 
 		if err := json.Unmarshal([]byte(arguments), &params); err != nil {
-			logger.Error("ActionHandler: ошибка парсинга параметров lead_target: %v", err)
 			return `{"error": "неверные параметры для lead_target"}`
 		}
 
@@ -55,7 +52,6 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 		if err != nil {
-			logger.Error("ActionHandler: ошибка создания запроса к Meta API: %v", err)
 			result, _ := json.Marshal(map[string]interface{}{
 				"target": true,
 				"error":  "failed to create request",
@@ -66,7 +62,6 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		client := &http.Client{}
 		resp, err := client.Do(req)
 		if err != nil {
-			logger.Error("ActionHandler: ошибка выполнения запроса к Meta API: %v", err)
 			result, _ := json.Marshal(map[string]interface{}{
 				"target": true,
 				"error":  "failed to execute request",
@@ -237,7 +232,7 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		// Декодируем base64
 		imageData, err := base64.StdEncoding.DecodeString(params.ImageData)
 		if err != nil {
-			logger.Error("save_image_data: ошибка декодирования base64: %v", err)
+			//logger.Error("save_image_data: ошибка декодирования base64: %v", err)
 			result, _ := json.Marshal(map[string]string{"error": "ошибка декодирования изображения"})
 			return string(result)
 		}
@@ -256,13 +251,11 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		// Добавляем изображение
 		part, err := writer.CreateFormFile("image", params.FileName)
 		if err != nil {
-			logger.Error("save_image_data: ошибка создания form file: %v", err)
 			result, _ := json.Marshal(map[string]string{"error": "ошибка подготовки данных"})
 			return string(result)
 		}
 
 		if _, err := part.Write(imageData); err != nil {
-			logger.Error("save_image_data: ошибка записи данных: %v", err)
 			result, _ := json.Marshal(map[string]string{"error": "ошибка обработки изображения"})
 			return string(result)
 		}
@@ -291,7 +284,6 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 				result, _ := json.Marshal(map[string]string{"error": "запрос отменён по таймауту"})
 				return string(result)
 			}
-			logger.Error("save_image_data: ошибка отправки на сервер: %v", err)
 			result, _ := json.Marshal(map[string]string{"error": "ошибка сохранения изображения"})
 			return string(result)
 		}
@@ -305,7 +297,6 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		}
 
 		if saveResp.StatusCode != http.StatusOK {
-			logger.Error("save_image_data: ошибка сервера (%d): %s", saveResp.StatusCode, string(saveBody))
 			result, _ := json.Marshal(map[string]string{"error": "ошибка сохранения на сервере"})
 			return string(result)
 		}
@@ -323,7 +314,6 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 			UserID string `json:"user_id"`
 		}
 		if err := json.Unmarshal([]byte(arguments), &params); err != nil {
-			logger.Error("get_current_time: ошибка парсинга параметров: %v", err)
 			return `{"error": "неверные параметры для get_current_time"}`
 		}
 
@@ -336,7 +326,6 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
-			logger.Error("get_current_time: ошибка создания запроса: %v", err)
 			return `{"error": "ошибка создания запроса"}`
 		}
 
@@ -352,14 +341,12 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			logger.Error("get_current_time: ошибка чтения ответа: %v", err)
 			return `{"error": "ошибка чтения ответа"}`
 		}
 
 		responseStr := string(body)
 
 		if resp.StatusCode != http.StatusOK {
-			logger.Error("get_current_time: ошибка %d: %s", resp.StatusCode, responseStr)
 			return fmt.Sprintf(`{"error": "ошибка %d"}`, resp.StatusCode)
 		}
 
@@ -565,7 +552,6 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 			Range         string `json:"range"`
 		}
 		if err := json.Unmarshal([]byte(arguments), &params); err != nil {
-			logger.Error("sheets_read_range: ошибка парсинга параметров: %v", err)
 			return `{"error": "неверные параметры для sheets_read_range"}`
 		}
 
@@ -581,7 +567,6 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
-			logger.Error("sheets_read_range: ошибка создания запроса: %v", err)
 			return `{"error": "ошибка создания запроса"}`
 		}
 
@@ -589,22 +574,18 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context, functionName, ar
 		resp, err := client.Do(req)
 		if err != nil {
 			if ctx.Err() != nil {
-				logger.Error("sheets_read_range: запрос отменён по таймауту")
 				return `{"error": "запрос отменён по таймауту"}`
 			}
-			logger.Error("sheets_read_range: ошибка выполнения запроса: %v", err)
 			return `{"error": "ошибка выполнения запроса"}`
 		}
 		defer resp.Body.Close()
 
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
-			logger.Error("sheets_read_range: ошибка чтения ответа: %v", err)
 			return `{"error": "ошибка чтения ответа"}`
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			logger.Error("sheets_read_range: ошибка %d: %s", resp.StatusCode, string(body))
 			return fmt.Sprintf(`{"error": "%s"}`, string(body))
 		}
 

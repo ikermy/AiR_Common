@@ -9,24 +9,29 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
 // SaveEmbedding сохраняет эмбеддинг документа в MariaDB с привязкой к модели
-// Использует нативный тип VECTOR(768) для эффективного хранения
-func (d *DB) SaveEmbedding(userId uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
+// Поддерживает динамические размерности: 512 (OpenAI small), 768 (Google), 1536 (OpenAI medium), 3072 (OpenAI large)
+// Использует нативный тип VECTOR(3072) с padding нулями для эффективного хранения
+func (d *DB) SaveEmbedding(userId uint32, modelId uint64, provider create.ProviderType, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
 	ctx, cancel := context.WithTimeout(d.MainCTX(), time.Duration(sqlTimeToCancel)*time.Second)
 	defer cancel()
 
-	// Валидация размерности
-	if len(embedding) != 768 {
-		return fmt.Errorf("неверная размерность эмбеддинга: ожидается 768, получено %d", len(embedding))
+	// Валидация размерности (поддержка Google 768 и OpenAI 512/1536/3072)
+	embeddingDim := len(embedding)
+	if embeddingDim != 512 && embeddingDim != 768 && embeddingDim != 1536 && embeddingDim != 3072 {
+		return fmt.Errorf("неподдерживаемая размерность эмбеддинга: %d (допустимо: 512, 768, 1536, 3072)", embeddingDim)
 	}
 
-	// Конвертируем []float32 в строку для VECTOR(768)
+	// Дополняем нулями до 3072 для совместимости с VECTOR(3072)
+	paddedEmbedding := make([]float32, 3072)
+	copy(paddedEmbedding, embedding)
+
+	// Конвертируем []float32 в строку для VECTOR(3072)
 	// MariaDB VECTOR принимает формат: '[0.1, 0.2, 0.3, ...]'
-	embeddingStr := vectorToString(embedding)
+	embeddingStr := vectorToString(paddedEmbedding)
 
 	// Конвертируем метаданные в JSON
 	metadataJSON, err := json.Marshal(metadata)
@@ -34,18 +39,19 @@ func (d *DB) SaveEmbedding(userId uint32, modelId uint64, docID, docName, conten
 		return fmt.Errorf("ошибка сериализации метаданных: %w", err)
 	}
 
-	query := `INSERT INTO vector_embeddings (user_id, model_id, doc_id, doc_name, content, embedding, metadata)
-             VALUES (?, ?, ?, ?, ?, VEC_FromText(?), ?)
+	query := `INSERT INTO vector_embeddings (user_id, model_id, provider, doc_id, doc_name, content, embedding, embedding_dim, metadata)
+             VALUES (?, ?, ?, ?, ?, ?, VEC_FromText(?), ?, ?)
              ON DUPLICATE KEY UPDATE 
+                 provider = VALUES(provider),
                  doc_name = VALUES(doc_name),
                  content = VALUES(content),
                  embedding = VALUES(embedding),
+                 embedding_dim = VALUES(embedding_dim),
                  metadata = VALUES(metadata)`
 
-	_, err = d.Conn().ExecContext(ctx, query, userId, modelId, docID, docName, content, embeddingStr, metadataJSON)
+	_, err = d.Conn().ExecContext(ctx, query, userId, modelId, provider.String(), docID, docName, content, embeddingStr, embeddingDim, metadataJSON)
 	if err != nil {
-		logger.Error("SaveEmbedding: ошибка сохранения эмбеддинга для modelId=%d, docID=%s: %v", modelId, docID, err)
-		return fmt.Errorf("ошибка сохранения эмбеддинга: %w", err)
+		return fmt.Errorf("SaveEmbedding: ошибка сохранения эмбеддинга для modelId=%d, docID=%s: %v", modelId, docID, err)
 	}
 
 	return nil
@@ -126,17 +132,21 @@ func (d *DB) CountModelEmbeddings(modelId uint64) (int, error) {
 	return count, nil
 }
 
-// ListModelEmbeddings возвращает список всех эмбеддингов конкретной модели
-func (d *DB) ListModelEmbeddings(modelId uint64) ([]create.VectorDocument, error) {
+// ListModelEmbeddings возвращает список всех эмбеддингов для модели с обрезкой padding
+// Читает реальную размерность из embedding_dim и обрезает вектор
+func (d *DB) ListModelEmbeddings(modelId uint64, provider create.ProviderType) ([]create.VectorDocument, error) {
 	ctx, cancel := context.WithTimeout(d.MainCTX(), time.Duration(sqlTimeToCancel)*time.Second)
 	defer cancel()
 
-	query := `SELECT user_id, doc_id, doc_name, content, VEC_ToText(embedding), metadata, created_at 
-           FROM vector_embeddings 
-           WHERE model_id = ? 
-           ORDER BY created_at DESC`
+	// Конвертируем ProviderType в строку для фильтрации
+	providerStr := provider.String()
 
-	rows, err := d.Conn().QueryContext(ctx, query, modelId)
+	query := `SELECT user_id, provider, doc_id, doc_name, content, VEC_ToText(embedding) as embedding_text, embedding_dim, metadata, created_at 
+	          FROM vector_embeddings 
+	          WHERE model_id = ? AND provider = ?
+	          ORDER BY created_at DESC`
+
+	rows, err := d.Conn().QueryContext(ctx, query, modelId, providerStr)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения списка эмбеддингов: %w", err)
 	}
@@ -148,23 +158,30 @@ func (d *DB) ListModelEmbeddings(modelId uint64) ([]create.VectorDocument, error
 		var doc create.VectorDocument
 		var embeddingStr string
 		var metadataJSON []byte
+		var provider sql.NullString
+		var embeddingDim int
 
-		err := rows.Scan(&doc.UserID, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &metadataJSON, &doc.CreatedAt)
+		err := rows.Scan(&doc.UserID, &provider, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &embeddingDim, &metadataJSON, &doc.CreatedAt)
 		if err != nil {
-			logger.Warn("ListModelEmbeddings: ошибка сканирования строки: %v", err)
 			continue
 		}
 
 		// Парсим VECTOR в []float32
-		doc.Embedding, err = stringToVector(embeddingStr)
+		fullEmbedding, err := stringToVector(embeddingStr)
 		if err != nil {
-			logger.Warn("ListModelEmbeddings: ошибка парсинга эмбеддинга: %v", err)
 			continue
+		}
+
+		// Обрезаем до реальной размерности (убираем padding)
+		if embeddingDim > 0 && embeddingDim <= len(fullEmbedding) {
+			doc.Embedding = fullEmbedding[:embeddingDim]
+		} else {
+			doc.Embedding = fullEmbedding
 		}
 
 		if len(metadataJSON) > 0 {
 			if err := json.Unmarshal(metadataJSON, &doc.Metadata); err != nil {
-				logger.Warn("ListModelEmbeddings: ошибка десериализации метаданных: %v", err)
+				return nil, fmt.Errorf("ListModelEmbeddings: ошибка десериализации метаданных: %v", err)
 			}
 		}
 
@@ -175,38 +192,51 @@ func (d *DB) ListModelEmbeddings(modelId uint64) ([]create.VectorDocument, error
 }
 
 // SearchSimilarEmbeddings ищет похожие эмбеддинги в рамках конкретной модели используя нативную функцию VEC_Distance_Cosine в MariaDB 12
+// Поддерживает динамические размерности: сравнивает только первые N измерений вектора согласно embedding_dim
+// Фильтрует по provider для поиска только среди документов своего провайдера
 // Это намного быстрее чем вычисление в Go, т.к. выполняется на уровне БД с векторными индексами
-func (d *DB) SearchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]create.VectorDocument, error) {
+func (d *DB) SearchSimilarEmbeddings(modelId uint64, provider create.ProviderType, queryEmbedding []float32, limit int) ([]create.VectorDocument, error) {
 	ctx, cancel := context.WithTimeout(d.MainCTX(), time.Duration(sqlTimeToCancel)*time.Second)
 	defer cancel()
 
 	// Валидация размерности
-	if len(queryEmbedding) != 768 {
-		return nil, fmt.Errorf("неверная размерность эмбеддинга запроса: ожидается 768, получено %d", len(queryEmbedding))
+	queryDim := len(queryEmbedding)
+	if queryDim != 512 && queryDim != 768 && queryDim != 1536 && queryDim != 3072 {
+		return nil, fmt.Errorf("неподдерживаемая размерность эмбеддинга запроса: %d (допустимо: 512, 768, 1536, 3072)", queryDim)
 	}
 
+	// Дополняем нулями до 3072 для совместимости с VECTOR(3072)
+	paddedQuery := make([]float32, 3072)
+	copy(paddedQuery, queryEmbedding)
+
 	// Конвертируем queryEmbedding в строку для VECTOR
-	queryStr := vectorToString(queryEmbedding)
+	queryStr := vectorToString(paddedQuery)
+
+	// Конвертируем ProviderType в строку для фильтрации
+	providerStr := provider.String()
 
 	// Используем нативную функцию VEC_Distance_Cosine для вычисления сходства
+	// Фильтруем по размерности и провайдеру для корректного сравнения
 	// Чем меньше distance, тем больше похожи векторы
 	// Косинусное расстояние = 1 - косинусное сходство
 	// Поэтому сортируем по возрастанию distance
 	query := `SELECT 
                 user_id,
+                provider,
                 doc_id, 
                 doc_name, 
                 content, 
                 VEC_ToText(embedding) as embedding_text,
+                embedding_dim,
                 metadata, 
                 created_at,
                 VEC_Distance_Cosine(embedding, VEC_FromText(?)) as distance
               FROM vector_embeddings 
-              WHERE model_id = ?
+              WHERE model_id = ? AND embedding_dim = ? AND provider = ?
               ORDER BY distance ASC
               LIMIT ?`
 
-	rows, err := d.Conn().QueryContext(ctx, query, queryStr, modelId, limit)
+	rows, err := d.Conn().QueryContext(ctx, query, queryStr, modelId, queryDim, providerStr, limit)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка поиска похожих эмбеддингов: %w", err)
 	}
@@ -217,24 +247,31 @@ func (d *DB) SearchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, l
 		var doc create.VectorDocument
 		var embeddingStr string
 		var metadataJSON []byte
+		var provider sql.NullString
+		var embeddingDim int
 		var distance float32 // Не используется в результате, но нужен для Scan
 
-		err := rows.Scan(&doc.UserID, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &metadataJSON, &doc.CreatedAt, &distance)
+		err := rows.Scan(&doc.UserID, &provider, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &embeddingDim, &metadataJSON, &doc.CreatedAt, &distance)
 		if err != nil {
-			logger.Warn("SearchSimilarEmbeddings: ошибка сканирования строки: %v", err)
 			continue
 		}
 
 		// Парсим VECTOR в []float32
-		doc.Embedding, err = stringToVector(embeddingStr)
+		fullEmbedding, err := stringToVector(embeddingStr)
 		if err != nil {
-			logger.Warn("SearchSimilarEmbeddings: ошибка парсинга эмбеддинга: %v", err)
 			continue
+		}
+
+		// Обрезаем до реальной размерности (убираем padding)
+		if embeddingDim > 0 && embeddingDim <= len(fullEmbedding) {
+			doc.Embedding = fullEmbedding[:embeddingDim]
+		} else {
+			doc.Embedding = fullEmbedding
 		}
 
 		if len(metadataJSON) > 0 {
 			if err := json.Unmarshal(metadataJSON, &doc.Metadata); err != nil {
-				logger.Warn("SearchSimilarEmbeddings: ошибка десериализации метаданных: %v", err)
+				return nil, fmt.Errorf("SearchSimilarEmbeddings: ошибка десериализации метаданных: %v", err)
 			}
 		}
 

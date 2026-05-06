@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
@@ -24,22 +23,20 @@ func (m *MistralModel) UploadFileToProvider(userId uint32, fileName string, file
 	// 1. Получить или создать библиотеку для userId
 	libraryID, err := m.getOrCreateUserLibrary(userId)
 	if err != nil {
-		logger.Error("Ошибка получения/создания библиотеки: %v", err, userId)
 		return "", fmt.Errorf("не удалось получить/создать библиотеку: %w", err)
 	}
 
 	// 2. Загрузить документ в библиотеку через Mistral API
 	documentID, err := m.client.UploadDocumentToLibrary(libraryID, fileName, fileData)
 	if err != nil {
-		logger.Error("Ошибка загрузки документа %s в библиотеку %s: %v", fileName, libraryID, err, userId)
 		return "", fmt.Errorf("не удалось загрузить документ в библиотеку: %w", err)
 	}
 
-	logger.Info("Документ %s успешно загружен в библиотеку %s (ID: %s)", fileName, libraryID, documentID, userId)
+	//logger.Debug("Документ %s успешно загружен в библиотеку %s (ID: %s)", fileName, libraryID, documentID, userId)
 
 	// 3. Сохранить информацию о файле в БД (в FileIds)
 	if err := m.addFileToDatabase(userId, documentID, fileName); err != nil {
-		logger.Error("Ошибка сохранения информации о файле %s в БД: %v", fileName, err, userId)
+		//logger.Error("Ошибка сохранения информации о файле %s в БД: %v", fileName, err, userId)
 		// Не возвращаем ошибку - файл уже загружен в Mistral, просто логируем
 	}
 
@@ -58,7 +55,6 @@ func (m *MistralModel) DeleteDocumentFromLibrary(userId uint32, documentID strin
 	// Получаем библиотеку пользователя из БД
 	libraryID, err := m.getUserLibraryID(userId)
 	if err != nil {
-		logger.Error("Ошибка получения библиотеки: %v", err, userId)
 		return fmt.Errorf("не удалось получить библиотеку пользователя: %w", err)
 	}
 
@@ -66,34 +62,33 @@ func (m *MistralModel) DeleteDocumentFromLibrary(userId uint32, documentID strin
 	// Согласно документации: DELETE /v1/libraries/{library_id}/documents/{document_id}
 	err = m.client.DeleteDocumentFromLibrary(libraryID, documentID)
 	if err != nil {
-		logger.Error("Ошибка удаления документа %s из библиотеки %s: %v", documentID, libraryID, err, userId)
 		return fmt.Errorf("не удалось удалить документ из библиотеки: %w", err)
 	}
 
-	logger.Info("Документ %s успешно удалён из библиотеки %s", documentID, libraryID, userId)
+	//logger.Debug("Документ %s успешно удалён из библиотеки %s", documentID, libraryID, userId)
 
 	// Удаляем информацию о файле из БД (из FileIds)
 	remainingFiles, err := m.removeFileFromDatabase(userId, documentID)
 	if err != nil {
-		logger.Error("Ошибка удаления информации о файле %s из БД: %v", documentID, err, userId)
+		//logger.Error("Ошибка удаления информации о файле %s из БД: %v", documentID, err, userId)
 		// Не возвращаем ошибку - файл уже удален из Mistral, просто логируем
 	}
 
 	// Если после удаления файла в библиотеке не осталось документов - удаляем саму библиотеку
 	if remainingFiles == 0 {
-		logger.Info("В библиотеке %s не осталось файлов, удаляем её", libraryID, userId)
+		//logger.Debug("В библиотеке %s не осталось файлов, удаляем её", libraryID, userId)
 
 		// Удаляем библиотеку через Mistral API
 		if err := m.client.DeleteLibrary(libraryID); err != nil {
-			logger.Error("Ошибка удаления пустой библиотеки %s: %v", libraryID, err, userId)
+			//logger.Error("Ошибка удаления пустой библиотеки %s: %v", libraryID, err, userId)
 			// Не критично, просто логируем
-		} else {
-			logger.Info("Пустая библиотека %s успешно удалена", libraryID, userId)
+			//} else {
+			//	logger.Debug("Пустая библиотека %s успешно удалена", libraryID, userId)
 		}
 
 		// Удаляем VectorId из БД (очищаем информацию о библиотеке)
 		if err := m.clearLibraryID(userId); err != nil {
-			logger.Error("Ошибка очистки library_id в БД: %v", err, userId)
+			//logger.Error("Ошибка очистки library_id в БД: %v", err, userId)
 			// Не критично
 		}
 	}
@@ -106,25 +101,24 @@ func (m *MistralModel) DeleteDocumentFromLibrary(userId uint32, documentID strin
 // ПРИМЕЧАНИЕ: В Mistral файлы загружаются непосредственно в библиотеку
 // Этот метод вызывается после UploadFileToProvider, когда файл уже загружен
 // fileID - это documentID, который был возвращён при загрузке
-func (m *MistralModel) AddFileToLibrary(userId uint32, fileID, fileName string) error {
+func (m *MistralModel) AddFileToLibrary(userId uint32, fileID, _ string) error {
 	// В Mistral файлы загружаются сразу в библиотеку через UploadFileFromVectorStorage
 	// Этот метод нужен для совместимости с интерфейсом, но фактически файл уже в библиотеке
 	// Просто проверяем, что документ существует
 
 	libraryID, err := m.getUserLibraryID(userId)
 	if err != nil {
-		logger.Error("Ошибка получения библиотеки: %v", err, userId)
 		return fmt.Errorf("не удалось получить библиотеку пользователя: %w", err)
 	}
 
 	// Проверяем статус документа
-	status, err := m.client.GetDocumentStatus(libraryID, fileID)
+	//status, err := m.client.GetDocumentStatus(libraryID, fileID)
+	_, err = m.client.GetDocumentStatus(libraryID, fileID)
 	if err != nil {
-		logger.Error("Ошибка проверки статуса документа %s в библиотеке %s: %v", fileID, libraryID, err, userId)
 		return fmt.Errorf("не удалось проверить статус документа: %w", err)
 	}
 
-	logger.Info("Документ %s (%s) находится в библиотеке %s со статусом: %s", fileName, fileID, libraryID, status, userId)
+	//logger.Debug("Документ %s (%s) находится в библиотеке %s со статусом: %s", fileName, fileID, libraryID, status, userId)
 	return nil
 }
 
@@ -134,7 +128,6 @@ func (m *MistralModel) getUserLibraryID(userId uint32) (string, error) {
 	// Получаем все модели пользователя
 	userModels, err := m.db.GetAllUserModels(userId)
 	if err != nil {
-		logger.Error("Ошибка получения моделей пользователя %d: %v", userId, err, userId)
 		return "", fmt.Errorf("не удалось получить модели пользователя: %w", err)
 	}
 
@@ -148,7 +141,6 @@ func (m *MistralModel) getUserLibraryID(userId uint32) (string, error) {
 	}
 
 	if mistralModel == nil {
-		logger.Error("Модель Mistral не найдена", userId)
 		return "", fmt.Errorf("модель Mistral не найдена для пользователя %d", userId)
 	}
 
@@ -156,14 +148,12 @@ func (m *MistralModel) getUserLibraryID(userId uint32) (string, error) {
 	var vecIds create.VecIds
 	if len(mistralModel.AllIds) > 0 {
 		if err := json.Unmarshal(mistralModel.AllIds, &vecIds); err != nil {
-			logger.Error("Ошибка десериализации AllIds: %v", err, userId)
 			return "", fmt.Errorf("не удалось получить данные библиотеки: %w", err)
 		}
 	}
 
 	// Библиотека хранится в VecIds.VectorId
 	if len(vecIds.VectorId) == 0 {
-		logger.Warn("Библиотека не найдена в модели", userId)
 		return "", fmt.Errorf("библиотека не создана для пользователя %d", userId)
 	}
 
@@ -183,14 +173,13 @@ func (m *MistralModel) getOrCreateUserLibrary(userId uint32) (string, error) {
 	}
 
 	// Библиотека не найдена, создаём новую
-	logger.Info("Создание новой библиотеки", userId)
+	//logger.Debug("Создание новой библиотеки", userId)
 
 	libraryName := fmt.Sprintf("Library_User_%d", userId)
 	libraryDescription := fmt.Sprintf("Библиотека документов для пользователя %d", userId)
 
 	library, err := m.client.CreateLibrary(libraryName, libraryDescription)
 	if err != nil {
-		logger.Error("Ошибка создания библиотеки: %v", err, userId)
 		return "", fmt.Errorf("не удалось создать библиотеку: %w", err)
 	}
 
@@ -199,11 +188,10 @@ func (m *MistralModel) getOrCreateUserLibrary(userId uint32) (string, error) {
 	if err != nil {
 		// Пытаемся удалить созданную библиотеку при ошибке сохранения
 		_ = m.client.DeleteLibrary(library.ID)
-		logger.Error("Ошибка сохранения library_id в БД: %v", err, userId)
 		return "", fmt.Errorf("не удалось сохранить library_id в БД: %w", err)
 	}
 
-	logger.Info("Создана новая библиотека %s", library.ID, userId)
+	//logger.Debug("Создана новая библиотека %s", library.ID, userId)
 	return library.ID, nil
 }
 
@@ -212,7 +200,6 @@ func (m *MistralModel) saveLibraryID(userId uint32, libraryID string) error {
 	// Получаем все модели пользователя
 	userModels, err := m.db.GetAllUserModels(userId)
 	if err != nil {
-		logger.Error("Ошибка получения моделей для сохранения library_id: %v", err, userId)
 		return fmt.Errorf("не удалось получить модели пользователя: %w", err)
 	}
 
@@ -226,7 +213,6 @@ func (m *MistralModel) saveLibraryID(userId uint32, libraryID string) error {
 	}
 
 	if mistralModel == nil {
-		logger.Error("Модель Mistral не найдена", userId)
 		return fmt.Errorf("модель Mistral не найдена для пользователя %d", userId)
 	}
 
@@ -234,7 +220,7 @@ func (m *MistralModel) saveLibraryID(userId uint32, libraryID string) error {
 	var vecIds create.VecIds
 	if len(mistralModel.AllIds) > 0 {
 		if err := json.Unmarshal(mistralModel.AllIds, &vecIds); err != nil {
-			logger.Warn("Ошибка десериализации AllIds, создаём новую структуру: %v", err, userId)
+			//logger.Warn("Ошибка десериализации AllIds, создаём новую структуру: %v", err, userId)
 			vecIds = create.VecIds{
 				FileIds: mistralModel.FileIds, // Сохраняем существующие файлы
 			}
@@ -251,18 +237,16 @@ func (m *MistralModel) saveLibraryID(userId uint32, libraryID string) error {
 	// Сериализуем обновлённые данные
 	updatedAllIds, err := json.Marshal(vecIds)
 	if err != nil {
-		logger.Error("Ошибка сериализации VecIds: %v", err, userId)
 		return fmt.Errorf("не удалось сериализовать данные библиотеки: %w", err)
 	}
 
 	// Обновляем AllIds в БД напрямую через метод БД
 	err = m.db.UpdateUserGPT(userId, mistralModel.ModelId, mistralModel.AssistId, updatedAllIds)
 	if err != nil {
-		logger.Error("Ошибка сохранения library_id в БД: %v", err, userId)
 		return fmt.Errorf("не удалось обновить модель с library_id: %w", err)
 	}
 
-	logger.Info("Library ID %s успешно сохранён", libraryID, userId)
+	//logger.Debug("Library ID %s успешно сохранён", libraryID, userId)
 	return nil
 }
 
@@ -291,7 +275,7 @@ func (m *MistralModel) addFileToDatabase(userId uint32, fileID, fileName string)
 	var vecIds create.VecIds
 	if len(mistralModel.AllIds) > 0 {
 		if err := json.Unmarshal(mistralModel.AllIds, &vecIds); err != nil {
-			logger.Warn("Ошибка десериализации AllIds: %v", err, userId)
+			//logger.Warn("Ошибка десериализации AllIds: %v", err, userId)
 			// Создаём новую структуру, сохраняя FileIds из mistralModel
 			vecIds = create.VecIds{
 				FileIds:  mistralModel.FileIds,
@@ -314,7 +298,7 @@ func (m *MistralModel) addFileToDatabase(userId uint32, fileID, fileName string)
 	// Проверяем, нет ли уже такого файла
 	for _, existingFile := range vecIds.FileIds {
 		if existingFile.ID == fileID {
-			logger.Warn("Файл %s уже существует в FileIds", fileID, userId)
+			//logger.Warn("Файл %s уже существует в FileIds", fileID, userId)
 			return nil // Не ошибка, просто уже есть
 		}
 	}
@@ -337,7 +321,7 @@ func (m *MistralModel) addFileToDatabase(userId uint32, fileID, fileName string)
 		return fmt.Errorf("не удалось обновить FileIds в БД: %w", err)
 	}
 
-	logger.Info("Файл %s (%d) добавлен в FileIds", fileName, fileID, userId)
+	//logger.Debug("Файл %s (%d) добавлен в FileIds", fileName, fileID, userId)
 	return nil
 }
 
@@ -367,14 +351,14 @@ func (m *MistralModel) removeFileFromDatabase(userId uint32, fileID string) (int
 	var vecIds create.VecIds
 	if len(mistralModel.AllIds) > 0 {
 		if err := json.Unmarshal(mistralModel.AllIds, &vecIds); err != nil {
-			logger.Warn("Ошибка десериализации AllIds: %v", err, userId)
+			//logger.Warn("Ошибка десериализации AllIds: %v", err, userId)
 			return 0, nil // Не критично, просто нечего удалять
 		}
 	}
 
 	// Если FileIds пусто, то нечего удалять
 	if len(vecIds.FileIds) == 0 {
-		logger.Warn("FileIds пусто, нечего удалять для файла %s", fileID, userId)
+		//logger.Warn("FileIds пусто, нечего удалять для файла %s", fileID, userId)
 		return 0, nil
 	}
 
@@ -390,7 +374,7 @@ func (m *MistralModel) removeFileFromDatabase(userId uint32, fileID string) (int
 	}
 
 	if !found {
-		logger.Warn("Файл %s не найден в FileIds", fileID, userId)
+		//logger.Warn("Файл %s не найден в FileIds", fileID, userId)
 		return len(vecIds.FileIds), nil // Возвращаем текущее количество
 	}
 
@@ -410,7 +394,7 @@ func (m *MistralModel) removeFileFromDatabase(userId uint32, fileID string) (int
 	}
 
 	remainingCount := len(newFileIds)
-	logger.Info("Файл %s удалён из FileIds (осталось файлов: %d)", fileID, remainingCount, userId)
+	//logger.Debug("Файл %s удалён из FileIds (осталось файлов: %d)", fileID, remainingCount, userId)
 	return remainingCount, nil
 }
 
@@ -446,6 +430,6 @@ func (m *MistralModel) clearLibraryID(userId uint32) error {
 		return fmt.Errorf("не удалось обновить VectorId в БД: %w", err)
 	}
 
-	logger.Info("Library ID очищен (установлен NULL)", userId)
+	//logger.Debug("Library ID очищен (установлен NULL)", userId)
 	return nil
 }

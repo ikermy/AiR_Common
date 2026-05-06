@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,10 +15,8 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
-	"github.com/sashabaranov/go-openai"
 )
 
 // ============================================================================
@@ -31,16 +30,18 @@ type DB = comdb.Exterior
 type Inter interface {
 	NewMessage(operator Operator, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message
 	GetFileAsReader(userId uint32, url string) (io.Reader, error)
-	GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error)
+	GetOrSetRespGPT(assist Assistant, dialogID, respId uint64, respName string) (*RespModel, error)
 	GetCh(respId uint64) (*Ch, error)
-	GetRespIdByDialogId(dialogId uint64) (uint64, error)
+	GetRespIdBydialogID(dialogID uint64) (uint64, error)
 	SaveAllContextDuringExit()
-	Request(userId uint32, dialogId uint64, text string, files ...FileUpload) (AssistResponse, error)
-	CleanDialogData(dialogId uint64)
+	Request(userId uint32, dialogID uint64, text string, files ...FileUpload) (AssistResponse, error)
+	RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...FileUpload) error
+	CleanDialogData(dialogID uint64)
 	DeleteTempFile(fileID string) error
 	TranscribeAudio(userId uint32, audioData []byte, fileName string) (string, error)
-	CleanUp() // Фоновая очистка устаревших записей
-	Shutdown()
+	CleanUp()                                     // Фоновая очистка устаревших записей
+	InvalidateUserAgentConfigCache(userId uint32) // Инвалидирует кэш конфигурации модели для пользователя
+	Shutdown(shutCh chan<- map[string]any)
 }
 
 // RouterInterface минимальный интерфейс для доступа к методам роутера
@@ -58,10 +59,11 @@ type OpenAIManager interface {
 	// fileIDs должен быть типа []create.Ids из пакета pkg/model/create
 	CreateModel(userId uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error)
 
-	// Методы для работы с файлами OpenAI (специфичные для OpenAI)
-	UploadFileFromVectorStorage(fileName string, fileData []byte) (string, error)
-	DeleteFileFromVectorStorage(fileID string) error
-	AddFileFromVectorStorage(userId uint32, fileID, fileName string) error
+	// Vector Embedding methods - работа со встроенным векторным хранилищем (OpenAI Embeddings API + MariaDB)
+	UploadDocumentWithEmbedding(userId uint32, docName, content string, metadata create.DocumentMetadata) (string, error)
+	SearchSimilarDocuments(userId uint32, query string, limit int) ([]create.VectorDocument, error)
+	DeleteDocument(userId uint32, docID string) error
+	ListUserDocuments(userId uint32) ([]create.VectorDocument, error)
 }
 
 // MistralManager расширяет Inter для Mistral-специфичных методов работы с библиотеками
@@ -93,7 +95,84 @@ type GoogleManager interface {
 // ActionHandler интерфейс для обработки функций ассистента
 type ActionHandler interface {
 	RunAction(ctx context.Context, functionName, arguments string, provider create.ProviderType) string
-	GetTools(provider create.ProviderType) interface{} // Возвращает инструменты для конкретного провайдера
+}
+
+// RealtimeEvent — событие голосовой сессии OpenAI Realtime API.
+// Передаётся из pump-горутин в WebSocket-хендлер клиента.
+// Type: "audio_delta" | "transcript_delta" | "input_transcript_done" |
+//
+//	"response_done" | "function_result" | "error"
+type RealtimeEvent struct {
+	Type  string
+	Text  string
+	Data  []byte
+	Err   error
+	Files []File // файлы, накопленные за response-цикл — передаются клиенту в response_done
+}
+
+// RealtimeProvider опциональный интерфейс для голосовых сессий реального времени.
+// Реализуется только OpenAIModel (Mistral и Google не поддерживают Realtime API).
+type RealtimeProvider interface {
+	// StartRealtimeSession создаёт WSS-соединение к OpenAI Realtime API.
+	// RespModel с RealtimeEnabled=true должен существовать к моменту вызова.
+	StartRealtimeSession(userId uint32, dialogID, respId uint64) error
+	// CloseRealtimeSession завершает голосовую сессию respId.
+	CloseRealtimeSession(respId uint64)
+	// SendRealtimeAudio ставит PCM16-чанк в очередь отправки к OpenAI.
+	SendRealtimeAudio(respId uint64, pcm16 []byte) error
+	// SubscribeEvents регистрирует подписчика на управляющие события сессии.
+	// Возвращает канал событий. Вызывается WebSocket-клиентом при подключении.
+	// Telegram-звонок не подписывается — pumpFromOpenAI не блокируется при отсутствии подписчиков.
+	SubscribeEvents(respId uint64) (<-chan RealtimeEvent, error)
+	// UnsubscribeEvents удаляет подписчика и закрывает его канал.
+	// Вызывается WebSocket-клиентом при отключении.
+	UnsubscribeEvents(respId uint64, sub <-chan RealtimeEvent)
+	// GetRealtimeAudio возвращает канал PCM16-дельт от ассистента для respId.
+	GetRealtimeAudio(respId uint64) (<-chan []byte, error)
+	// GetRealtimeDrain возвращает канал сигналов DrainPlayback (VAD speech_started) для respId.
+	GetRealtimeDrain(respId uint64) (<-chan struct{}, error)
+	// GetRealtimeGenerating возвращает указатель на флаг IsGenerating (true = OpenAI генерирует ответ).
+	// Используется для аттенюации входящего аудио во время генерации (подавление эха).
+	GetRealtimeGenerating(respId uint64) *atomic.Bool
+	// SetRealtimeDisconnectCallback устанавливает callback вызываемый при критическом таймауте watchdog.
+	// Используется для завершения звонка (Telegram) при том что модель совсем не отвечает.
+	// callback получает respId сессии для очистки соответствующей callSession.
+	SetRealtimeDisconnectCallback(respId uint64, callback func(respId uint64)) error
+}
+
+// ============================================================================
+// HELPER ФУНКЦИИ ДЛЯ СОЗДАНИЯ РЕСПОНДЕНТОВ
+// ============================================================================
+
+// CreateBaseResponder создаёт базовые компоненты для респондента
+// Используется всеми провайдерами для устранения дублирования кода
+// Возвращает: context, cancel функцию, канал Ch и время TTL
+func CreateBaseResponder(parentCtx context.Context, ttl time.Duration,
+	assist Assistant, dialogID uint64, respName string) (context.Context, context.CancelFunc, *Ch, time.Time) {
+
+	userCtx, cancel := context.WithCancel(parentCtx)
+
+	ch := &Ch{
+		TxCh:     make(chan Message, create.TxChanBuffer),
+		RxCh:     make(chan Message, create.RxChanBuffer),
+		UserID:   assist.UserId,
+		DialogID: dialogID,
+		RespName: respName,
+	}
+
+	ttlTime := time.Now().Add(ttl)
+
+	return userCtx, cancel, ch, ttlTime
+}
+
+// NotifyWaitChannels уведомляет ожидающие горутины о создании респондента
+// Используется всеми провайдерами для обработки waitChannels после создания респондента
+func NotifyWaitChannels(waitChannels *sync.Map, respId uint64) {
+	if waitChIface, exists := waitChannels.Load(respId); exists {
+		waitCh := waitChIface.(chan struct{})
+		close(waitCh)
+		waitChannels.Delete(respId)
+	}
 }
 
 // ============================================================================
@@ -127,23 +206,23 @@ type Assistant struct {
 	Ignore     bool
 }
 
-// RespModel модель респондента
+// RespModel универсальная структура респондента для всех провайдеров
+// Провайдеро-специфичные данные хранятся во внутренних структурах (openai.RespModel, mistral.RespModel и т.д.)
+// и конвертируются в эту структуру через методы convertToModelRespModel
 type RespModel struct {
-	Ctx       context.Context
-	Cancel    context.CancelFunc
-	TreadsGPT map[uint64]*openai.Thread
-	Chan      map[uint64]*Ch
-	TTL       time.Time
-	Assist    Assistant
-	RespName  string
-	Services  Services
-	mu        sync.RWMutex
+	Ctx      context.Context
+	Cancel   context.CancelFunc
+	Chan     map[uint64]*Ch // Map каналов для поддержки множественных DialogID
+	TTL      time.Time
+	Assist   Assistant
+	RespName string
+	Services Services // Для запуска только по одному экземпляру на респондента
 }
 
 // Services структура для отслеживания активных сервисов
 type Services struct {
-	Listener   atomic.Bool
-	Respondent atomic.Bool
+	Listener   *atomic.Bool
+	Respondent *atomic.Bool
 }
 
 // Action действия для выполнения
@@ -181,8 +260,8 @@ type AssistResponse struct {
 type Ch struct {
 	TxCh     chan Message
 	RxCh     chan Message
-	UserId   uint32
-	DialogId uint64
+	UserID   uint32
+	DialogID uint64
 	RespName string
 	txClosed atomic.Bool // Флаг закрытия TxCh
 	rxClosed atomic.Bool // Флаг закрытия RxCh
@@ -201,12 +280,12 @@ func (ch *Ch) IsRxOpen() bool {
 // SendToTx безопасно отправляет сообщение в TxCh
 func (ch *Ch) SendToTx(msg Message) error {
 	if !ch.IsTxOpen() {
-		return fmt.Errorf("канал TxCh закрыт для dialogId %d", ch.DialogId)
+		return fmt.Errorf("канал TxCh закрыт для DialogID %d", ch.DialogID)
 	}
 
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Error("Паника при отправке в TxCh для dialogId %d: %v", ch.DialogId, r)
+			//logger.Error("Паника при отправке в TxCh для DialogID %d: %v", ch.DialogID, r)
 		}
 	}()
 
@@ -214,20 +293,19 @@ func (ch *Ch) SendToTx(msg Message) error {
 	case ch.TxCh <- msg:
 		return nil
 	case <-time.After(1 * time.Second):
-		return fmt.Errorf("таймаут отправки в TxCh для dialogId %d", ch.DialogId)
+		return fmt.Errorf("таймаут отправки в TxCh для DialogID %d", ch.DialogID)
 	}
 }
 
 // SendToRx безопасно отправляет сообщение в RxCh
 func (ch *Ch) SendToRx(msg Message) error {
 	if !ch.IsRxOpen() {
-		logger.Warn("SendToRx: канал RxCh закрыт для dialogId %d, userId %d", ch.DialogId, ch.UserId)
-		return fmt.Errorf("канал RxCh закрыт для dialogId %d", ch.DialogId)
+		return fmt.Errorf("канал RxCh закрыт для DialogID %d", ch.DialogID)
 	}
 
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Error("Паника при отправке в RxCh для dialogId %d: %v", ch.DialogId, r)
+			//logger.Error("Паника при отправке в RxCh для DialogID %d: %v", ch.DialogID, r)
 		}
 	}()
 
@@ -235,8 +313,7 @@ func (ch *Ch) SendToRx(msg Message) error {
 	case ch.RxCh <- msg:
 		return nil
 	default:
-		logger.Warn("SendToRx: канал RxCh переполнен для dialogId %d, userId %d", ch.DialogId, ch.UserId)
-		return fmt.Errorf("канал RxCh переполнен для dialogId %d", ch.DialogId)
+		return fmt.Errorf("канал RxCh переполнен для DialogID %d", ch.DialogID)
 	}
 }
 
@@ -249,6 +326,10 @@ func (ch *Ch) Close() error {
 
 // CloseTx безопасно закрывает TxCh
 func (ch *Ch) CloseTx() {
+	// Проверяем, не закрыт ли уже канал
+	if !ch.IsTxOpen() {
+		return
+	}
 	ch.txClosed.Store(true)
 	time.Sleep(10 * time.Millisecond)
 	safeCloseMessage(ch.TxCh)
@@ -256,6 +337,10 @@ func (ch *Ch) CloseTx() {
 
 // CloseRx безопасно закрывает RxCh
 func (ch *Ch) CloseRx() {
+	// Проверяем, не закрыт ли уже канал
+	if !ch.IsRxOpen() {
+		return
+	}
 	ch.rxClosed.Store(true)
 	time.Sleep(10 * time.Millisecond)
 	safeCloseMessage(ch.RxCh)
@@ -265,7 +350,7 @@ func (ch *Ch) CloseRx() {
 func safeCloseMessage(ch chan Message) {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Error("Паника при закрытии канала: %v", r)
+			//logger.Error("Паника при закрытии канала: %v", r)
 		}
 	}()
 	close(ch)
@@ -369,36 +454,35 @@ func NewModelRouter(ctx context.Context, conf *conf.Conf, db DB, options ...Rout
 	if managerDB, ok := db.(create.DB); ok {
 		router.modelsManager = create.New(ctx, managerDB, conf)
 	} else {
-		logger.Fatalf("DB не реализует create.DB, невозможна инициализация ModelRouter")
+		log.Fatalf("DB не реализует create.DB, невозможна инициализация ModelRouter")
 	}
 
 	// Применяем опции (каждая опция создаёт свой UniversalActionHandler)
 	for _, option := range options {
 		if err := option(router, ctx, conf, db); err != nil {
-			logger.Fatalf("ошибка применения опции: %w", err)
+			log.Fatalf("ошибка применения опции: %v", err)
 		}
 	}
 
 	// Устанавливаем UniversalModel в Google модель для доступа к GetRealUserID
 	if router.google != nil {
-		logger.Debug("Google модель обнаружена, пытаемся установить UniversalModel")
 		// Используем type assertion для доступа к SetUniversalModel
 		if googleModel, ok := router.google.(interface{ SetUniversalModel(*create.UniversalModel) }); ok {
 			if router.modelsManager == nil {
-				logger.Error("КРИТИЧЕСКАЯ ОШИБКА: modelsManager == nil, не можем установить UniversalModel!")
+				log.Fatal("КРИТИЧЕСКАЯ ОШИБКА: modelsManager == nil, не можем установить UniversalModel!")
 			} else {
 				googleModel.SetUniversalModel(router.modelsManager)
 			}
 		} else {
-			logger.Error("КРИТИЧЕСКАЯ ОШИБКА: Google модель не реализует метод SetUniversalModel!")
+			log.Fatal("КРИТИЧЕСКАЯ ОШИБКА: Google модель не реализует метод SetUniversalModel!")
 		}
-	} else {
-		logger.Debug("Google модель не инициализирована, пропускаем установку UniversalModel")
+		//} else {
+		//	logger.Debug("Google модель не инициализирована, пропускаем установку UniversalModel")
 	}
 
 	// Проверяем, что хотя бы один провайдер инициализирован
 	if router.openai == nil && router.mistral == nil && router.google == nil {
-		logger.Fatalf("не инициализирован ни один провайдер моделей (используйте openai.NewAsRouterOption(), mistral.NewAsRouterOption() или google.NewAsRouterOption())")
+		log.Fatal("не инициализирован ни один провайдер моделей (используйте openai.NewAsRouterOption(), mistral.NewAsRouterOption() или google.NewAsRouterOption())")
 	}
 
 	return router
@@ -438,16 +522,6 @@ func WithGoogleModel(model Inter) RouterOption {
 		r.google = model
 		return nil
 	}
-}
-
-// CanTranscribeAudio проверяет, доступна ли транскрибация аудио
-func (r *ModelRouter) CanTranscribeAudio() bool {
-	return r.openai != nil || r.google != nil || r.mistral != nil
-}
-
-// CanProcessFiles проверяет, доступна ли обработка файлов с векторным хранилищем
-func (r *ModelRouter) CanProcessFiles() bool {
-	return r.openai != nil
 }
 
 // HasOpenAI проверяет, инициализирован ли провайдер OpenAI
@@ -549,7 +623,7 @@ func (r *ModelRouter) GetFileAsReader(userId uint32, url string) (io.Reader, err
 }
 
 // GetOrSetRespGPT делегирует к модели на основе Provider из Assistant
-func (r *ModelRouter) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64, respName string) (*RespModel, error) {
+func (r *ModelRouter) GetOrSetRespGPT(assist Assistant, dialogID, respId uint64, respName string) (*RespModel, error) {
 	// Если провайдер не установлен - это ошибка, у пользователя нет созданной модели
 	if assist.Provider == 0 {
 		return nil, fmt.Errorf("провайдер не установлен для userId=%d: у пользователя не создана модель ассистента. "+
@@ -560,7 +634,7 @@ func (r *ModelRouter) GetOrSetRespGPT(assist Assistant, dialogId, respId uint64,
 	if err != nil {
 		return nil, fmt.Errorf("не удалось получить модель для провайдера %s (userId=%d): %w", assist.Provider, assist.UserId, err)
 	}
-	return m.GetOrSetRespGPT(assist, dialogId, respId, respName)
+	return m.GetOrSetRespGPT(assist, dialogID, respId, respName)
 }
 
 // GetCh получает канал от любой модели (они хранятся в sync.Map)
@@ -586,27 +660,28 @@ func (r *ModelRouter) GetCh(respId uint64) (*Ch, error) {
 			return ch, nil
 		}
 	}
+
 	return nil, fmt.Errorf("канал не найден для respId %d", respId)
 }
 
-// GetRespIdByDialogId делегирует к обеим моделям
-func (r *ModelRouter) GetRespIdByDialogId(dialogId uint64) (uint64, error) {
+// GetRespIdBydialogID делегирует к обеим моделям
+func (r *ModelRouter) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
 	// Пробуем OpenAI
 	if r.openai != nil {
-		id, err := r.openai.GetRespIdByDialogId(dialogId)
+		id, err := r.openai.GetRespIdBydialogID(dialogID)
 		if err == nil {
 			return id, nil
 		}
 	}
 	// Затем Mistral
 	if r.mistral != nil {
-		return r.mistral.GetRespIdByDialogId(dialogId)
+		return r.mistral.GetRespIdBydialogID(dialogID)
 	}
 	// Затем Google
 	if r.google != nil {
-		return r.google.GetRespIdByDialogId(dialogId)
+		return r.google.GetRespIdBydialogID(dialogID)
 	}
-	return 0, fmt.Errorf("RespId не найден для dialogId %d", dialogId)
+	return 0, fmt.Errorf("RespId не найден для DialogID %d", dialogID)
 }
 
 // SaveAllContextDuringExit сохраняет контексты всех моделей
@@ -622,43 +697,116 @@ func (r *ModelRouter) SaveAllContextDuringExit() {
 	}
 }
 
-// Request направляет запрос к нужной модели на основе dialogId
-func (r *ModelRouter) Request(userId uint32, dialogId uint64, text string, files ...FileUpload) (AssistResponse, error) {
+// Request направляет запрос к нужной модели на основе DialogID
+func (r *ModelRouter) Request(userId uint32, dialogID uint64, text string, files ...FileUpload) (AssistResponse, error) {
 	// Определяем провайдера по наличию респондента (БЕЗ запроса к БД!)
 	if r.openai != nil {
-		_, err := r.openai.GetRespIdByDialogId(dialogId)
+		_, err := r.openai.GetRespIdBydialogID(dialogID)
 		if err == nil {
-			return r.openai.Request(userId, dialogId, text, files...)
+			return r.openai.Request(userId, dialogID, text, files...)
 		}
 	}
 
 	if r.mistral != nil {
-		_, err := r.mistral.GetRespIdByDialogId(dialogId)
+		_, err := r.mistral.GetRespIdBydialogID(dialogID)
 		if err == nil {
-			return r.mistral.Request(userId, dialogId, text, files...)
+			return r.mistral.Request(userId, dialogID, text, files...)
 		}
 	}
 
 	if r.google != nil {
-		_, err := r.google.GetRespIdByDialogId(dialogId)
+		_, err := r.google.GetRespIdBydialogID(dialogID)
 		if err == nil {
-			return r.google.Request(userId, dialogId, text, files...)
+			return r.google.Request(userId, dialogID, text, files...)
 		}
 	}
 
-	return AssistResponse{}, fmt.Errorf("модель не найдена для dialogId %d", dialogId)
+	return AssistResponse{}, fmt.Errorf("модель не найдена для DialogID %d", dialogID)
+}
+
+// RequestStreaming направляет streaming запрос к нужной модели на основе DialogID
+func (r *ModelRouter) RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...FileUpload) error {
+	// Определяем провайдера по наличию респондента (БЕЗ запроса к БД!)
+	if r.openai != nil {
+		_, err := r.openai.GetRespIdBydialogID(dialogID)
+		if err == nil {
+			// Проверяем поддержку RequestStreaming через type assertion
+			if streamer, ok := r.openai.(interface {
+				RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...FileUpload) error
+			}); ok {
+				return streamer.RequestStreaming(userId, dialogID, text, onDelta, files...)
+			}
+			// Fallback на обычный Request с буферизацией
+			response, err := r.openai.Request(userId, dialogID, text, files...)
+			if err != nil {
+				return err
+			}
+			// Сериализуем ответ и отправляем как один delta
+			jsonData, _ := json.Marshal(response)
+			if onDelta != nil {
+				onDelta(string(jsonData), true)
+			}
+			return nil
+		}
+	}
+
+	if r.mistral != nil {
+		_, err := r.mistral.GetRespIdBydialogID(dialogID)
+		if err == nil {
+			// Проверяем поддержку RequestStreaming
+			if streamer, ok := r.mistral.(interface {
+				RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...FileUpload) error
+			}); ok {
+				return streamer.RequestStreaming(userId, dialogID, text, onDelta, files...)
+			}
+			// Fallback
+			response, err := r.mistral.Request(userId, dialogID, text, files...)
+			if err != nil {
+				return err
+			}
+			jsonData, _ := json.Marshal(response)
+			if onDelta != nil {
+				onDelta(string(jsonData), true)
+			}
+			return nil
+		}
+	}
+
+	if r.google != nil {
+		_, err := r.google.GetRespIdBydialogID(dialogID)
+		if err == nil {
+			// Проверяем поддержку RequestStreaming
+			if streamer, ok := r.google.(interface {
+				RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...FileUpload) error
+			}); ok {
+				return streamer.RequestStreaming(userId, dialogID, text, onDelta, files...)
+			}
+			// Fallback
+			response, err := r.google.Request(userId, dialogID, text, files...)
+			if err != nil {
+				return err
+			}
+			jsonData, _ := json.Marshal(response)
+			if onDelta != nil {
+				onDelta(string(jsonData), true)
+			}
+			return nil
+		}
+	}
+
+	return fmt.Errorf("модель не найдена для DialogID %d", dialogID)
 }
 
 // CleanDialogData очищает данные диалога из нужной модели
-func (r *ModelRouter) CleanDialogData(dialogId uint64) {
+func (r *ModelRouter) CleanDialogData(dialogID uint64) {
 	if r.openai != nil {
-		r.openai.CleanDialogData(dialogId)
+		r.openai.CleanDialogData(dialogID)
 	}
 	if r.mistral != nil {
-		r.mistral.CleanDialogData(dialogId)
+		r.mistral.CleanDialogData(dialogID)
 	}
 	if r.google != nil {
-		r.google.CleanDialogData(dialogId)
+		r.google.CleanDialogData(dialogID)
 	}
 }
 
@@ -707,16 +855,68 @@ func (r *ModelRouter) TranscribeAudio(userId uint32, audioData []byte, fileName 
 	return manager.TranscribeAudio(userId, audioData, fileName)
 }
 
+// GetRealtimeProvider возвращает RealtimeProvider если активная модель пользователя — OpenAI
+// с включённым флагом Realtime. Второй bool = false если провайдер недоступен.
+func (r *ModelRouter) GetRealtimeProvider(userId uint32) (RealtimeProvider, bool) {
+	if r.openai == nil {
+		return nil, false
+	}
+	activeManager, err := r.GetActiveUserManager(userId)
+	if err != nil {
+		return nil, false
+	}
+	rp, ok := activeManager.(RealtimeProvider)
+	return rp, ok
+}
+
+// GetRealtimeGenerating реализует RealtimeProvider — делегирует в openai провайдер напрямую.
+func (r *ModelRouter) GetRealtimeGenerating(respId uint64) *atomic.Bool {
+	if r.openai == nil {
+		return nil
+	}
+	rp, ok := r.openai.(RealtimeProvider)
+	if !ok {
+		return nil
+	}
+	return rp.GetRealtimeGenerating(respId)
+}
+
+// DisconnectRealtimeSession завершает голосовую сессию respId с вызовом зарегистрированного callback.
+// Используется для универсального завершения сессии (API WebSocket + Telegram звонок).
+// Вызывает OnDisconnect callback если он установлен в RealtimeSession.
+func (r *ModelRouter) DisconnectRealtimeSession(respId uint64) {
+	if r.openai == nil {
+		return
+	}
+	rp, ok := r.openai.(RealtimeProvider)
+	if !ok {
+		return
+	}
+	rp.CloseRealtimeSession(respId)
+}
+
+// SetRealtimeDisconnectCallback устанавливает callback в RealtimeSession для уведомления о критическом таймауте.
+func (r *ModelRouter) SetRealtimeDisconnectCallback(respId uint64, callback func(respId uint64)) error {
+	if r.openai == nil {
+		return fmt.Errorf("SetRealtimeDisconnectCallback: OpenAI провайдер не инициализирован")
+	}
+	rp, ok := r.openai.(RealtimeProvider)
+	if !ok {
+		return fmt.Errorf("SetRealtimeDisconnectCallback: OpenAI провайдер не реализует RealtimeProvider")
+	}
+	return rp.SetRealtimeDisconnectCallback(respId, callback)
+}
+
 // Shutdown завершает работу всех моделей
-func (r *ModelRouter) Shutdown() {
+func (r *ModelRouter) Shutdown(shutCh chan<- map[string]any) {
 	if r.openai != nil {
-		r.openai.Shutdown()
+		r.openai.Shutdown(shutCh)
 	}
 	if r.mistral != nil {
-		r.mistral.Shutdown()
+		r.mistral.Shutdown(shutCh)
 	}
 	if r.google != nil {
-		r.google.Shutdown()
+		r.google.Shutdown(shutCh)
 	}
 }
 
@@ -755,12 +955,6 @@ func (r *ModelRouter) CreateModel(userId uint32, provider create.ProviderType, m
 func (r *ModelRouter) UploadFileToProvider(userId uint32, provider create.ProviderType, fileName string, fileData []byte) (string, error) {
 	switch provider {
 	case create.ProviderOpenAI:
-		if r.openai == nil {
-			return "", fmt.Errorf("OpenAI провайдер не инициализирован")
-		}
-		if manager, ok := r.openai.(OpenAIManager); ok {
-			return manager.UploadFileFromVectorStorage(fileName, fileData) // userId не нужен для OpenAI привязывается к модели
-		}
 		return "", fmt.Errorf("OpenAI провайдер не поддерживает загрузку файлов")
 
 	case create.ProviderMistral:
@@ -797,12 +991,6 @@ func (r *ModelRouter) DeleteTempFile(fileID string) error {
 func (r *ModelRouter) DeleteFileFromProvider(userId uint32, provider create.ProviderType, fileID string) error {
 	switch provider {
 	case create.ProviderOpenAI:
-		if r.openai == nil {
-			return fmt.Errorf("OpenAI провайдер не инициализирован")
-		}
-		if manager, ok := r.openai.(OpenAIManager); ok {
-			return manager.DeleteFileFromVectorStorage(fileID)
-		}
 		return fmt.Errorf("OpenAI провайдер не поддерживает удаление файлов")
 
 	case create.ProviderMistral:
@@ -830,12 +1018,6 @@ func (r *ModelRouter) DeleteFileFromProvider(userId uint32, provider create.Prov
 func (r *ModelRouter) AddFileFromFromProvider(provider create.ProviderType, userId uint32, fileID, fileName string) error {
 	switch provider {
 	case create.ProviderOpenAI:
-		if r.openai == nil {
-			return fmt.Errorf("OpenAI провайдер не инициализирован")
-		}
-		if manager, ok := r.openai.(OpenAIManager); ok {
-			return manager.AddFileFromVectorStorage(userId, fileID, fileName)
-		}
 		return fmt.Errorf("OpenAI провайдер не поддерживает добавление файлов")
 
 	case create.ProviderMistral:
@@ -856,51 +1038,164 @@ func (r *ModelRouter) AddFileFromFromProvider(provider create.ProviderType, user
 }
 
 // ===========================================================
-// Google Vector Embedding методы
+// Vector Embedding методы (Google + OpenAI)
 // ===========================================================
 
-// UploadDocumentWithEmbedding загружает документ с генерацией эмбеддинга (только Google)
-func (r *ModelRouter) UploadDocumentWithEmbedding(userId uint32, docName, content string, metadata create.DocumentMetadata) (string, error) {
-	if r.google == nil {
-		return "", fmt.Errorf("Google провайдер не инициализирован")
+// UploadDocumentWithEmbedding загружает документ с генерацией эмбеддинга
+// Поддерживает Google и OpenAI провайдеры
+func (r *ModelRouter) UploadDocumentWithEmbedding(userId uint32, provider, docName, content string, metadata create.DocumentMetadata) (string, error) {
+	providerType, err := create.FromString(provider)
+	if err != nil {
+		return "", fmt.Errorf("неверный provider: %w", err)
 	}
-	if manager, ok := r.google.(GoogleManager); ok {
-		return manager.UploadDocumentWithEmbedding(userId, docName, content, metadata)
+
+	switch providerType {
+	case create.ProviderGoogle:
+		if r.google == nil {
+			return "", fmt.Errorf("Google провайдер не инициализирован")
+		}
+		if manager, ok := r.google.(GoogleManager); ok {
+			return manager.UploadDocumentWithEmbedding(userId, docName, content, metadata)
+		}
+		return "", fmt.Errorf("Google провайдер не поддерживает загрузку документов с эмбеддингами")
+
+	case create.ProviderOpenAI:
+		if r.openai == nil {
+			return "", fmt.Errorf("OpenAI провайдер не инициализирован")
+		}
+		if manager, ok := r.openai.(OpenAIManager); ok {
+			return manager.UploadDocumentWithEmbedding(userId, docName, content, metadata)
+		}
+		return "", fmt.Errorf("OpenAI провайдер не поддерживает загрузку документов с эмбеддингами")
+
+	default:
+		return "", fmt.Errorf("провайдер %s не поддерживает эмбеддинги", provider)
 	}
-	return "", fmt.Errorf("Google провайдер не поддерживает загрузку документов с эмбеддингами")
 }
 
-// SearchSimilarDocuments ищет похожие документы в Vector Store (только Google)
-func (r *ModelRouter) SearchSimilarDocuments(userId uint32, query string, limit int) ([]create.VectorDocument, error) {
-	if r.google == nil {
-		return nil, fmt.Errorf("Google провайдер не инициализирован")
+// SearchSimilarDocuments ищет похожие документы в Vector Store
+// Поддерживает Google и OpenAI провайдеры
+func (r *ModelRouter) SearchSimilarDocuments(userId uint32, provider, query string, limit int) ([]create.VectorDocument, error) {
+	providerType, err := create.FromString(provider)
+	if err != nil {
+		return nil, fmt.Errorf("неверный provider: %w", err)
 	}
-	if manager, ok := r.google.(GoogleManager); ok {
-		return manager.SearchSimilarDocuments(userId, query, limit)
+
+	switch providerType {
+	case create.ProviderGoogle:
+		if r.google == nil {
+			return nil, fmt.Errorf("Google провайдер не инициализирован")
+		}
+		if manager, ok := r.google.(GoogleManager); ok {
+			return manager.SearchSimilarDocuments(userId, query, limit)
+		}
+		return nil, fmt.Errorf("Google провайдер не поддерживает поиск документов")
+
+	case create.ProviderOpenAI:
+		if r.openai == nil {
+			return nil, fmt.Errorf("OpenAI провайдер не инициализирован")
+		}
+		if manager, ok := r.openai.(OpenAIManager); ok {
+			return manager.SearchSimilarDocuments(userId, query, limit)
+		}
+		return nil, fmt.Errorf("OpenAI провайдер не поддерживает поиск документов")
+
+	default:
+		return nil, fmt.Errorf("провайдер %s не поддерживает эмбеддинги", provider)
 	}
-	return nil, fmt.Errorf("Google провайдер не поддерживает поиск документов")
 }
 
-// DeleteDocument удаляет документ из Vector Store (только Google)
-func (r *ModelRouter) DeleteDocument(userId uint32, docID string) error {
-	if r.google == nil {
-		return fmt.Errorf("Google провайдер не инициализирован")
+// DeleteDocument удаляет документ из Vector Store
+// Поддерживает Google и OpenAI провайдеры
+func (r *ModelRouter) DeleteDocument(userId uint32, provider, docID string) error {
+	providerType, err := create.FromString(provider)
+	if err != nil {
+		return fmt.Errorf("неверный provider: %w", err)
 	}
-	if manager, ok := r.google.(GoogleManager); ok {
-		return manager.DeleteDocument(userId, docID)
+
+	switch providerType {
+	case create.ProviderGoogle:
+		if r.google == nil {
+			return fmt.Errorf("Google провайдер не инициализирован")
+		}
+		if manager, ok := r.google.(GoogleManager); ok {
+			return manager.DeleteDocument(userId, docID)
+		}
+		return fmt.Errorf("Google провайдер не поддерживает удаление документов")
+
+	case create.ProviderOpenAI:
+		if r.openai == nil {
+			return fmt.Errorf("OpenAI провайдер не инициализирован")
+		}
+		if manager, ok := r.openai.(OpenAIManager); ok {
+			return manager.DeleteDocument(userId, docID)
+		}
+		return fmt.Errorf("OpenAI провайдер не поддерживает удаление документов")
+
+	default:
+		return fmt.Errorf("провайдер %s не поддерживает эмбеддинги", provider)
 	}
-	return fmt.Errorf("Google провайдер не поддерживает удаление документов")
 }
 
-// ListUserDocuments возвращает список документов пользователя (только Google)
-func (r *ModelRouter) ListUserDocuments(userId uint32) ([]create.VectorDocument, error) {
-	if r.google == nil {
-		return nil, fmt.Errorf("Google провайдер не инициализирован")
+// ListUserDocuments возвращает список документов пользователя
+// Поддерживает Google и OpenAI провайдеры
+// Если provider пустой, возвращает документы всех провайдеров
+func (r *ModelRouter) ListUserDocuments(userId uint32, provider string) ([]create.VectorDocument, error) {
+	// Если provider пустой - возвращаем документы всех провайдеров
+	if provider == "" {
+		var allDocs []create.VectorDocument
+
+		// Пробуем получить документы Google
+		if r.google != nil {
+			if manager, ok := r.google.(GoogleManager); ok {
+				docs, err := manager.ListUserDocuments(userId)
+				if err == nil && docs != nil {
+					allDocs = append(allDocs, docs...)
+				}
+			}
+		}
+
+		// Пробуем получить документы OpenAI
+		if r.openai != nil {
+			if manager, ok := r.openai.(OpenAIManager); ok {
+				docs, err := manager.ListUserDocuments(userId)
+				if err == nil && docs != nil {
+					allDocs = append(allDocs, docs...)
+				}
+			}
+		}
+
+		return allDocs, nil
 	}
-	if manager, ok := r.google.(GoogleManager); ok {
-		return manager.ListUserDocuments(userId)
+
+	// Если provider указан - работаем только с ним
+	providerType, err := create.FromString(provider)
+	if err != nil {
+		return nil, fmt.Errorf("неверный provider: %w", err)
 	}
-	return nil, fmt.Errorf("Google провайдер не поддерживает список документов")
+
+	switch providerType {
+	case create.ProviderGoogle:
+		if r.google == nil {
+			return nil, fmt.Errorf("Google провайдер не инициализирован")
+		}
+		if manager, ok := r.google.(GoogleManager); ok {
+			return manager.ListUserDocuments(userId)
+		}
+		return nil, fmt.Errorf("Google провайдер не поддерживает список документов")
+
+	case create.ProviderOpenAI:
+		if r.openai == nil {
+			return nil, fmt.Errorf("OpenAI провайдер не инициализирован")
+		}
+		if manager, ok := r.openai.(OpenAIManager); ok {
+			return manager.ListUserDocuments(userId)
+		}
+		return nil, fmt.Errorf("OpenAI провайдер не поддерживает список документов")
+
+	default:
+		return nil, fmt.Errorf("провайдер %s не поддерживает эмбеддинги", provider)
+	}
 }
 
 // ===========================================================
@@ -1032,4 +1327,20 @@ func (r *ModelRouter) GetRealUserID(userId uint32) (uint64, error) {
 	}
 
 	return userID, nil
+}
+
+// InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
+// Вызывается при обновлении модели чтобы новые сессии получили актуальные настройки
+// Работает со всеми провайдерами (OpenAI, Mistral, Google)
+func (mr *ModelRouter) InvalidateUserAgentConfigCache(userId uint32) {
+	if mr.openai != nil {
+		mr.openai.InvalidateUserAgentConfigCache(userId)
+	}
+	if mr.mistral != nil {
+		mr.mistral.InvalidateUserAgentConfigCache(userId)
+	}
+	if mr.google != nil {
+		mr.google.InvalidateUserAgentConfigCache(userId)
+	}
+	//logger.Debug("Инвалидирован кэш конфигурации модели для userId=%d во всех провайдерах", userId)
 }

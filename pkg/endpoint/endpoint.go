@@ -11,18 +11,17 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/common"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 )
 
 // Inter - интерфейс для работы с диалогами
 type Inter interface {
-	GetUserAsk(dialogId uint64, respId uint64) []string
-	SetUserAsk(dialogId, respId uint64, ask string, askLimit ...uint32) bool
+	GetUserAsk(dialogID uint64, respId uint64) []string
+	SetUserAsk(dialogID, respId uint64, ask string, askLimit ...uint32) bool
 	SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse)
-	GetDialogHistory(dialogId uint64, limit int) ([]Message, error)
-	Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string)
+	GetDialogHistory(dialogID uint64, limit int) ([]Message, error)
+	Meta(userId uint32, dialogID uint64, meta string, respName string, assistName string, metaAction string) error
 	SendEvent(userId uint32, event, userName, assistName, target string)
 	SendNotification(msg common.CarpCh) error
 }
@@ -67,15 +66,13 @@ func New(parent context.Context, d DB) *Endpoint {
 			select {
 			case threadId, ok := <-mode.Event:
 				if !ok {
-					logger.Error("НЕВОЗМОЖНОЕСООБЩЕНИЕ: канал Event был закрыт, сохранение диалогов по событиям остановлено")
+					//logger.Error("НЕВОЗМОЖНОЕСООБЩЕНИЕ: канал Event был закрыт, сохранение диалогов по событиям остановлено")
 					return
 				}
-				logger.Info("Endpoint: получен сигнал сохранения диалога %d", threadId)
 				e.mu.Lock()
-				e.flushThreadBatch(threadId)
+				_ = e.flushThreadBatch(threadId)
 				e.mu.Unlock()
 			case <-e.ctx.Done():
-				logger.Info("Endpoint: остановка слушателя событий по контексту")
 				return
 			}
 		}
@@ -103,27 +100,32 @@ func (e *Endpoint) CallOptionalTyped(val any) error {
 	return e.CallOptional(val)
 }
 
-// WrapOptional[T any] — helper-функция с дженериком для адаптирования функции типа T
-// к типу func(any) error. Используется вместе с SetOptional.
-//
-// Пример использования:
-//
-//	e.SetOptional(WrapOptional[int64](telegramProvider.Meta))
-func WrapOptional[T any](fn func(T) error) func(any) error {
-	if fn == nil {
-		return nil
-	}
-	return func(v any) error {
-		t, ok := v.(T)
-		if !ok {
-			return fmt.Errorf("WrapOptional: unexpected type %T, expected %T", v, *new(T))
-		}
-		return fn(t)
-	}
-}
+//// WrapOptional[T any] — helper-функция с дженериком для адаптирования функции типа T
+//// к типу func(any) error. Используется вместе с SetOptional.
+////
+//// Пример использования:
+////
+////	e.SetOptional(WrapOptional[int64](telegramProvider.Meta))
+//func WrapOptional[T any](fn func(T) error) func(any) error {
+//	if fn == nil {
+//		return nil
+//	}
+//	return func(v any) error {
+//		t, ok := v.(T)
+//		if !ok {
+//			return fmt.Errorf("WrapOptional: unexpected type %T, expected %T", v, *new(T))
+//		}
+//		return fn(t)
+//	}
+//}
 
 // Shutdown останавливает фоновые задачи и принудительно сохраняет буферы
-func (e *Endpoint) Shutdown() {
+func (e *Endpoint) Shutdown(shutCh chan<- map[string]any) {
+	shutCh <- map[string]any{"msg": "Получен сигнал завершения, сохраняем диалоги",
+		"mod":  "Endpoint",
+		"type": 3, // 3 - Debug
+		"uid":  0}
+
 	// Отменяем контекст, чтобы остановить горутины
 	if e.cancel != nil {
 		e.cancel()
@@ -131,7 +133,12 @@ func (e *Endpoint) Shutdown() {
 	// Небольшая пауза для корректной остановки горутин
 	time.Sleep(100 * time.Millisecond)
 	// Финальный flush
-	e.FlushAllBatches()
+	if err := e.FlushAllBatches(); err != nil {
+		shutCh <- map[string]any{"msg": fmt.Sprintf("Ошибка при сохранении диалогов при завершении: %v", err),
+			"mod":  "Endpoint",
+			"type": 1, // 1 - Error
+			"uid":  0}
+	}
 }
 
 func (e *Endpoint) periodicFlush() {
@@ -141,19 +148,18 @@ func (e *Endpoint) periodicFlush() {
 	for {
 		select {
 		case <-ticker.C:
-			e.FlushAllBatches()
+			_ = e.FlushAllBatches() // Игнорируем ошибки при периодическом сохранении, они будут обработаны при shutdown
 		case <-e.ctx.Done():
-			logger.Info("Endpoint: periodicFlush остановлен по контексту")
 			return
 		}
 	}
 }
 
-func (e *Endpoint) flushThreadBatch(threadId uint64) {
+func (e *Endpoint) flushThreadBatch(threadId uint64) error {
 	// Должен вызываться с заблокированным e.mu
 	batch := e.messageBatch[threadId]
 	if len(batch) == 0 {
-		return
+		return nil
 	}
 
 	// Очищаем буфер
@@ -167,28 +173,33 @@ func (e *Endpoint) flushThreadBatch(threadId uint64) {
 	for _, msg := range batch {
 		jsonData, err := json.Marshal(msg)
 		if err != nil {
-			logger.Error("Ошибка сериализации: %v", err)
 			continue
 		}
 		if err := e.db.SaveDialog(threadId, jsonData); err != nil {
-			logger.Error("Ошибка сохранения диалога: %v", err)
+			return fmt.Errorf("ошибка сохранения диалога: %v", err)
 		}
 	}
+
+	return nil
 }
 
 // FlushAllBatches принудительно сохраняет все накопленные сообщения
-func (e *Endpoint) FlushAllBatches() {
+func (e *Endpoint) FlushAllBatches() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	for threadId := range e.messageBatch {
 		if len(e.messageBatch[threadId]) > 0 {
-			e.flushThreadBatch(threadId)
+			if err := e.flushThreadBatch(threadId); err != nil {
+				return fmt.Errorf("ошибка при принудительном сохранении диалогов: %v", err)
+			}
 		}
 	}
+
+	return nil
 }
 
-func (e *Endpoint) GetUserAsk(dialogId uint64, respId uint64) []string {
+func (e *Endpoint) GetUserAsk(dialogID uint64, respId uint64) []string {
 	if e.arrMsg == nil {
 		return nil
 	}
@@ -196,15 +207,15 @@ func (e *Endpoint) GetUserAsk(dialogId uint64, respId uint64) []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if userMsgs, ok := e.arrMsg[dialogId]; ok {
+	if userMsgs, ok := e.arrMsg[dialogID]; ok {
 		res := userMsgs[respId]
-		delete(e.arrMsg[dialogId], respId)
+		delete(e.arrMsg[dialogID], respId)
 		return res
 	}
 	return nil
 }
 
-func (e *Endpoint) SetUserAsk(dialogId, respId uint64, ask string, askLimit ...uint32) bool {
+func (e *Endpoint) SetUserAsk(dialogID, respId uint64, ask string, askLimit ...uint32) bool {
 	// По умолчанию askLimit максимальный для uint32
 	var limit uint32 = 4294967295
 	if len(askLimit) > 0 {
@@ -222,37 +233,37 @@ func (e *Endpoint) SetUserAsk(dialogId, respId uint64, ask string, askLimit ...u
 	if e.arrMsg == nil {
 		e.arrMsg = make(map[uint64]map[uint64][]string)
 	}
-	if e.arrMsg[dialogId] == nil {
-		e.arrMsg[dialogId] = make(map[uint64][]string)
+	if e.arrMsg[dialogID] == nil {
+		e.arrMsg[dialogID] = make(map[uint64][]string)
 	}
 
 	// Считаю общее количество символов в сообщениях
 	totalChars := 0
-	for _, msg := range e.arrMsg[dialogId][respId] {
+	for _, msg := range e.arrMsg[dialogID][respId] {
 		totalChars += utf8.RuneCountInString(msg)
 	}
 	askChars := utf8.RuneCountInString(ask)
 	if totalChars+askChars > int(limit) {
-		logger.Warn("Превышен лимит [%d] символов %d, символов в сообщении %d", limit, askChars, totalChars)
+		//logger.Warn("Превышен лимит [%d] символов %d, символов в сообщении %d", limit, askChars, totalChars)
 		return false
 	}
 
-	e.arrMsg[dialogId][respId] = append(e.arrMsg[dialogId][respId], ask)
+	e.arrMsg[dialogID][respId] = append(e.arrMsg[dialogID][respId], ask)
 	return true
 }
 
 // GetDialogHistory получает историю диалога из памяти (messageBatch) или из БД
 // Возвращает последние N сообщений (limit) в хронологическом порядке
-func (e *Endpoint) GetDialogHistory(dialogId uint64, limit int) ([]Message, error) {
+func (e *Endpoint) GetDialogHistory(dialogID uint64, limit int) ([]Message, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	// Сначала проверяем буфер в памяти
-	batch := e.messageBatch[dialogId]
+	batch := e.messageBatch[dialogID]
 
 	if len(batch) > 0 {
 		// Есть сообщения в памяти
-		//logger.Debug("Endpoint: найдено %d сообщений в памяти для диалога %d", len(batch), dialogId)
+		//logger.Debug("Endpoint: найдено %d сообщений в памяти для диалога %d", len(batch), dialogID)
 
 		// Ограничиваем количество сообщений
 		startIdx := 0
@@ -266,19 +277,19 @@ func (e *Endpoint) GetDialogHistory(dialogId uint64, limit int) ([]Message, erro
 	}
 
 	// Если в памяти нет, читаем из БД
-	//logger.Debug("Endpoint: сообщения для диалога %d не найдены в памяти, читаем из БД", dialogId)
+	//logger.Debug("Endpoint: сообщения для диалога %d не найдены в памяти, читаем из БД", dialogID)
 
 	// Разблокируем мьютекс на время операции с БД
 	e.mu.Unlock()
 	defer e.mu.Lock()
 
-	jsonData, err := e.db.ReadDialog(dialogId, uint8(limit))
+	jsonData, err := e.db.ReadDialog(dialogID, uint8(limit))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения диалога из БД: %w", err)
 	}
 
 	if jsonData == nil || len(jsonData) == 0 {
-		//logger.Debug("Endpoint: диалог %d не найден в БД", dialogId)
+		//logger.Debug("Endpoint: диалог %d не найден в БД", dialogID)
 		return nil, nil
 	}
 
@@ -288,7 +299,7 @@ func (e *Endpoint) GetDialogHistory(dialogId uint64, limit int) ([]Message, erro
 		return nil, fmt.Errorf("ошибка парсинга данных диалога из БД: %w", err)
 	}
 
-	//logger.Debug("Endpoint: прочитано %d сообщений из БД для диалога %d", len(messages), dialogId)
+	//logger.Debug("Endpoint: прочитано %d сообщений из БД для диалога %d", len(messages), dialogID)
 	return messages, nil
 }
 
@@ -307,15 +318,17 @@ func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *m
 
 	// Если размер буфера достиг порога, сохраняем
 	if len(e.messageBatch[treadId]) >= e.batchSize {
-		e.flushThreadBatch(treadId)
+		_ = e.flushThreadBatch(treadId) // Игнорируем ошибку при периодическом сохранении, она будет обработана при shutdown
 	}
 }
 
 // Meta Метод вызывается из common.startpoint
-func (e *Endpoint) Meta(userId uint32, dialogId uint64, meta string, respName string, assistName string, metaAction string) {
-	err := e.db.UpdateDialogsMeta(dialogId, meta)
+func (e *Endpoint) Meta(userId uint32, dialogID uint64, meta string, respName string, assistName string, metaAction string) error {
+	err := e.db.UpdateDialogsMeta(dialogID, meta)
 	if err != nil {
-		logger.Error("ошибка обновления метаданных для диалога %d: %v", dialogId, err, userId)
+		return fmt.Errorf("ошибка обновления метаданных для диалога: %d, пользователь: %d: %v", userId, dialogID, err)
 	}
 	e.SendEvent(userId, meta, respName, assistName, metaAction)
+
+	return nil
 }

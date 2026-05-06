@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"golang.org/x/oauth2"
 )
@@ -35,7 +34,7 @@ func (d *DB) getModelIDByProvider(userId uint32, provider create.ProviderType) (
 	query := `
 		SELECT um.ModelId 
 		FROM user_models um
-		WHERE um.UserId = ? AND um.Provider = ?
+		WHERE um.UserID = ? AND um.Provider = ?
 		LIMIT 1
 	`
 
@@ -199,17 +198,13 @@ func (d *DB) RefreshGoogleTokenIfNeededByProvider(userId uint32, provider create
 
 	// Если токена нет, это не ошибка - просто не настроен
 	if token == nil {
-		//logger.Debug("Google OAuth токен не найден, provider=%d, пропускаем обновление", provider, userId)
 		return nil
 	}
 
 	// Проверяем, истекает ли токен в ближайшие 5 минут
 	if time.Until(token.Expiry) > 5*time.Minute {
-		//logger.Debug("Google OAuth токен, provider=%d еще действителен (истекает через %v)", provider, time.Until(token.Expiry), userId)
 		return nil
 	}
-
-	//logger.Debug("Google OAuth токен, provider=%d истекает скоро, выполняю обновление...", provider, userId)
 
 	// Обновляем токен через OAuth2
 	tokenSource := oauthConfig.TokenSource(context.Background(), token)
@@ -223,7 +218,6 @@ func (d *DB) RefreshGoogleTokenIfNeededByProvider(userId uint32, provider create
 		return fmt.Errorf("ошибка сохранения обновленного токена: %w", err)
 	}
 
-	//logger.Debug("Google OAuth токен успешно обновлен, provider=%d", provider, userId)
 	return nil
 }
 
@@ -262,7 +256,6 @@ func (d *DB) DeleteGoogleTokenByProvider(userId uint32, provider create.Provider
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		logger.Debug("Google OAuth токен не найден, provider=%d", provider, userId)
 		return nil
 	}
 

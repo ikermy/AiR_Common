@@ -7,9 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
-
-	"github.com/ikermy/AiR_Common/pkg/logger"
 )
 
 // MistralSchemaJSON - JSON Schema для структурированных ответов Mistral Agent
@@ -72,15 +71,6 @@ type MistralLibrary struct {
 	CreatedAt   string `json:"created_at,omitempty"`
 }
 
-// MistralDocument представляет документ в библиотеке Mistral
-type MistralDocument struct {
-	ID        string `json:"id"`
-	LibraryID string `json:"library_id,omitempty"`
-	FileName  string `json:"file_name"`
-	Status    string `json:"status,omitempty"` // processing, processed, failed
-	CreatedAt string `json:"created_at,omitempty"`
-}
-
 // MistralAgentClient клиент для работы с Mistral Agents API
 type MistralAgentClient struct {
 	apiKey         string
@@ -98,7 +88,7 @@ func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelR
 	// Удаляем агента через API
 	if m.mistralClient != nil {
 		if err := m.mistralClient.deleteAgent(modelData.AssistId); err != nil {
-			logger.Error("ошибка удаления Mistral агента %s: %v", modelData.AssistId, err, userId)
+			//logger.Error("ошибка удаления Mistral агента %s: %v", modelData.AssistId, err, userId)
 			// Продолжаем удаление из БД даже если не удалось удалить из API
 			if progressCallback != nil {
 				progressCallback(fmt.Sprintf("⚠️ Не удалось удалить агент из Mistral API: %v", err))
@@ -119,14 +109,14 @@ func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelR
 			provider := ProviderMistral
 			modelJSON, err := m.ReadModel(userId, &provider)
 			if err != nil {
-				logger.Error("Ошибка получения данных модели для удаления файлов: %v", err, userId)
+				//logger.Error("Ошибка получения данных модели для удаления файлов: %v", err, userId)
 			} else if modelJSON != nil && len(modelJSON.VecIds.VectorId) > 0 {
 				libraryID := modelJSON.VecIds.VectorId[0]
 
 				// Удаляем каждый документ из библиотеки
 				for i, file := range modelData.FileIds {
 					if err := m.mistralClient.DeleteDocumentFromLibrary(libraryID, file.ID); err != nil {
-						logger.Error("Ошибка удаления документа %s из библиотеки: %v", file.ID, err, userId)
+						//logger.Error("Ошибка удаления документа %s из библиотеки: %v", file.ID, err, userId)
 					}
 
 					// Отправляем прогресс каждые 5 файлов
@@ -141,7 +131,7 @@ func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelR
 				}
 
 				if err := m.mistralClient.DeleteLibrary(libraryID); err != nil {
-					logger.Error("Ошибка удаления библиотеки %s: %v", libraryID, err, userId)
+					//logger.Error("Ошибка удаления библиотеки %s: %v", libraryID, err, userId)
 					if progressCallback != nil {
 						progressCallback(fmt.Sprintf("⚠️ Не удалось удалить библиотеку: %v", err))
 					}
@@ -153,7 +143,7 @@ func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelR
 			}
 		}
 	} else {
-		logger.Warn("Mistral клиент не инициализирован, пропускаем удаление из API", userId)
+		//logger.Warn("Mistral клиент не инициализирован, пропускаем удаление из API", userId)
 		if progressCallback != nil {
 			progressCallback("⚠️ Mistral клиент не инициализирован, удаляем только из БД")
 		}
@@ -163,7 +153,7 @@ func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelR
 		progressCallback("✅ Mistral агент и файлы удалены из API")
 	}
 
-	logger.Info("Mistral модель успешно удалена из API", userId)
+	//logger.Debug("Mistral модель успешно удалена из API", userId)
 	return nil
 }
 
@@ -173,27 +163,7 @@ func (m *MistralAgentClient) deleteAgent(agentID string) error {
 	baseURL := strings.Replace(m.url, "/completions", "", 1)
 	deleteURL := fmt.Sprintf("%s/%s", baseURL, agentID)
 
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodDelete, deleteURL, nil)
-	if err != nil {
-		return fmt.Errorf("ошибка создания DELETE запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	return nil
+	return m.executeMistralDeleteRequest(deleteURL)
 }
 
 // updateMistralModelInPlace обновляет Mistral Agent
@@ -225,9 +195,11 @@ func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, upda
 
 	// Проверяем, изменились ли файлы (аналогично OpenAI)
 	// Если файлы не изменились - используем существующие VectorId (library_ids)
-	if !filesEqual(existing.FileIds, updated.FileIds) {
+	if !slices.EqualFunc(existing.FileIds, updated.FileIds, func(a, b Ids) bool {
+		return a.ID == b.ID && a.Name == b.Name
+	}) {
 		// Файлы изменились - библиотека уже обновлена, используем новые данные
-		logger.Debug("Файлы изменились, используем обновленные данные библиотеки", userId)
+		//logger.Debug("Файлы изменились, используем обновленные данные библиотеки", userId)
 	} else {
 		// Файлы не изменились - используем существующие VectorId и FileIds
 		updated.VecIds.VectorId = existing.VecIds.VectorId
@@ -236,7 +208,7 @@ func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, upda
 
 	// Удаляем старого агента
 	if err := m.mistralClient.deleteAgent(existingModelData.AssistId); err != nil {
-		logger.Warn("Не удалось удалить старого Mistral агента %s: %v", existingModelData.AssistId, err, userId)
+		//logger.Warn("Не удалось удалить старого Mistral агента %s: %v", existingModelData.AssistId, err, userId)
 	}
 
 	// Создаем нового агента с обновленными данными
@@ -250,11 +222,10 @@ func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, upda
 		return fmt.Errorf("ошибка сохранения обновленной модели в БД: %w", err)
 	}
 
-	logger.Info("Mistral Agent успешно обновлен (новый ID: %s)", umcr.AssistID, userId)
+	//logger.Debug("Mistral Agent успешно обновлен (новый ID: %s)", umcr.AssistID, userId)
 	return nil
 }
 
-// createMistralModel создаёт Mistral Agent (внутренний метод)
 // createMistralModel создаёт Mistral Agent (внутренний метод)
 func (m *UniversalModel) createMistralModel(userId uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
 	if m.mistralClient == nil {
@@ -279,7 +250,6 @@ func (m *UniversalModel) createMistralModel(userId uint32, modelData *UniversalM
 }
 
 // createMistralAgent создает нового агента с указанными параметрами
-// createMistralAgent создаёт Mistral Agent (внутренний метод)
 func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, userId uint32, fileIDs []Ids) (UMCR, error) {
 	if modelData == nil {
 		return UMCR{}, fmt.Errorf("modelData не может быть nil")
@@ -288,7 +258,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	// Убираем /completions из URL для endpoint создания агента
 	baseURL := strings.Replace(m.url, "/completions", "", 1)
 
-	description := fmt.Sprintf("Agent для пользователя %d", userId)
+	description := fmt.Sprintf("Agent for user %d", userId)
 
 	// Получаем реальный user_id через universalModel
 	realUserId, err := m.universalModel.GetRealUserID(userId)
@@ -297,145 +267,154 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	} // Формируем enhancedPrompt динамически в зависимости от возможностей модели
 	enhancedPrompt := modelData.Prompt + "\n\n"
 
-	// Напоминание о необходимости получить актуальное время с сервера для ВСЕХ моделей
-	enhancedPrompt += fmt.Sprintf("ТЕКУЩЕЕ ВРЕМЯ:\n"+
-		"ВАЖНО: Для получения актуальной даты и времени используй функцию get_current_time(user_id=\"%d\")\n"+
-		"НЕ используй свои внутренние знания о дате - они УСТАРЕЛИ!\n\n", realUserId)
+	// Reminder to get current time from server for ALL models
+	enhancedPrompt += fmt.Sprintf("CURRENT TIME:\n"+
+		"IMPORTANT: To get the current date and time use get_current_time(user_id=\"%d\")\n"+
+		"DO NOT use your internal knowledge about the date - it is OUTDATED!\n\n", realUserId)
 
-	// Добавляем важное напоминание - только для активных функций
+	// Add important reminder - only for active functions
 	if modelData.MetaAction != "" || modelData.Operator {
-		enhancedPrompt += "ВАЖНОЕ НАПОМИНАНИЕ:\n" +
-			"В КАЖДОМ ответе ты ОБЯЗАН:\n"
+		enhancedPrompt += "IMPORTANT REMINDER:\n" +
+			"In EVERY response you MUST:\n"
 
 		if modelData.MetaAction != "" {
-			enhancedPrompt += "1. Проверить условие достижения ЦЕЛИ (из твоих инструкций выше) и правильно установить target\n"
+			enhancedPrompt += "1. Check the GOAL condition (from your instructions above) and set target correctly\n"
 		}
 
 		if modelData.Operator {
-			enhancedPrompt += "2. Проверить нужен ли оператор (из твоих инструкций выше) и правильно установить operator\n"
+			enhancedPrompt += "2. Check if operator is needed (from your instructions above) and set operator correctly\n"
 		}
 
-		enhancedPrompt += "3. НЕ ИГНОРИРУЙ эти проверки!\n\n"
+		enhancedPrompt += "3. DO NOT ignore these checks!\n\n"
 	}
 
-	// Добавляем системную информацию о user_id только если есть функции для работы с файлами
+	// Add system info about user_id only if file functions are enabled
 	if modelData.S3 {
-		enhancedPrompt += fmt.Sprintf("СИСТЕМНАЯ ИНФОРМАЦИЯ:\n"+
-			"- Твой user_id: \"%d\" (СТРОКА, НЕ ЧИСЛО!)\n"+
-			"- При вызове ВСЕХ функций передавай user_id как СТРОКУ: {\"user_id\": \"%d\"}\n"+
-			"- НЕ спрашивай user_id у пользователя, используй ТОЛЬКО это значение\n\n", realUserId, realUserId)
+		enhancedPrompt += fmt.Sprintf("SYSTEM INFO:\n"+
+			"- Your user_id: \"%d\" (STRING, NOT A NUMBER!)\n"+
+			"- Pass user_id as a STRING in ALL function calls: {\"user_id\": \"%d\"}\n"+
+			"- DO NOT ask the user for user_id, use ONLY this value\n\n", realUserId, realUserId)
 	}
 
-	// Добавляем инструкции по работе с файлами только если S3 включен
+	// Add file instructions only if S3 is enabled
 	if modelData.S3 {
-		enhancedPrompt += "РАБОТА С ФАЙЛАМИ:\n" +
-			"1. Если пользователь просит СОЗДАТЬ новый файл - ВСЕГДА сначала вызови функцию create_file с содержимым\n" +
-			"2. После создания файла вызови get_s3_files чтобы получить актуальный список с новым файлом\n" +
-			"3. Затем отправь созданный файл в send_files\n" +
-			"4. Если пользователь просит показать существующие файлы - вызови get_s3_files и отправь нужные\n" +
-			"5. Определяй тип файла: .jpg/.png/.gif → photo, .mp4 → video, .mp3 → audio, .txt/.pdf и др → doc\n\n"
+		enhancedPrompt += "FILE OPERATIONS:\n" +
+			"1. If user asks to CREATE a new file - ALWAYS call create_file with the content first\n" +
+			"2. After creating the file call get_s3_files to get the updated list with the new file\n" +
+			"3. Then send the created file via send_files\n" +
+			"4. If user asks to show existing files - call get_s3_files and send the needed ones\n" +
+			"5. Determine file type: .jpg/.png/.gif → photo, .mp4 → video, .mp3 → audio, .txt/.pdf etc → doc\n\n"
 	}
 
-	// Добавляем инструкции по генерации изображений только если Image включен
+	// Add image generation instructions only if Image is enabled
 	if modelData.Image {
-		enhancedPrompt += "ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЙ:\n" +
-			"Когда пользователь просит нарисовать/сгенерировать/создать изображение:\n" +
-			"1. Опиши в своём текстовом ответе что ты рисуешь\n" +
-			"2. Система АВТОМАТИЧЕСКИ сгенерирует и отправит изображение пользователю\n" +
-			"3. НЕ добавляй файлы в send_files - они добавятся автоматически!\n" +
-			"4. Просто ответь пользователю что создаёшь изображение\n\n"
+		enhancedPrompt += "IMAGE GENERATION:\n" +
+			"When user asks to draw/generate/create an image:\n" +
+			"1. Describe in your text response what you are drawing\n" +
+			"2. The system will AUTOMATICALLY generate and send the image to the user\n" +
+			"3. DO NOT add files to send_files - they will be added automatically!\n" +
+			"4. Just tell the user you are creating the image\n\n"
 	}
 
-	// Добавляем инструкции по веб-поиску только если WebSearch включен
+	// Add web search instructions only if WebSearch is enabled
 	if modelData.WebSearch {
-		enhancedPrompt += "ВЕБ-ПОИСК:\n" +
-			"Когда пользователь задаёт вопрос, требующий актуальной информации из интернета:\n" +
-			"1. Система АВТОМАТИЧЕСКИ выполнит поиск в интернете\n" +
-			"2. Используй полученные результаты для формирования ответа\n" +
-			"3. Ссылайся на источники если это уместно\n\n"
+		enhancedPrompt += "WEB SEARCH:\n" +
+			"When user asks a question requiring up-to-date information from the internet:\n" +
+			"1. The system will AUTOMATICALLY perform an internet search\n" +
+			"2. Use the results to form your answer\n" +
+			"3. Reference sources when appropriate\n\n"
 	}
 
-	// Добавляем инструкции по GOOGLE CALENDAR
+	// Add GOOGLE CALENDAR instructions
 	if modelData.GOAuth.HasCalendar() {
-		enhancedPrompt += "GOOGLE CALENDAR - Управление событиями:\n" +
-			"У тебя есть доступ к Google Calendar пользователя.\n\n" +
-			fmt.Sprintf("user_id для всех функций: \"%d\" (строка)\n\n", realUserId) +
-			"Доступные функции:\n" +
-			"- calendar_create_event - создание события\n" +
-			"- calendar_list_events - список событий\n" +
-			"- calendar_delete_event - удаление события\n" +
-			"- calendar_get_event - детали события\n\n" +
-			"ВАЖНО при работе со временем:\n" +
-			"- Формат времени: RFC3339 (например: \"2026-02-05T15:00:00+03:00\")\n" +
-			"- ВСЕГДА вызывай get_current_time ПЕРЕД расчётом дат!\n" +
-			"- Длительность по умолчанию: 1 час\n" +
-			"- После создания/удаления подтверди действие и покажи ссылку\n\n"
+		enhancedPrompt += "GOOGLE CALENDAR - Event management:\n" +
+			"You have access to the user's Google Calendar.\n\n" +
+			fmt.Sprintf("user_id for all functions: \"%d\" (string)\n\n", realUserId) +
+			"Available functions:\n" +
+			"- calendar_create_event - create event\n" +
+			"- calendar_list_events - list events\n" +
+			"- calendar_delete_event - delete event\n" +
+			"- calendar_get_event - event details\n\n" +
+			"IMPORTANT for time handling:\n" +
+			"- Time format: RFC3339 (e.g.: \"2026-02-05T15:00:00+03:00\")\n" +
+			"- ALWAYS call get_current_time BEFORE calculating dates!\n" +
+			"- Default duration: 1 hour\n" +
+			"- After create/delete confirm the action and show the link\n\n" +
+			"CRITICAL - DELETING EVENTS:\n" +
+			"When user asks to DELETE an event:\n" +
+			"1. FORBIDDEN to create new events (calendar_create_event)\n" +
+			"2. Deletion algorithm:\n" +
+			"   a) FIRST get event list: calendar_list_events\n" +
+			"   b) Find the required event_id in results\n" +
+			"   c) THEN delete each: calendar_delete_event(user_id, event_id)\n" +
+			"3. For \"all events today\": get via calendar_list_events, delete each one\n" +
+			"4. DO NOT create events when deleting!\n\n"
 	}
 
-	// Добавляем инструкции по GOOGLE SHEETS
+	// Add GOOGLE SHEETS instructions
 	if modelData.GOAuth.HasSheets() {
-		enhancedPrompt += "GOOGLE SHEETS - Работа с таблицами:\n" +
-			"У тебя есть доступ к Google Sheets пользователя.\n\n" +
-			fmt.Sprintf("user_id для всех функций: \"%d\" (строка)\n\n", realUserId) +
-			" КРИТИЧЕСКИ ВАЖНО - ВСЕГДА ВЫЗЫВАЙ ФУНКЦИИ:\n" +
-			"1. Пользователь спрашивает о данных в таблице → НЕМЕДЛЕННО вызови sheets_read_range\n" +
-			"2. Нужно узнать количество строк → вызови sheets_read_range, подсчитай len(values)-1 (минус заголовки)\n" +
-			"3. Нужно записать данные → вызови sheets_write_range\n" +
-			"4. Нужно добавить строку → вызови sheets_append_range\n" +
-			"5. НЕ РАССУЖДАЙ о методах API (getMaxRows, getDataRange, ЧСТРОК, Google Apps Script)!\n" +
-			"6. НЕ ПРЕДЛАГАЙ написать скрипты на Google Apps Script или Python!\n" +
-			"7. ДЕЙСТВУЙ: вызывай доступные функции ПРЯМО СЕЙЧАС!\n\n" +
-			"Доступные функции:\n" +
-			"- sheets_read_range - чтение данных из таблицы\n" +
-			"- sheets_write_range - запись/обновление данных\n" +
-			"- sheets_append_range - добавление строк в конец\n" +
-			"- sheets_create_spreadsheet - создание новой таблицы\n" +
-			"- sheets_get_info - информация о таблице (листы, размеры)\n\n" +
-			"ВАЖНО:\n" +
-			"- spreadsheet_id берётся из промпта пользователя или из URL (между /d/ и /edit)\n" +
-			"- Если в промпте указан ID таблицы - используй ЕГО (полный ID из промпта)\n" +
-			"- Диапазон в формате: 'Лиды!A1:F100' или 'Лист!A:F' (весь лист)\n" +
-			"- Для подсчёта строк используй: len(values) - 1 (вычитаем заголовки)\n" +
-			"- Перед записью всегда читай текущие данные\n" +
-			"- После операций сообщай результат (кол-во строк/ячеек)\n\n"
+		enhancedPrompt += "GOOGLE SHEETS - Spreadsheet operations:\n" +
+			"You have access to the user's Google Sheets.\n\n" +
+			fmt.Sprintf("user_id for all functions: \"%d\" (string)\n\n", realUserId) +
+			"CRITICAL - ALWAYS CALL FUNCTIONS:\n" +
+			"1. User asks about table data → IMMEDIATELY call sheets_read_range\n" +
+			"2. Need to count rows → call sheets_read_range, count len(values)-1 (minus headers)\n" +
+			"3. Need to write data → call sheets_write_range\n" +
+			"4. Need to append a row → call sheets_append_range\n" +
+			"5. DO NOT reason about API methods (getMaxRows, getDataRange, Google Apps Script)!\n" +
+			"6. DO NOT suggest writing scripts in Google Apps Script or Python!\n" +
+			"7. ACT: call the available functions RIGHT NOW!\n\n" +
+			"Available functions:\n" +
+			"- sheets_read_range - read data from spreadsheet\n" +
+			"- sheets_write_range - write/update data\n" +
+			"- sheets_append_range - append rows to the end\n" +
+			"- sheets_create_spreadsheet - create new spreadsheet\n" +
+			"- sheets_get_info - spreadsheet info (sheets, sizes)\n\n" +
+			"IMPORTANT:\n" +
+			"- spreadsheet_id comes from user's prompt or URL (between /d/ and /edit)\n" +
+			"- If a table ID is given in the prompt - use IT (full ID from prompt)\n" +
+			"- Range format: 'Sheet1!A1:F100' or 'Sheet1!A:F' (whole sheet)\n" +
+			"- To count rows use: len(values) - 1 (subtract headers)\n" +
+			"- Always read current data before writing\n" +
+			"- Report result after operations (row/cell count)\n\n"
 	}
 
-	// Добавляем определение типов файлов только если S3 или Image включены
+	// Add file type mapping only if S3 or Image is enabled
 	if modelData.S3 || modelData.Image {
-		enhancedPrompt += "Определение типа файла для send_files:\n" +
+		enhancedPrompt += "File type for send_files:\n" +
 			"   - .jpg/.png/.gif/.webp → \"photo\"\n" +
 			"   - .mp4/.avi → \"video\"\n" +
 			"   - .mp3/.wav → \"audio\"\n" +
-			"   - .txt/.pdf/.doc и остальные → \"doc\"\n\n"
+			"   - .txt/.pdf/.doc and others → \"doc\"\n\n"
 	}
 
-	// Добавляем инструкции по полям target и operator
-	enhancedPrompt += "ПРАВИЛА для полей JSON ответа:\n\n"
+	// Add instructions for target and operator fields
+	enhancedPrompt += "RULES for JSON response fields:\n\n"
 
-	// Инструкции по target
+	// target instructions
 	if modelData.MetaAction != "" {
-		enhancedPrompt += "**target** (boolean) - Достигнута ли ЦЕЛЬ диалога:\n" +
-			"  Проверяй условие достижения цели из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
-			"  Если условие ТОЧНО выполнено → target: true\n" +
-			"  Если условие НЕ выполнено → target: false\n\n"
+		enhancedPrompt += "**target** (boolean) - Is the dialog GOAL achieved:\n" +
+			"  Check the goal condition from YOUR INSTRUCTIONS ABOVE\n" +
+			"  If condition is EXACTLY met → target: true\n" +
+			"  If condition is NOT met → target: false\n\n"
 	} else {
-		enhancedPrompt += "**target**: ВСЕГДА false (цели нет)\n\n"
+		enhancedPrompt += "**target**: ALWAYS false (no goal)\n\n"
 	}
 
-	// Инструкции по operator
+	// operator instructions
 	if modelData.Operator {
-		enhancedPrompt += "**operator** (boolean) - Требуется ли оператор:\n" +
-			"  Проверяй условие вызова оператора из СВОИХ ИНСТРУКЦИЙ ВЫШЕ\n" +
-			"  Если пользователь просит оператора → operator: true\n" +
-			"  Во всех остальных случаях → operator: false\n\n"
+		enhancedPrompt += "**operator** (boolean) - Is operator required:\n" +
+			"  Check the operator condition from YOUR INSTRUCTIONS ABOVE\n" +
+			"  If user requests operator → operator: true\n" +
+			"  In all other cases → operator: false\n\n"
 	} else {
-		enhancedPrompt += "**operator**: ВСЕГДА false (вызов оператора отключен)\n\n"
+		enhancedPrompt += "**operator**: ALWAYS false (operator disabled)\n\n"
 	}
 
-	// Финальная инструкция по формату ответа (всегда)
-	enhancedPrompt += "ВАЖНО: Твой ответ ДОЛЖЕН быть валидным JSON (можешь обернуть в ```json):\n" +
+	// Final instruction for response format (always)
+	enhancedPrompt += "IMPORTANT: Your response MUST be valid JSON (you may wrap in ```json):\n" +
 		MistralSchemaJSON + "\n\n" +
-		"Всегда возвращай ответ строго в этом JSON формате. Можешь использовать markdown: ```json\\n{...}\\n```"
+		"Always return response strictly in this JSON format. You may use markdown: ```json\\n{...}\\n```"
 
 	payload := map[string]interface{}{
 		"name":         modelData.Name,
@@ -459,15 +438,15 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 			"type": "function",
 			"function": map[string]interface{}{
 				"name": "get_current_time",
-				"description": "Получает ТОЧНОЕ текущее время и дату с сервера в часовом поясе пользователя. " +
-					"ОБЯЗАТЕЛЬНО используй эту функцию ПЕРЕД расчётом дат (завтра, через неделю, в понедельник и т.д.). " +
-					"НЕ используй свои внутренние знания о дате - они УСТАРЕЛИ!",
+				"description": "Returns the EXACT current time and date from the server in the user's timezone. " +
+					"ALWAYS use this function BEFORE calculating dates (tomorrow, next week, on Monday, etc.). " +
+					"DO NOT use your internal knowledge about the date - it is OUTDATED!",
 				"parameters": map[string]interface{}{
 					"type": "object",
 					"properties": map[string]interface{}{
 						"user_id": map[string]interface{}{
 							"type":        "string",
-							"description": "ID пользователя",
+							"description": "User ID",
 						},
 					},
 					"required": []string{"user_id"},
@@ -483,13 +462,13 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        "get_s3_files",
-					"description": "Получает список доступных файлов пользователя из S3",
+					"description": "Returns the list of user's available files from S3",
 					"parameters": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"user_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID пользователя",
+								"description": "User ID",
 							},
 						},
 						"required": []string{"user_id"},
@@ -500,21 +479,21 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        "create_file",
-					"description": "Создает текстовый файл и сохраняет в S3",
+					"description": "Creates a text file and saves it to S3",
 					"parameters": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"user_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID пользователя",
+								"description": "User ID",
 							},
 							"content": map[string]interface{}{
 								"type":        "string",
-								"description": "Текстовое содержимое файла",
+								"description": "Text content of the file",
 							},
 							"file_name": map[string]interface{}{
 								"type":        "string",
-								"description": "Имя файла с расширением (.txt, .md и т.д.)",
+								"description": "File name with extension (.txt, .md, etc.)",
 							},
 						},
 						"required": []string{"user_id", "content", "file_name"},
@@ -531,33 +510,33 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        "calendar_create_event",
-					"description": "Создает новое событие в Google Calendar пользователя",
+					"description": "Creates a new event in the user's Google Calendar",
 					"parameters": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"user_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID пользователя",
+								"description": "User ID",
 							},
 							"title": map[string]interface{}{
 								"type":        "string",
-								"description": "Название события",
+								"description": "Event title",
 							},
 							"description": map[string]interface{}{
 								"type":        "string",
-								"description": "Описание события (опционально)",
+								"description": "Event description (optional)",
 							},
 							"start_time": map[string]interface{}{
 								"type":        "string",
-								"description": "Время начала в RFC3339 формате",
+								"description": "Start time in RFC3339 format",
 							},
 							"end_time": map[string]interface{}{
 								"type":        "string",
-								"description": "Время окончания в RFC3339 формате",
+								"description": "End time in RFC3339 format",
 							},
 							"location": map[string]interface{}{
 								"type":        "string",
-								"description": "Место проведения (опционально)",
+								"description": "Event location (optional)",
 							},
 						},
 						"required": []string{"user_id", "title", "start_time", "end_time"},
@@ -568,25 +547,25 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        "calendar_list_events",
-					"description": "Получает список событий из Google Calendar",
+					"description": "Retrieves a list of events from Google Calendar",
 					"parameters": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"user_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID пользователя",
+								"description": "User ID",
 							},
 							"time_min": map[string]interface{}{
 								"type":        "string",
-								"description": "Начало периода в RFC3339 (опционально)",
+								"description": "Period start in RFC3339 (optional)",
 							},
 							"time_max": map[string]interface{}{
 								"type":        "string",
-								"description": "Конец периода в RFC3339 (опционально)",
+								"description": "Period end in RFC3339 (optional)",
 							},
 							"max_results": map[string]interface{}{
 								"type":        "integer",
-								"description": "Максимальное количество событий (по умолчанию 10)",
+								"description": "Maximum number of events (default 10)",
 							},
 						},
 						"required": []string{"user_id"},
@@ -597,17 +576,17 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        "calendar_delete_event",
-					"description": "Удаляет событие из Google Calendar",
+					"description": "Deletes an event from Google Calendar",
 					"parameters": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"user_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID пользователя",
+								"description": "User ID",
 							},
 							"event_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID события для удаления",
+								"description": "Event ID to delete",
 							},
 						},
 						"required": []string{"user_id", "event_id"},
@@ -618,17 +597,17 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        "calendar_get_event",
-					"description": "Получает детали события из Google Calendar",
+					"description": "Gets event details from Google Calendar",
 					"parameters": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"user_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID пользователя",
+								"description": "User ID",
 							},
 							"event_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID события для получения деталей",
+								"description": "Event ID to get details for",
 							},
 						},
 						"required": []string{"user_id", "event_id"},
@@ -645,21 +624,21 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        "sheets_read_range",
-					"description": "Читает данные из указанного диапазона в Google Sheets",
+					"description": "Reads data from the specified range in Google Sheets",
 					"parameters": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"user_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID пользователя",
+								"description": "User ID",
 							},
 							"spreadsheet_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID таблицы Google Sheets (из URL или промпта)",
+								"description": "Google Sheets spreadsheet ID (from URL or prompt)",
 							},
 							"range": map[string]interface{}{
 								"type":        "string",
-								"description": "Диапазон для чтения (например: 'Лиды!A:F' или 'Sheet1!A1:D10')",
+								"description": "Range to read (e.g.: 'Sheet1!A:F' or 'Sheet1!A1:D10')",
 							},
 						},
 						"required": []string{"user_id", "spreadsheet_id", "range"},
@@ -670,25 +649,25 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        "sheets_write_range",
-					"description": "Записывает данные в указанный диапазон Google Sheets",
+					"description": "Writes data to the specified range in Google Sheets",
 					"parameters": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"user_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID пользователя",
+								"description": "User ID",
 							},
 							"spreadsheet_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID таблицы Google Sheets",
+								"description": "Google Sheets spreadsheet ID",
 							},
 							"range": map[string]interface{}{
 								"type":        "string",
-								"description": "Начальная ячейка для записи (например: 'Sheet1!A1')",
+								"description": "Starting cell for writing (e.g.: 'Sheet1!A1')",
 							},
 							"values": map[string]interface{}{
 								"type":        "array",
-								"description": "Двумерный массив значений для записи",
+								"description": "2D array of values to write",
 								"items": map[string]interface{}{
 									"type": "array",
 									"items": map[string]interface{}{
@@ -705,25 +684,25 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        "sheets_append_range",
-					"description": "Добавляет данные в конец таблицы Google Sheets",
+					"description": "Appends data to the end of a Google Sheets spreadsheet",
 					"parameters": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"user_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID пользователя",
+								"description": "User ID",
 							},
 							"spreadsheet_id": map[string]interface{}{
 								"type":        "string",
-								"description": "ID таблицы Google Sheets",
+								"description": "Google Sheets spreadsheet ID",
 							},
 							"range": map[string]interface{}{
 								"type":        "string",
-								"description": "Диапазон колонок для добавления (например: 'Sheet1!A:D')",
+								"description": "Column range to append to (e.g.: 'Sheet1!A:D')",
 							},
 							"values": map[string]interface{}{
 								"type":        "array",
-								"description": "Двумерный массив значений для добавления",
+								"description": "2D array of values to append",
 								"items": map[string]interface{}{
 									"type": "array",
 									"items": map[string]interface{}{
@@ -746,13 +725,13 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 				"type": "function",
 				"function": map[string]interface{}{
 					"name":        "lead_target",
-					"description": "Вызывает метаакцию для достижения цели диалога",
+					"description": "Triggers a meta-action to achieve the dialog goal",
 					"parameters": map[string]interface{}{
 						"type": "object",
 						"properties": map[string]interface{}{
 							"resp_id": map[string]interface{}{
 								"type":        "integer",
-								"description": "ID респондента",
+								"description": "Respondent ID",
 							},
 						},
 						"required": []string{"resp_id"},
@@ -818,7 +797,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	if err != nil {
 		return UMCR{}, fmt.Errorf("ошибка HTTP запроса: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -884,111 +863,82 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 // Документация: https://docs.mistral.ai/agents/tools/built-in/document_library
 // ============================================================================
 
-// CreateLibrary создаёт новую библиотеку документов (аналог VectorStore в OpenAI)
-func (m *MistralAgentClient) CreateLibrary(name, description string) (*MistralLibrary, error) {
-	const librariesURL = "https://api.mistral.ai/v1/libraries"
+// executeMistralRequest выполняет HTTP запрос к Mistral API с базовой обработкой
+// method: HTTP метод (GET, DELETE, POST и т.д.)
+// url: полный URL запроса
+// body: тело запроса (может быть nil)
+// successStatuses: список допустимых статус-кодов (если nil, то только OK)
+func (m *MistralAgentClient) executeMistralRequest(method, url string, body []byte, successStatuses []int) ([]byte, error) {
+	var req *http.Request
+	var err error
 
-	payload := map[string]interface{}{
-		"name": name,
-	}
-	if description != "" {
-		payload["description"] = description
+	if body != nil {
+		req, err = http.NewRequestWithContext(m.ctx, method, url, bytes.NewBuffer(body))
+	} else {
+		req, err = http.NewRequestWithContext(m.ctx, method, url, nil)
 	}
 
-	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка сериализации запроса: %v", err)
-	}
-
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, librariesURL, bytes.NewBuffer(body))
-	if err != nil {
-		return nil, fmt.Errorf("ошибка создания POST запроса: %v", err)
+		return nil, fmt.Errorf("ошибка создания %s запроса: %w", method, err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
+		return nil, fmt.Errorf("ошибка HTTP запроса: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %v", err)
+		return nil, fmt.Errorf("ошибка чтения ответа: %w", err)
 	}
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+	// Если successStatuses не указан, проверяем только OK (200)
+	if successStatuses == nil {
+		successStatuses = []int{http.StatusOK}
+	}
+
+	// Проверяем, является ли статус успешным
+	isSuccess := false
+	for _, status := range successStatuses {
+		if resp.StatusCode == status {
+			isSuccess = true
+			break
+		}
+	}
+
+	if !isSuccess {
 		return nil, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
 	}
 
-	var library MistralLibrary
-	if err := json.Unmarshal(responseBody, &library); err != nil {
-		return nil, fmt.Errorf("ошибка парсинга JSON: %v", err)
-	}
-
-	return &library, nil
+	return responseBody, nil
 }
 
-// GetLibrary получает информацию о библиотеке
-func (m *MistralAgentClient) GetLibrary(libraryID string) (*MistralLibrary, error) {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s", libraryID)
+// executeMistralDeleteRequest удаляет через общий API (DELETE)
+// Допускает статусы OK, NoContent и NotFound как успешные
+func (m *MistralAgentClient) executeMistralDeleteRequest(url string) error {
+	_, err := m.executeMistralRequest(http.MethodDelete, url, nil,
+		[]int{http.StatusOK, http.StatusNoContent, http.StatusNotFound})
+	return err
+}
 
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка создания GET запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	var library MistralLibrary
-	if err := json.Unmarshal(responseBody, &library); err != nil {
-		return nil, fmt.Errorf("ошибка парсинга JSON: %v", err)
-	}
-
-	return &library, nil
+// executeMistralGetRequest получает данные через общий API (GET)
+func (m *MistralAgentClient) executeMistralGetRequest(url string) ([]byte, error) {
+	return m.executeMistralRequest(http.MethodGet, url, nil, nil)
 }
 
 // ListLibraries получает список всех библиотек
 func (m *MistralAgentClient) ListLibraries() ([]MistralLibrary, error) {
 	const librariesURL = "https://api.mistral.ai/v1/libraries"
 
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodGet, librariesURL, nil)
+	responseBody, err := m.executeMistralGetRequest(librariesURL)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка создания GET запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
+		return nil, fmt.Errorf("ошибка при вызове API: %w", err)
 	}
 
 	var response struct {
@@ -1005,29 +955,7 @@ func (m *MistralAgentClient) ListLibraries() ([]MistralLibrary, error) {
 func (m *MistralAgentClient) DeleteLibrary(libraryID string) error {
 	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s", libraryID)
 
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodDelete, url, nil)
-	if err != nil {
-		return fmt.Errorf("ошибка создания DELETE запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("ошибка чтения ответа: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	return nil
+	return m.executeMistralDeleteRequest(url)
 }
 
 // DeleteDocumentFromLibrary удаляет документ из библиотеки
@@ -1035,273 +963,5 @@ func (m *MistralAgentClient) DeleteLibrary(libraryID string) error {
 func (m *MistralAgentClient) DeleteDocumentFromLibrary(libraryID, documentID string) error {
 	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents/%s", libraryID, documentID)
 
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodDelete, url, nil)
-	if err != nil {
-		return fmt.Errorf("ошибка создания DELETE запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		responseBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	return nil
-}
-
-// UploadDocumentToLibrary загружает документ в библиотеку (multipart/form-data)
-func (m *MistralAgentClient) UploadDocumentToLibrary(libraryID, fileName string, fileData []byte) (*MistralDocument, error) {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents", libraryID)
-
-	// Создаём multipart форму
-	body := &bytes.Buffer{}
-
-	// Простая реализация multipart - для продакшена используйте mime/multipart
-	boundary := "----MistralBoundary"
-
-	// Записываем файл
-	fmt.Fprintf(body, "--%s\r\n", boundary)
-	fmt.Fprintf(body, "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n", fileName)
-	fmt.Fprintf(body, "Content-Type: application/octet-stream\r\n\r\n")
-	body.Write(fileData)
-	fmt.Fprintf(body, "\r\n--%s--\r\n", boundary)
-
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, url, body)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка создания POST запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-	req.Header.Set("Content-Type", fmt.Sprintf("multipart/form-data; boundary=%s", boundary))
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return nil, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	var document MistralDocument
-	if err := json.Unmarshal(responseBody, &document); err != nil {
-		return nil, fmt.Errorf("ошибка парсинга JSON: %v", err)
-	}
-
-	return &document, nil
-}
-
-// GetDocument получает информацию о документе
-func (m *MistralAgentClient) GetDocument(libraryID, documentID string) (*MistralDocument, error) {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents/%s", libraryID, documentID)
-
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка создания GET запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	var document MistralDocument
-	if err := json.Unmarshal(responseBody, &document); err != nil {
-		return nil, fmt.Errorf("ошибка парсинга JSON: %v", err)
-	}
-
-	return &document, nil
-}
-
-// ListDocuments получает список документов в библиотеке
-func (m *MistralAgentClient) ListDocuments(libraryID string) ([]MistralDocument, error) {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents", libraryID)
-
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка создания GET запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка чтения ответа: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	var response struct {
-		Data []MistralDocument `json:"data"`
-	}
-	if err := json.Unmarshal(responseBody, &response); err != nil {
-		return nil, fmt.Errorf("ошибка парсинга JSON: %v", err)
-	}
-
-	return response.Data, nil
-}
-
-// DeleteDocument удаляет документ из библиотеки
-func (m *MistralAgentClient) DeleteDocument(libraryID, documentID string) error {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents/%s", libraryID, documentID)
-
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodDelete, url, nil)
-	if err != nil {
-		return fmt.Errorf("ошибка создания DELETE запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("ошибка чтения ответа: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
-		return fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	return nil
-}
-
-// GetDocumentContent получает текстовое содержимое документа
-func (m *MistralAgentClient) GetDocumentContent(libraryID, documentID string) (string, error) {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents/%s/content", libraryID, documentID)
-
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return "", fmt.Errorf("ошибка создания GET запроса: %v", err)
-	}
-
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("ошибка HTTP запроса: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("ошибка чтения ответа: %v", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
-	}
-
-	return string(responseBody), nil
-}
-
-// ============================================================================
-// HIGH-LEVEL METHODS - Высокоуровневые методы для работы с документами
-// ============================================================================
-
-// CreateMistralLibraryWithFiles создаёт библиотеку и загружает в неё файлы
-// Аналог создания VectorStore в OpenAI
-func (m *UniversalModel) CreateMistralLibraryWithFiles(userId uint32, fileIDs []Ids) (string, error) {
-	if m.mistralClient == nil {
-		return "", fmt.Errorf("Mistral клиент не инициализирован")
-	}
-
-	// Создаём библиотеку
-	libraryName := fmt.Sprintf("Library для пользователя %d", userId)
-	library, err := m.mistralClient.CreateLibrary(libraryName, "")
-	if err != nil {
-		return "", fmt.Errorf("ошибка создания библиотеки: %w", err)
-	}
-
-	logger.Info("Создана библиотека Mistral: %s", library.ID, userId)
-
-	// Загружаем файлы в библиотеку (нужно получить данные файлов из хранилища)
-	// TODO: реализовать загрузку файлов из вашего хранилища
-	// for _, fileID := range fileIDs {
-	//     fileData := getFileData(fileID.ID) // получить данные файла
-	//     m.mistralClient.UploadDocumentToLibrary(library.ID, fileID.Name, fileData)
-	// }
-
-	return library.ID, nil
-}
-
-// AddFileToMistralLibrary добавляет файл в существующую библиотеку
-func (m *UniversalModel) AddFileToMistralLibrary(userId uint32, libraryID, fileName string, fileData []byte) (*MistralDocument, error) {
-	if m.mistralClient == nil {
-		return nil, fmt.Errorf("Mistral клиент не инициализирован")
-	}
-
-	document, err := m.mistralClient.UploadDocumentToLibrary(libraryID, fileName, fileData)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка загрузки документа: %w", err)
-	}
-
-	logger.Info("Файл %s успешно добавлен в библиотеку %s", fileName, libraryID, userId)
-	return document, nil
-}
-
-// DeleteMistralLibrary удаляет библиотеку со всеми документами
-func (m *UniversalModel) DeleteMistralLibrary(userId uint32, libraryID string) error {
-	if m.mistralClient == nil {
-		return fmt.Errorf("Mistral клиент не инициализирован")
-	}
-
-	err := m.mistralClient.DeleteLibrary(libraryID)
-	if err != nil {
-		return fmt.Errorf("ошибка удаления библиотеки: %w", err)
-	}
-
-	logger.Info("Библиотека %s удалена", libraryID, userId)
-	return nil
-}
-
-// GetMistralLibraryDocuments получает список документов в библиотеке
-func (m *UniversalModel) GetMistralLibraryDocuments(userId uint32, libraryID string) ([]MistralDocument, error) {
-	if m.mistralClient == nil {
-		return nil, fmt.Errorf("Mistral клиент не инициализирован")
-	}
-
-	documents, err := m.mistralClient.ListDocuments(libraryID)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка получения списка документов: %w", err)
-	}
-
-	return documents, nil
+	return m.executeMistralDeleteRequest(url)
 }

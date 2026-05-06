@@ -2,107 +2,116 @@ package openai
 
 import (
 	"fmt"
-	"strings"
+	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
-	"github.com/sashabaranov/go-openai"
 )
 
 // CreateModel создаёт новую модель OpenAI
-// Делегирует вызов к OpenAIModel из пакета create
+// Делегирует вызов к UniversalModel из пакета create
 func (m *OpenAIModel) CreateModel(userId uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error) {
-	// Создаем экземпляр universalModel для делегирования
+	// Создаем экземпляр UniversalModel для делегирования
 	modelsManager := &create.UniversalModel{}
 
 	return modelsManager.CreateModel(userId, provider, modelData, fileIDs)
 }
 
-// UploadFileFromVectorStorage загружает файл в OpenAI
-func (m *OpenAIModel) UploadFileFromVectorStorage(fileName string, fileData []byte) (string, error) {
-	// Проверка клиента
-	if m.client == nil {
-		return "", fmt.Errorf("OpenAI клиент не инициализирован")
-	}
+// ============================================================================
+// Vector Embedding методы (OpenAI Embeddings API + MariaDB)
+// ============================================================================
 
-	// Создаем запрос на загрузку файла из байтов
-	fileRequest := openai.FileBytesRequest{
-		Name:    fileName,
-		Bytes:   fileData,
-		Purpose: openai.PurposeAssistants,
-	}
-
-	// Загружаем файл через API OpenAI
-	fileResponse, err := m.client.CreateFileBytes(m.ctx, fileRequest)
+// UploadDocumentWithEmbedding загружает документ с генерацией эмбеддинга
+func (m *OpenAIModel) UploadDocumentWithEmbedding(userId uint32, docName, content string, metadata create.DocumentMetadata) (string, error) {
+	// Получаем modelId из БД
+	modelId, err := m.getModelId(userId)
 	if err != nil {
-		return "", fmt.Errorf("ошибка загрузки файла через API OpenAI: %w", err)
+		return "", fmt.Errorf("ошибка получения modelId: %w", err)
 	}
 
-	return fileResponse.ID, nil
+	// Генерируем уникальный ID для документа
+	docID := fmt.Sprintf("openai_doc_%d_%d", userId, time.Now().Unix())
+
+	// 1. Генерируем эмбеддинг через OpenAI Embeddings API
+	//logger.Debug("OpenAI: генерация эмбеддинга для документа: %s", docName, userId)
+	embedding, err := m.GenerateEmbedding(content)
+	if err != nil {
+		return "", fmt.Errorf("ошибка генерации эмбеддинга: %w", err)
+	}
+
+	// 2. Сохраняем эмбеддинг в MariaDB
+	err = m.saveEmbedding(userId, modelId, docID, docName, content, embedding, metadata)
+	if err != nil {
+		return "", fmt.Errorf("ошибка сохранения эмбеддинга: %w", err)
+	}
+
+	//logger.Debug("OpenAI: документ успешно загружен docID=%s, docName=%s, embeddingDim=%d",
+	//	docID, docName, len(embedding), userId)
+
+	return docID, nil
 }
 
-// DeleteFileFromVectorStorage удаляет файл из OpenAI
-func (m *OpenAIModel) DeleteFileFromVectorStorage(fileID string) error {
-	// 1. Удаляем файл по его ID
-	if err := m.client.DeleteFile(m.ctx, fileID); err != nil {
-		// Если файл уже удален (not found), это не является критической ошибкой
-		if !strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("ошибка удаления файла из OpenAI: %w", err)
-		}
-		logger.Error("Файл %s уже был удален или не найден в OpenAI: %v", fileID, err)
-	}
-
-	// 2. Ищем и удаляем связанный Vector Store
-	// Получаем список всех векторных хранилищ
-	vsList, err := m.client.ListVectorStores(m.ctx, openai.Pagination{})
+// DeleteDocument удаляет документ из БД по docID
+func (m *OpenAIModel) DeleteDocument(userId uint32, docID string) error {
+	modelId, err := m.getModelId(userId)
 	if err != nil {
-		return fmt.Errorf("ошибка получения списка Vector Stores: %w", err)
+		return fmt.Errorf("ошибка получения modelId: %w", err)
 	}
 
-	// Ищем Vector Store, который содержит наш файл
-	for _, vs := range vsList.VectorStores {
-		// Получаем список файлов для каждого Vector Store
-		files, err := m.client.ListVectorStoreFiles(m.ctx, vs.ID, openai.Pagination{})
-		if err != nil {
-			logger.Error("Предупреждение: не удалось получить файлы для Vector Store %s: %v", vs.ID, err)
-			continue
-		}
-
-		// Если в хранилище только один файл и его ID совпадает с нашим, удаляем хранилище
-		if len(files.VectorStoreFiles) == 1 && files.VectorStoreFiles[0].ID == fileID {
-			_, err := m.client.DeleteVectorStore(m.ctx, vs.ID)
-			if err != nil {
-				// Логируем ошибку, но не прерываем процесс, так как основной файл уже мог быть удален
-				logger.Error("Предупреждение: не удалось удалить Vector Store %s: %v", vs.ID, err)
-			}
-			// Прерываем цикл, так как нашли и обработали нужное хранилище
-			break
-		}
-	}
-
-	return nil
+	//logger.Debug("OpenAI: удаление документа docID=%s", docID, userId)
+	return m.deleteDocument(modelId, docID)
 }
 
-// AddFileFromVectorStorage добавляет файл в векторное хранилище
-func (m *OpenAIModel) AddFileFromVectorStorage(userId uint32, fileID, fileName string) error {
-	// Получаем данные пользовательского Vector Store
-	vectorStoreID, err := m.db.GetUserVectorStorage(userId)
+// ListUserDocuments возвращает список документов модели из БД
+func (m *OpenAIModel) ListUserDocuments(userId uint32) ([]create.VectorDocument, error) {
+	modelId, err := m.getModelId(userId)
 	if err != nil {
-		return fmt.Errorf("ошибка получения векторного хранилища: %w", err)
+		return nil, fmt.Errorf("ошибка получения modelId: %w", err)
 	}
 
-	type GPT struct {
-		AssistId string
-		Name     string
-		Ids      create.VecIds
+	documents, err := m.listModelDocuments(modelId)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения списка документов: %w", err)
 	}
 
-	// Добавляем файл в существующий Vector Store
-	_, err = m.client.CreateVectorStoreFile(m.ctx, vectorStoreID, openai.VectorStoreFileRequest{
-		FileID: fileID,
-	})
+	//logger.Debug("OpenAI: получено %d документов", len(documents), userId)
+	return documents, nil
+}
+
+// SearchSimilarDocuments ищет похожие документы используя семантический поиск
+func (m *OpenAIModel) SearchSimilarDocuments(userId uint32, query string, limit int) ([]create.VectorDocument, error) {
+	modelId, err := m.getModelId(userId)
 	if err != nil {
-		return fmt.Errorf("ошибка добавления файла в Vector Store: %w", err)
+		return nil, fmt.Errorf("ошибка получения modelId: %w", err)
 	}
-	return nil
+
+	// 1. Генерируем эмбеддинг для поискового запроса
+	//logger.Debug("OpenAI: генерация эмбеддинга для поиска: %s", query, userId)
+	queryEmbedding, err := m.GenerateEmbedding(query)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка генерации эмбеддинга запроса: %w", err)
+	}
+
+	// 2. Ищем похожие документы в БД используя косинусное сходство
+	documents, err := m.searchSimilarEmbeddings(modelId, queryEmbedding, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка поиска похожих документов: %w", err)
+	}
+
+	//logger.Debug("OpenAI: найдено %d похожих документов", len(documents), userId)
+	return documents, nil
+}
+
+// getModelId получает modelId пользователя из БД (для работы с vector_embeddings)
+func (m *OpenAIModel) getModelId(userId uint32) (uint64, error) {
+	// Получаем запись модели OpenAI для пользователя из БД
+	record, err := m.db.GetModelByProviderAnyStatus(userId, create.ProviderOpenAI)
+	if err != nil {
+		return 0, fmt.Errorf("ошибка получения модели OpenAI из БД: %w", err)
+	}
+
+	if record == nil {
+		return 0, fmt.Errorf("модель OpenAI не найдена для пользователя %d", userId)
+	}
+
+	return record.ModelId, nil
 }

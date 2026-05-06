@@ -2,13 +2,13 @@ package crm
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/conf"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 )
 
 func getConfig() *conf.Conf {
@@ -21,10 +21,6 @@ func getConfig() *conf.Conf {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-
-	// Инициализируем логгер для тестов
-	const LogPatch = "/var/log/Marusia_TEST/common.log"
-	logger.Set(LogPatch)
 
 	return cfg
 }
@@ -65,12 +61,6 @@ func (u *User) testClearCache() {
 		u.leadCache.Delete(key)
 		return true
 	})
-
-	if u.conf != nil {
-		logger.Info("Кэш User полностью очищен", u.conf.UserID)
-	} else {
-		logger.Info("Кэш неинициализированного User очищен")
-	}
 }
 
 func TestCRM(t *testing.T) {
@@ -87,7 +77,7 @@ func TestCRM(t *testing.T) {
 	crm := New(ctx, cfg)
 
 	// Инициализируем пользователя
-	c, err := crm.Init(23)
+	c, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
 	}
@@ -125,16 +115,16 @@ func TestCRM_Init(t *testing.T) {
 	crm := New(ctx, cfg)
 
 	// Инициализируем пользователя
-	user, err := crm.Init(23)
+	user, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
 	}
 
-	logger.Infoln(user.conf)
+	fmt.Println(user.conf)
 
 	// Проверяем статистику кэша
 	contactCount, altContactCount, leadCount := user.testGetCacheStats()
-	logger.Infoln("Cache stats - Contacts:", contactCount, "AltContacts:", altContactCount, "Leads:", leadCount)
+	fmt.Println("Cache stats - Contacts:", contactCount, "AltContacts:", altContactCount, "Leads:", leadCount)
 }
 
 func TestCRM_Cache(t *testing.T) {
@@ -147,7 +137,7 @@ func TestCRM_Cache(t *testing.T) {
 	crm := New(ctx, cfg)
 
 	// Инициализируем пользователя
-	user, err := crm.Init(23)
+	user, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
 	}
@@ -221,7 +211,7 @@ func TestUninitializedUser(t *testing.T) {
 	crm := New(ctx, cfg)
 
 	// Инициализируем с несуществующим userID (должна вернуться ошибка)
-	user, err := crm.Init(99999)
+	user, _, err := crm.Init(99999)
 	if err == nil {
 		t.Log("Ожидалась ошибка инициализации, но получили nil")
 	}
@@ -290,7 +280,7 @@ func TestCRM_CreateContact(t *testing.T) {
 	crm := New(ctx, cfg)
 
 	// Инициализируем пользователя
-	user, err := crm.Init(23)
+	user, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
 	}
@@ -335,7 +325,7 @@ func TestCRM_AltContact(t *testing.T) {
 	crm := New(ctx, cfg, WithAltContactChannel(ChannelTelegram))
 
 	// Инициализируем пользователя
-	user, err := crm.Init(23)
+	user, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
 	}
@@ -391,7 +381,7 @@ func TestCRM_PriorityPhoneOverAlt(t *testing.T) {
 	ctx := context.Background()
 	crm := New(ctx, cfg, WithAltContactChannel(ChannelTelegram))
 
-	user, err := crm.Init(23)
+	user, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
 	}
@@ -433,7 +423,7 @@ func TestCRM_AvitoChannel(t *testing.T) {
 	crm := New(ctx, cfg, WithAltContactChannel(ChannelAvito))
 
 	// Инициализируем пользователя
-	user, err := crm.Init(23)
+	user, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
 	}

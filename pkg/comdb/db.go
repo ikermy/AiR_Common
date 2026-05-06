@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/conf"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"golang.org/x/oauth2"
@@ -55,13 +54,13 @@ type Exterior interface {
 	RemoveModelFromUser(userId uint32, modelId uint64) error
 
 	// Vector Embeddings - методы для работы с эмбеддингами в MariaDB
-	SaveEmbedding(userId uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error
+	SaveEmbedding(userId uint32, modelId uint64, provider create.ProviderType, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error
 	GetEmbedding(modelId uint64, docID string) ([]float32, error)
 	DeleteEmbedding(modelId uint64, docID string) error
 	DeleteAllModelEmbeddings(modelId uint64) error
 	CountModelEmbeddings(modelId uint64) (int, error)
-	ListModelEmbeddings(modelId uint64) ([]create.VectorDocument, error)
-	SearchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]create.VectorDocument, error)
+	ListModelEmbeddings(modelId uint64, provider create.ProviderType) ([]create.VectorDocument, error)
+	SearchSimilarEmbeddings(modelId uint64, provider create.ProviderType, queryEmbedding []float32, limit int) ([]create.VectorDocument, error)
 
 	// Contact Availability - методы для работы с доступностью контактов в разных провайдерах
 	SetContactAvailability(userID uint32, contact, provider string, isAvailable bool) error
@@ -101,10 +100,12 @@ type Espero struct {
 type CreatorType uint8
 
 const (
-	AI        CreatorType = 1 // Право
-	User      CreatorType = 2 // Лево
-	UserVoice CreatorType = 3 // Лево
-	Operator  CreatorType = 4 // Прав
+	AI                 CreatorType = 1 // Право
+	User               CreatorType = 2 // Лево
+	UserVoice          CreatorType = 3 // Лево
+	Operator           CreatorType = 4 // Прав
+	SpeechRealTimeAI   CreatorType = 5 // Прав
+	SpeechRealTimeUser CreatorType = 6 // Лево
 )
 
 // Используем типы из пакета model/create для совместимости с интерфейсом create.DB
@@ -125,7 +126,7 @@ type DB struct {
 }
 
 // New создает новое подключение к базе данных
-func New(parent context.Context, conf *conf.Conf) *DB {
+func New(parent context.Context, conf *conf.Conf) (*DB, error) {
 	var dsn string
 	if mode.ProductionMode {
 		dsn = fmt.Sprintf("%s:%s@unix(%s)/%s?parseTime=true&charset=utf8mb4&loc=Local",
@@ -144,7 +145,7 @@ func New(parent context.Context, conf *conf.Conf) *DB {
 	}
 	conn, err := sql.Open("mysql", dsn)
 	if err != nil {
-		logger.Fatalf("ошибка открытия базы данных: %e", err)
+		return nil, err
 	}
 
 	// Пул соединений
@@ -160,7 +161,7 @@ func New(parent context.Context, conf *conf.Conf) *DB {
 		cancel:  cancel,
 		dsn:     dsn,
 		conn:    conn,
-	}
+	}, nil
 }
 
 // Close закрывает соединения с базой данных и отменяет контекст
@@ -170,17 +171,13 @@ func (d *DB) Close() error {
 		d.cancel()
 	}
 
-	logger.Info("DB: закрываю все соединения...")
-
 	// Закрываем соединение с базой данных
 	if d.conn != nil {
 		if err := d.conn.Close(); err != nil {
-			logger.Error("DB: ошибка закрытия соединения: %v", err)
 			return err
 		}
 	}
 
-	logger.Info("DB: все соединения закрыты")
 	return nil
 }
 
@@ -208,10 +205,7 @@ func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, tri
 		return "", nil, nil, false, false, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при создании gzip reader: %w", err)
 	}
 	defer func(gzipReader *gzip.Reader) {
-		closeErr := gzipReader.Close()
-		if closeErr != nil {
-			logger.Error("ошибка закрытия gzip reader: %v", closeErr)
-		}
+		_ = gzipReader.Close()
 	}(gzipReader)
 
 	// Читаем распакованные данные
@@ -712,7 +706,6 @@ func (d *DB) GetAllUserModels(userId uint32) ([]create.UserModelRecord, error) {
 		var idsRaw sql.NullString
 
 		if err := rows.Scan(&record.ModelId, &record.Provider, &isActive, &record.AssistId, &idsRaw); err != nil {
-			logger.Warn("Ошибка сканирования записи user_models: %v", err, userId)
 			continue
 		}
 
@@ -729,7 +722,6 @@ func (d *DB) GetAllUserModels(userId uint32) ([]create.UserModelRecord, error) {
 				VectorId []string     `json:"VectorId"`
 			}
 			if err := json.Unmarshal([]byte(idsRaw.String), &data); err != nil {
-				logger.Warn("Ошибка парсинга FileIds для ModelId %d: %v", record.ModelId, err, userId)
 			} else {
 				record.FileIds = data.FileIds
 			}
@@ -782,11 +774,6 @@ func (d *DB) UpdateUserGPT(userId uint32, modelId uint64, assistId string, allId
 			return fmt.Errorf("операция отменена: %w", err)
 		}
 		return fmt.Errorf("ошибка обновления user_gpt: %w", err)
-	}
-
-	if err != nil {
-		// Логируем, но не возвращаем ошибку - основное обновление прошло успешно
-		logger.Warn("Не удалось обновить timestamp пользователя %d: %v", userId, err, userId)
 	}
 
 	return nil
@@ -1732,8 +1719,6 @@ func (d *DB) SaveUserModel(
 			}
 		}
 
-		logger.Info("Создана новая модель (provider: %d, modelId: %d, isActive: %v)", provider, modelId, isActive == 1, userId)
-
 	} else {
 		// ===================================================================
 		// Модель существует - обновляем её в user_gpt
@@ -1760,8 +1745,6 @@ func (d *DB) SaveUserModel(
 				return fmt.Errorf("ошибка обновления модели: %w", err)
 			}
 		}
-
-		logger.Info("Обновлена существующая модель (provider: %d, modelId: %d)", provider, modelId, userId)
 	}
 
 	// ===================================================================

@@ -1,358 +1,633 @@
 package openai
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
-	"github.com/sashabaranov/go-openai"
 )
 
-// JSONSchemaDefinition представляет JSON схему для ответа ассистента
-type JSONSchemaDefinition struct {
-	Type       string                        `json:"type"`
-	Properties map[string]JSONSchemaProperty `json:"properties"`
-	Required   []string                      `json:"required,omitempty"`
-	Additional *bool                         `json:"additionalProperties,omitempty"`
-}
+// applyRAG выполняет все тяжёлые подготовительные операции параллельно в фоновой горутине:
+//   - Загрузка истории диалога из кэша или БД
+//   - Поиск респондента в sync.Map
+//   - Генерация эмбеддинга запроса (если RAG включён)
+//   - Семантический поиск похожих документов в MariaDB
+//
+// Результат отправляется в канал ch. Канал закрывается в конце горутины.
+// При критической ошибке (не найден respModel) — поле err заполнено.
+// При некритических ошибках (эмбеддинг/поиск) — продолжаем без RAG.
+func (m *OpenAIModel) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- openaiRagResp) {
+	defer close(ch)
 
-type JSONSchemaProperty struct {
-	Type       string                        `json:"type,omitempty"`
-	Properties map[string]JSONSchemaProperty `json:"properties,omitempty"`
-	Items      *JSONSchemaProperty           `json:"items,omitempty"`
-	Enum       []string                      `json:"enum,omitempty"`
-	Required   []string                      `json:"required,omitempty"`
-	Additional *bool                         `json:"additionalProperties,omitempty"`
-}
+	//totalStart := time.Now()
+	result := openaiRagResp{}
 
-// MarshalJSON реализует интерфейс json.Marshaler
-func (j JSONSchemaDefinition) MarshalJSON() ([]byte, error) {
-	type Alias JSONSchemaDefinition
-	return json.Marshal((Alias)(j))
-}
-
-func (m *OpenAIModel) handleRequiredAction(ctx context.Context, run *openai.Run, provider create.ProviderType) (*openai.Run, error) {
-	if run.RequiredAction == nil || run.RequiredAction.SubmitToolOutputs == nil {
-		return run, nil
-	}
-
-	toolOutputs := make([]openai.ToolOutput, 0)
-
-	for _, toolCall := range run.RequiredAction.SubmitToolOutputs.ToolCalls {
-		var output openai.ToolOutput
-
-		if m.actionHandler != nil {
-			result := m.actionHandler.RunAction(ctx, toolCall.Function.Name, toolCall.Function.Arguments, provider)
-			output = openai.ToolOutput{
-				ToolCallID: toolCall.ID,
-				Output:     result,
-			}
-		} else {
-			output = openai.ToolOutput{
-				ToolCallID: toolCall.ID,
-				Output:     fmt.Sprintf("Функция %s не поддерживается", toolCall.Function.Name),
-			}
-		}
-
-		toolOutputs = append(toolOutputs, output)
-	}
-
-	updatedRun, err := m.client.SubmitToolOutputs(ctx, run.ThreadID, run.ID, openai.SubmitToolOutputsRequest{
-		ToolOutputs: toolOutputs,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("не удалось отправить результаты функций: %w", err)
-	}
-
-	return &updatedRun, nil
-}
-
-func (m *OpenAIModel) waitForRunCompletion(ctx context.Context, run *openai.Run, provider create.ProviderType) (*openai.Run, error) {
-	currentRun := run
-
-	for currentRun.Status == openai.RunStatusQueued ||
-		currentRun.Status == openai.RunStatusInProgress ||
-		currentRun.Status == openai.RunStatusRequiresAction {
-
-		if currentRun.Status == openai.RunStatusRequiresAction {
-			updatedRun, err := m.handleRequiredAction(ctx, currentRun, provider)
-			if err != nil {
-				return nil, err
-			}
-			currentRun = updatedRun
-		}
-
-		time.Sleep(50 * time.Millisecond)
-
-		retrievedRun, err := m.client.RetrieveRun(ctx, currentRun.ThreadID, currentRun.ID)
+	// === 1. Получаем real_user_id ===
+	var realUserID uint64
+	if m.universalModel != nil {
+		var err error
+		realUserID, err = m.universalModel.GetRealUserID(userId)
 		if err != nil {
-			return nil, fmt.Errorf("не удалось получить статус запуска: %w", err)
+			//logger.Warn("applyRAG: не удалось получить real_user_id: %v, используем userId", err, userId)
+			realUserID = uint64(userId)
 		}
-		currentRun = &retrievedRun
+	} else {
+		realUserID = uint64(userId)
+	}
+	result.realUserID = realUserID
+
+	// === 2 + 3. Параллельно: загрузка истории и поиск respModel ===
+	// Используем два канала и WaitGroup для параллельного выполнения обеих операций.
+	type historyResult struct {
+		history []ChatMessage
+		dur     time.Duration
+	}
+	type responderResult struct {
+		resp *RespModel
+		dur  time.Duration
 	}
 
-	if currentRun.Status != openai.RunStatusCompleted {
-		return nil, fmt.Errorf("запуск завершился неудачно со статусом %s", currentRun.Status)
-	}
+	historyCh := make(chan historyResult, 1)
+	responderCh := make(chan responderResult, 1)
 
-	return currentRun, nil
-}
+	// Горутина загрузки истории
+	go func() {
+		start := time.Now()
+		var history []ChatMessage
 
-func (m *OpenAIModel) extractAssistantResponse(ctx context.Context, run *openai.Run) (model.AssistResponse, error) {
-	var emptyResponse model.AssistResponse
-
-	order := "desc"
-	messagesList, err := m.client.ListMessage(ctx, run.ThreadID, nil, &order, nil, nil, nil)
-	if err != nil {
-		return emptyResponse, fmt.Errorf("не удалось получить список сообщений: %w", err)
-	}
-
-	if len(messagesList.Messages) == 0 {
-		return emptyResponse, fmt.Errorf("получен пустой список сообщений")
-	}
-
-	var validResponses []model.AssistResponse
-
-	for _, message := range messagesList.Messages {
-		if message.Role == "assistant" && int64(message.CreatedAt) >= run.CreatedAt {
-			for _, content := range message.Content {
-				if content.Text != nil {
-					response := content.Text.Value
-					if response == "" {
-						continue
-					}
-
-					var assistResp model.AssistResponse
-					if err := json.Unmarshal([]byte(response), &assistResp); err != nil {
-						logger.Error("Ошибка парсинга JSON: %v. Ответ: %s", err, response)
-						continue
-					}
-
-					validResponses = append(validResponses, assistResp)
-				}
+		if cachedHistory, found := m.getDialogHistoryFromCache(dialogID); found {
+			history = cachedHistory
+			//logger.Debug("applyRAG: история загружена из кэша (%d сообщений)", len(history), userId)
+		} else {
+			dbHistory, err := m.ConvertDialogToOpenAIFormat(dialogID)
+			if err != nil {
+				//logger.Warn("applyRAG: не удалось загрузить историю диалога %d из БД: %v, используем пустую историю", dialogID, err, userId)
+				history = []ChatMessage{}
+			} else {
+				history = dbHistory
+				//logger.Debug("applyRAG: история загружена из БД (%d сообщений)", len(history), userId)
 			}
+
+			// Ограничиваем историю
+			maxMessages := int(create.DialogHistoryLimit)
+			if len(history) > maxMessages {
+				history = history[len(history)-maxMessages:]
+			}
+
+			// Сохраняем в кэш
+			cache := m.getOrCreateDialogCache(dialogID)
+			cache.Messages = history
 		}
+
+		historyCh <- historyResult{history: history, dur: time.Since(start)}
+	}()
+
+	// Горутина поиска respModel
+	go func() {
+		start := time.Now()
+		var found *RespModel
+
+		m.responders.Range(func(key, value interface{}) bool {
+			rm := value.(*RespModel)
+			if rm.Chan != nil && rm.Chan.DialogID == dialogID {
+				found = rm
+				return false
+			}
+			return true
+		})
+
+		responderCh <- responderResult{resp: found, dur: time.Since(start)}
+	}()
+
+	// Собираем результаты (обе горутины уже запущены параллельно)
+	hRes := <-historyCh
+	rRes := <-responderCh
+
+	result.history = hRes.history
+	result.historyLoadDuration = hRes.dur
+	result.responderLoadDuration = rRes.dur
+
+	// === 4. Проверяем что respModel найден (критично) ===
+	if rRes.resp == nil {
+		select {
+		case <-m.ctx.Done():
+		case ch <- openaiRagResp{err: fmt.Errorf("applyRAG: respModel не найден для dialogID %d", dialogID)}:
+		}
+		return
 	}
 
-	if len(validResponses) == 0 {
-		return emptyResponse, fmt.Errorf("не найдено валидных ответов от ассистента")
+	resp := rRes.resp
+	if resp.AgentConfig == nil {
+		select {
+		case <-m.ctx.Done():
+		case ch <- openaiRagResp{err: fmt.Errorf("applyRAG: конфигурация агента не загружена для dialogID %d", dialogID)}:
+		}
+		return
+	}
+	result.respModel = resp
+
+	// === 5. Проверяем нужен ли RAG ===
+	if !resp.AgentConfig.Search || text == "" {
+		//logger.Debug("applyRAG: RAG не требуется (Search=%v, text=%q)", resp.AgentConfig.Search, text != "", userId)
+		select {
+		case <-m.ctx.Done():
+		case ch <- result:
+		}
+		return
 	}
 
-	finalResponse := m.mergeResponses(validResponses)
+	// === 6. Генерируем эмбеддинг запроса ===
+	embeddingStart := time.Now()
+	queryEmbedding, err := m.GenerateEmbedding(text)
+	result.embeddingDuration = time.Since(embeddingStart)
 
-	return finalResponse, nil
+	if err != nil {
+		//logger.Warn("applyRAG: ошибка генерации эмбеддинга: %v, продолжаем без RAG", err, userId)
+		select {
+		case <-m.ctx.Done():
+		case ch <- result:
+		}
+		return
+	}
+
+	// === 7. Ищем похожие документы в MariaDB ===
+	searchStart := time.Now()
+	relevantDocs, err := m.searchSimilarEmbeddings(resp.AgentConfig.ModelId, queryEmbedding, create.SimilarEmbeddingsLimit)
+	result.searchDuration = time.Since(searchStart)
+
+	if err != nil {
+		//logger.Warn("applyRAG: ошибка поиска похожих эмбеддингов: %v, продолжаем без RAG", err, userId)
+		select {
+		case <-m.ctx.Done():
+		case ch <- result:
+		}
+		return
+	}
+
+	// === 8. Формируем обогащённый контекст ===
+	if len(relevantDocs) > 0 {
+		var relevantChunks []string
+		for _, doc := range relevantDocs {
+			relevantChunks = append(relevantChunks, doc.Content)
+		}
+
+		contextText := strings.Join(relevantChunks, "\n\n---\n\n")
+		result.contextText = fmt.Sprintf("Релевантная информация из базы знаний:\n%s\n\n---\n\nВопрос пользователя: %s",
+			contextText, text)
+
+		//totalDuration := time.Since(totalStart)
+		//logger.Info("[USER:%d] ⚡ applyRAG завершён за %v | История: %v | Респондент: %v | Эмбеддинг: %v | Поиск: %v | Найдено документов: %d (%d символов)",
+		//	userId, totalDuration, result.historyLoadDuration, result.responderLoadDuration,
+		//	result.embeddingDuration, result.searchDuration, len(relevantDocs), len(contextText))
+		//} else {
+		//	logger.Debug("applyRAG: похожие документы не найдены", userId)
+	}
+
+	select {
+	case <-m.ctx.Done():
+	case ch <- result:
+	}
 }
 
-func (m *OpenAIModel) mergeResponses(responses []model.AssistResponse) model.AssistResponse {
-	if len(responses) == 1 {
-		return responses[0]
-	}
-
-	var merged model.AssistResponse
-	var messages []string
-	var allFiles []model.File
-
-	for _, resp := range responses {
-		if resp.Message != "" {
-			messages = append(messages, resp.Message)
-		}
-		if len(resp.Action.SendFiles) > 0 {
-			allFiles = append(allFiles, resp.Action.SendFiles...)
-		}
-	}
-
-	if len(messages) > 0 {
-		merged.Message = strings.Join(messages, "\n\n")
-	}
-
-	if len(allFiles) > 0 {
-		uniqueFiles := make(map[string]model.File)
-		for _, file := range allFiles {
-			uniqueFiles[file.URL] = file
-		}
-
-		for _, file := range uniqueFiles {
-			merged.Action.SendFiles = append(merged.Action.SendFiles, file)
-		}
-	}
-
-	return merged
-}
-
-func (m *OpenAIModel) Request(userId uint32, dialogId uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+// Request выполняет синхронный запрос к модели (с буферизацией streaming ответов)
+func (m *OpenAIModel) Request(userId uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 
 	if text == "" && len(files) == 0 {
 		return emptyResponse, fmt.Errorf("пустое сообщение и нет файлов")
 	}
 
-	err := m.CreateThead(dialogId)
-	if err != nil {
-		logger.Warn("не удалось создать тред: %v", err, userId)
-	}
-
-	// Ищем RespModel по dialogId в Chan
-	var respModel *RespModel
-	m.responders.Range(func(key, value interface{}) bool {
-		rm := value.(*RespModel)
-
-		if rm.Chan != nil && rm.Chan.DialogId == dialogId {
-			respModel = rm
-			return false
+	// Вызываем RequestStreaming с буферизацией
+	var accumulatedText strings.Builder
+	err := m.RequestStreaming(userId, dialogID, text, func(delta string, done bool) error {
+		if !done {
+			accumulatedText.WriteString(delta)
 		}
-		return true
-	})
+		return nil
+	}, files...)
 
-	if respModel == nil {
-		return emptyResponse, fmt.Errorf("RespModel не найден для dialogId %d", dialogId)
-	}
-
-	thead := respModel.Thread
-	if thead == nil {
-		return emptyResponse, fmt.Errorf("тред не найден для dialogId %d после попытки создания", dialogId)
-	}
-
-	// Обновляем TTL при каждом запросе
-	respModel.TTL = time.Now().Add(m.UserModelTTl)
-
-	var (
-		fileIDs     []string
-		messageReq  openai.MessageRequest
-		vectorStore *openai.VectorStore
-	)
-
-	if len(files) > 0 {
-		vectorStore, err = m.getAssistantVectorStore(respModel.Assist.AssistId)
-		if err != nil {
-			logger.Error("Не удалось получить векторное хранилище: %w", err, userId)
-		}
-	}
-
-	if vectorStore != nil {
-		var fileNames []string
-		fileIDs, fileNames, err = m.uploadFilesForAssistant(files, vectorStore)
-		if err != nil {
-			logger.Error("Не удалось загрузить файлы: %w", err, userId)
-			messageReq = createMsg(text)
-		} else {
-			messageReq = createMsgWithFiles(text, fileNames)
-		}
-	} else {
-		messageReq = createMsg(text)
-	}
-
-	_, err = m.client.CreateMessage(m.ctx, thead.ID, messageReq)
-	if err != nil {
-		return emptyResponse, fmt.Errorf("не удалось создать сообщение: %w", err)
-	}
-
-	additionalFalse := false
-	schema := JSONSchemaDefinition{
-		Type: "object",
-		Properties: map[string]JSONSchemaProperty{
-			"message": {
-				Type: "string",
-			},
-			"action": {
-				Type: "object",
-				Properties: map[string]JSONSchemaProperty{
-					"send_files": {
-						Type: "array",
-						Items: &JSONSchemaProperty{
-							Type: "object",
-							Properties: map[string]JSONSchemaProperty{
-								"type":      {Type: "string", Enum: []string{"photo", "video", "audio", "doc"}},
-								"url":       {Type: "string"},
-								"file_name": {Type: "string"},
-								"caption":   {Type: "string"},
-							},
-							Required:   []string{"type", "url", "file_name", "caption"},
-							Additional: &additionalFalse,
-						},
-					},
-				},
-				Required:   []string{"send_files"},
-				Additional: &additionalFalse,
-			},
-			"target": {
-				Type: "boolean",
-			},
-			"operator": {
-				Type: "boolean",
-			},
-		},
-		Required:   []string{"message", "action", "target", "operator"},
-		Additional: &additionalFalse,
-	}
-
-	responseFormat := &openai.ChatCompletionResponseFormat{
-		Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
-		JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
-			Name:   "assist_response",
-			Strict: true,
-			Schema: schema,
-		},
-	}
-
-	runRequest := openai.RunRequest{
-		AssistantID:    respModel.Assist.AssistId,
-		ResponseFormat: responseFormat,
-	}
-
-	if m.actionHandler != nil {
-		if tools := m.actionHandler.GetTools(create.ProviderOpenAI); tools != nil {
-			if openaiTools, ok := tools.([]openai.Tool); ok {
-				runRequest.Tools = openaiTools
-			}
-		}
-	}
-
-	run, err := m.client.CreateRun(m.ctx, thead.ID, runRequest)
-	if err != nil {
-		return emptyResponse, fmt.Errorf("не удалось создать запуск: %w", err)
-	}
-
-	completedRun, err := m.waitForRunCompletion(m.ctx, &run, respModel.Assist.Provider)
 	if err != nil {
 		return emptyResponse, err
 	}
 
-	response, err := m.extractAssistantResponse(m.ctx, completedRun)
+	// Парсим накопленный текст как JSON
+	var response model.AssistResponse
+	if err := json.Unmarshal([]byte(accumulatedText.String()), &response); err != nil {
+		//logger.Error("Ошибка парсинга JSON ответа: %v. Ответ: %s", err, accumulatedText.String(), userId)
+		return emptyResponse, fmt.Errorf("ошибка парсинга ответа: %w", err)
+	}
 
-	defer func() {
-		if len(fileIDs) > 0 {
-			go m.cleanupFiles(fileIDs, vectorStore.ID)
+	return response, nil
+}
+
+// RequestStreaming выполняет запрос с потоковой передачей delta-событий
+// Использует Responses API (новый подход OpenAI с поддержкой file_search, code_interpreter, web_search)
+func (m *OpenAIModel) RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
+	if text == "" && len(files) == 0 {
+		return fmt.Errorf("пустое сообщение и нет файлов")
+	}
+
+	// ============================================================================
+	// ОПТИМИЗАЦИЯ: Запускаем applyRAG как можно раньше для параллельного выполнения
+	// всех тяжёлых операций (загрузка истории, поиск respModel, эмбеддинги, поиск в БД)
+	// ============================================================================
+	ragCh := make(chan openaiRagResp, 1)
+	go m.applyRAG(userId, dialogID, text, ragCh)
+
+	// Ждём результат из горутины — содержит history, respModel, realUserID, contextText и метрики
+	var ragResult openaiRagResp
+	select {
+	case <-m.ctx.Done():
+		return fmt.Errorf("контекст отменён")
+	case ragResult = <-ragCh:
+		if ragResult.err != nil {
+			return fmt.Errorf("ошибка в applyRAG: %w", ragResult.err)
 		}
-	}()
+	case <-time.After(create.ApplayRAGTimeaut):
+		return fmt.Errorf("таймаут ожидания результата applyRAG")
+	}
 
-	return response, err
+	// Извлекаем данные из результата applyRAG
+	respModel := ragResult.respModel
+	history := ragResult.history
+
+	// Обновляем TTL при каждом запросе
+	respModel.TTL = time.Now().Add(m.UserModelTTl)
+
+	// Формируем enhancedText (с RAG-контекстом если он есть)
+	enhancedText := text
+	if ragResult.contextText != "" {
+		enhancedText = ragResult.contextText
+		//logger.Debug("[USER:%d] RAG: добавлен контекст (%d символов)", userId, len(ragResult.contextText))
+	}
+
+	// Создаем сообщение пользователя с поддержкой файлов
+	// ВАЖНО: В историю сохраняем ОРИГИНАЛЬНЫЙ text (без RAG контекста)
+	// RAG контекст (enhancedText) используется только в input для текущего запроса
+	userMessage := m.createUserMessageWithFiles(text, files, userId)
+	history = append(history, userMessage)
+	m.addMessageToCache(dialogID, userMessage)
+
+	// Формируем input для Responses API
+	// Responses API принимает одно input сообщение, история добавляется в instructions
+	var conversationContext strings.Builder
+
+	// Добавляем историю диалога как контекст в instructions
+	if len(history) > 1 { // Если есть история кроме текущего сообщения
+		conversationContext.WriteString("\n\n## ИСТОРИЯ ДИАЛОГА:\n")
+		for i, msg := range history[:len(history)-1] { // Все кроме последнего
+			role := "Пользователь"
+			if msg.Role == "assistant" {
+				role = "Ассистент"
+			}
+			conversationContext.WriteString(fmt.Sprintf("%d. %s: %s\n", i+1, role, msg.Content))
+		}
+	}
+
+	// Формируем input - последнее сообщение пользователя
+	// Используем enhancedText который может содержать RAG контекст из Vector Store
+	input := enhancedText
+
+	// Временно модифицируем SystemPrompt для включения истории
+	originalSystemPrompt := respModel.AgentConfig.SystemPrompt
+	if conversationContext.Len() > 0 {
+		respModel.AgentConfig.SystemPrompt = originalSystemPrompt + conversationContext.String()
+	}
+
+	// Wrapper для onDelta - обрабатывает как текстовые дельты, так и JSON события function calls
+	wrappedOnDelta := func(delta string) error {
+		if onDelta != nil {
+			// Проверяем, является ли delta JSON событием (начинается с '{')
+			// События function calls приходят как JSON: {"type":"response.output_item.added", ...}
+			// Текстовые дельты приходят как обычные строки
+			if len(delta) > 0 && delta[0] == '{' {
+				// Это JSON событие - парсим для определения типа
+				var event map[string]interface{}
+				if err := json.Unmarshal([]byte(delta), &event); err == nil {
+					eventType, _ := event["type"].(string)
+
+					// Проверяем, является ли это событием function call
+					if strings.HasPrefix(eventType, "response.output_item.") ||
+						strings.HasPrefix(eventType, "response.function_call_arguments.") {
+						// Это событие function call - отправляем как есть (уже JSON)
+						return onDelta(delta, false)
+					}
+				}
+			}
+
+			// Обычная текстовая дельта
+			return onDelta(delta, false)
+		}
+		return nil
+	}
+
+	// Создаём обработчик вызовов функций
+	onToolCall := func(toolCalls []interface{}) ([]interface{}, error) {
+		//logger.Debug("🔧 [onToolCall] ВЫЗВАН! Количество tool calls: %d", len(toolCalls), userId)
+
+		var toolOutputs []interface{}
+
+		for _, toolCall := range toolCalls {
+			toolCallMap, ok := toolCall.(map[string]interface{})
+			if !ok {
+				//logger.Warn("[onToolCall] Некорректный формат tool call #%d (ожидается map[string]interface{}): тип=%T, значение=%+v",
+				//	i, toolCall, toolCall, userId)
+				continue
+			}
+
+			callID, hasCallID := toolCallMap["call_id"].(string)
+			functionName, hasFunctionName := toolCallMap["name"].(string)
+			arguments, hasArguments := toolCallMap["arguments"].(string)
+
+			// Проверяем наличие обязательных полей
+			if !hasCallID || !hasFunctionName {
+				//logger.Warn("[onToolCall] Tool call #%d пропущен: отсутствуют обязательные поля (call_id=%v, name=%v, map=%+v)",
+				//	i, hasCallID, hasFunctionName, toolCallMap, userId)
+				continue
+			}
+
+			if !hasArguments {
+				//logger.Debug("[onToolCall] Tool call #%d: аргументы отсутствуют, используем пустую строку", i, userId)
+				arguments = ""
+			}
+
+			//logger.Debug("🔧 [onToolCall] Tool call #%d: function=%s, call_id=%s, args_length=%d",
+			//	i, functionName, callID, len(arguments), userId)
+
+			// Выполняем функцию через action handler
+			var result string
+			if m.actionHandler != nil {
+				//logger.Debug("[onToolCall] Вызываю action handler для функции '%s'...", functionName, userId)
+				result = m.actionHandler.RunAction(m.ctx, functionName, arguments, create.ProviderOpenAI)
+				//logger.Debug("✅ [onToolCall] Получен результат от action handler для '%s': %s",
+				//	functionName, result, userId)
+			} else {
+				result = `{"error": "action handler not initialized"}`
+				//logger.Error("[RequestStreaming] Action handler не инициализирован", userId)
+			}
+
+			// Формируем tool output
+			// Для Responses API используем формат с role: "tool"
+			toolOutput := map[string]interface{}{
+				"call_id": callID,
+				"content": result,
+			}
+
+			toolOutputs = append(toolOutputs, toolOutput)
+		}
+
+		//logger.Debug("🔧 [onToolCall] ЗАВЕРШЁН! Возвращаю %d результатов", len(toolOutputs), userId)
+		return toolOutputs, nil
+	}
+
+	// Вызываем Responses API с обработчиком функций
+	_, fullText, err := m.client.CreateResponse(
+		m.ctx,
+		input,
+		respModel.AgentConfig,
+		wrappedOnDelta,
+		onToolCall,
+		userId,
+	)
+
+	// Восстанавливаем оригинальный SystemPrompt
+	respModel.AgentConfig.SystemPrompt = originalSystemPrompt
+
+	if err != nil {
+		return fmt.Errorf("ошибка запроса к Responses API: %w", err)
+	}
+
+	// Логируем полученный текст для отладки
+	//logger.Debug("CreateResponse вернул fullText (длина=%d): '%s'", len(fullText), fullText, userId)
+
+	// Responses API с response_format возвращает JSON как текст
+	// Парсим JSON чтобы извлечь реальную структуру AssistResponse
+	var assistResponse model.AssistResponse
+	if err := json.Unmarshal([]byte(fullText), &assistResponse); err != nil {
+		// Если парсинг не удался - возможно модель вернула просто текст
+		//logger.Warn("Не удалось распарсить JSON ответ (длина=%d, ошибка=%v), fullText='%s'",
+		//	len(fullText), err, fullText, userId)
+		assistResponse = model.AssistResponse{
+			Message: fullText,
+			Action: model.Action{
+				SendFiles: []model.File{},
+			},
+			Meta:     false,
+			Operator: false,
+		}
+	}
+
+	// Если Message пустое, но есть fullText - используем fullText
+	if assistResponse.Message == "" && fullText != "" {
+		assistResponse.Message = fullText
+	}
+
+	// Сериализуем обратно в JSON для совместимости с startpoint.go
+	responseJSON, err := json.Marshal(assistResponse)
+	if err != nil {
+		return fmt.Errorf("ошибка сериализации ответа: %w", err)
+	}
+
+	// Добавляем ответ ассистента в кэш (сохраняем только текст сообщения)
+	assistantMessage := ChatMessage{
+		Role:    "assistant",
+		Content: assistResponse.Message,
+	}
+	m.addMessageToCache(dialogID, assistantMessage)
+
+	// Вызываем callback с done=true и полным JSON
+	if onDelta != nil {
+		if err := onDelta(string(responseJSON), true); err != nil {
+			//logger.Warn("Ошибка в onDelta callback: %v", err, userId)
+		}
+	}
+
+	return nil
 }
 
-// createMsg создает простое сообщение для OpenAI
-func createMsg(text string) openai.MessageRequest {
-	return openai.MessageRequest{
+// createUserMessageWithFiles создает сообщение пользователя с поддержкой файлов
+// Для Chat Completions API: изображения через image_url, документы через file_search в tools
+func (m *OpenAIModel) createUserMessageWithFiles(text string, files []model.FileUpload, _ uint32) ChatMessage {
+	// Если нет файлов - простое текстовое сообщение
+	if len(files) == 0 {
+		return ChatMessage{
+			Role:    "user",
+			Content: text,
+		}
+	}
+
+	// Если есть файлы - формируем multi-part content
+	var contentParts []interface{}
+
+	// Добавляем текстовую часть
+	if text != "" {
+		contentParts = append(contentParts, map[string]interface{}{
+			"type": "text",
+			"text": text,
+		})
+	}
+
+	// Добавляем файлы
+	for _, file := range files {
+		// Изображения с URL
+		if file.HasURL() && file.IsImageMimeType() {
+			contentParts = append(contentParts, map[string]interface{}{
+				"type": "image_url",
+				"image_url": map[string]interface{}{
+					"url": file.URL,
+				},
+			})
+			//logger.Debug("Добавлено изображение по URL: %s", file.URL, userId)
+		} else if file.Content != nil {
+			// Для code_interpreter - загружаем файл
+			// TODO: Загрузка файлов для code_interpreter
+			//logger.Warn("Файл %s требует загрузки для code_interpreter (не реализовано)", file.Name, userId)
+		}
+	}
+
+	return ChatMessage{
 		Role:    "user",
-		Content: text,
+		Content: contentParts,
 	}
 }
 
-// createMsgWithFiles создает сообщение с файлами для OpenAI
-func createMsgWithFiles(text string, fileNames []string) openai.MessageRequest {
-	msg := openai.MessageRequest{
-		Role:    "user",
-		Content: text,
+// ============================================================================
+// DIALOG CONVERSION METHODS
+// ============================================================================
+
+// ConvertDialogToOpenAIFormat конвертирует историю диалога из БД в формат OpenAI Chat
+// Используется при обработке запросов для загрузки истории диалога
+// По образцу Google провайдера с поддержкой всех форматов данных
+func (m *OpenAIModel) ConvertDialogToOpenAIFormat(dialogID uint64) ([]ChatMessage, error) {
+	// Временная структура для парсинга ответа БД
+	type DialogMsg struct {
+		Creator   interface{} `json:"creator"`
+		Message   interface{} `json:"message"`
+		Timestamp string      `json:"timestamp"`
 	}
-	if len(fileNames) == 1 {
-		text += fmt.Sprintf("\n\nОБЯЗАТЕЛЬНО используй file_search для анализа содержимого этого файла: %s. И если потребуется code_interpreter. ИГНОРИРУЙ все остальные файлы в векторном хранилище - это важно!", fileNames[0])
+
+	type DialogDataTemp struct {
+		Dialog []DialogMsg `json:"dialog"`
+	}
+
+	type DialogDataWrapperArray struct {
+		Data []string `json:"Data"` // Массив JSON строк
+	}
+
+	type DialogDataWrapperString struct {
+		Data string `json:"Data"` // Строка JSON (с двойной экранизацией)
+	}
+
+	// Читаем сырые данные из БД с лимитом истории
+	rawData, err := m.db.ReadDialog(dialogID, create.DialogHistoryLimit)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения диалога: %w", err)
+	}
+
+	if len(rawData) == 0 {
+		return []ChatMessage{}, nil // Пустая история
+	}
+
+	var dialogMsgs []DialogMsg
+
+	// Попытка 1: Парсим как структуру с полем "Data" (массив строк)
+	var wrapperArray DialogDataWrapperArray
+	if err := json.Unmarshal(rawData, &wrapperArray); err == nil && len(wrapperArray.Data) > 0 {
+		// Успешно распарсили как структуру с полем Data (массив строк)
+		for _, jsonStr := range wrapperArray.Data {
+			var msg DialogMsg
+			if err := json.Unmarshal([]byte(jsonStr), &msg); err != nil {
+				//logger.Warn("Ошибка парсинга сообщения %d: %v (jsonStr: %.100s)", i, err, jsonStr)
+				continue
+			}
+			dialogMsgs = append(dialogMsgs, msg)
+		}
 	} else {
-		text += fmt.Sprintf("\n\nОБЯЗАТЕЛЬНО используй file_search для анализа содержимого этих файлов: %s. И если потребуется code_interpreter. ИГНОРИРУЙ все остальные файлы в векторном хранилище - это важно!", strings.Join(fileNames, ", "))
+		// Попытка 2: Парсим как структуру с полем "Data" (строка JSON с вложенным массивом)
+		var wrapperString DialogDataWrapperString
+		if err := json.Unmarshal(rawData, &wrapperString); err == nil && len(wrapperString.Data) > 0 {
+			// Распарсиваем строку как массив строк JSON
+			var stringArray []string
+			if err := json.Unmarshal([]byte(wrapperString.Data), &stringArray); err == nil && len(stringArray) > 0 {
+				for _, jsonStr := range stringArray {
+					var msg DialogMsg
+					if err := json.Unmarshal([]byte(jsonStr), &msg); err != nil {
+						//logger.Warn("Ошибка парсинга сообщения %d: %v (jsonStr: %.100s)", i, err, jsonStr)
+						continue
+					}
+					dialogMsgs = append(dialogMsgs, msg)
+				}
+			}
+		} else {
+			// Попытка 3: Парсим как структуру с полем "dialog"
+			var dialogData DialogDataTemp
+			if err := json.Unmarshal(rawData, &dialogData); err == nil && len(dialogData.Dialog) > 0 {
+				dialogMsgs = dialogData.Dialog
+			} else {
+				// Попытка 4: Парсим как массив строк напрямую
+				var stringArray []string
+				if err := json.Unmarshal(rawData, &stringArray); err == nil && len(stringArray) > 0 {
+					for _, jsonStr := range stringArray {
+						var msg DialogMsg
+						if err := json.Unmarshal([]byte(jsonStr), &msg); err != nil {
+							//logger.Warn("Ошибка парсинга сообщения %d: %v (jsonStr: %.100s)", i, err, jsonStr)
+							continue
+						}
+						dialogMsgs = append(dialogMsgs, msg)
+					}
+				} else {
+					// Попытка 5: Парсим как прямой массив объектов
+					if err := json.Unmarshal(rawData, &dialogMsgs); err != nil {
+						//logger.Warn("Не удалось распарсить историю диалога %d ни в одном известном формате, rawData length: %d", dialogID, len(rawData))
+						return []ChatMessage{}, nil // Возвращаем пустую историю вместо ошибки
+					}
+				}
+			}
+		}
 	}
-	msg.Content = text
 
-	return msg
+	var messages []ChatMessage
+
+	// Парсим историю диалога
+	for _, msg := range dialogMsgs {
+		var role string
+		// creator: 1 = AI, 2 = User
+		if creator, ok := msg.Creator.(float64); ok {
+			if creator == 1 {
+				role = "assistant"
+			} else {
+				role = "user"
+			}
+		} else if creator, ok := msg.Creator.(string); ok {
+			role = creator
+		} else {
+			role = "user"
+		}
+
+		// Извлекаем текст сообщения
+		var content string
+		if msgMap, ok := msg.Message.(map[string]interface{}); ok {
+			if msgText, ok := msgMap["message"].(string); ok {
+				content = msgText
+			} else {
+				// Сериализуем весь объект как JSON если нет поля message
+				jsonBytes, _ := json.Marshal(msgMap)
+				content = string(jsonBytes)
+			}
+		} else if msgStr, ok := msg.Message.(string); ok {
+			content = msgStr
+		}
+
+		if content != "" {
+			messages = append(messages, ChatMessage{
+				Role:    role,
+				Content: content,
+			})
+		}
+	}
+
+	return messages, nil
 }

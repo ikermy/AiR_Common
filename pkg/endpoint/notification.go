@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/common"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
@@ -45,7 +44,7 @@ func sendHTTPRequest(url string, payload map[string]interface{}) error {
 	if err != nil {
 		return fmt.Errorf("ошибка при отправке HTTP-запроса: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -67,7 +66,7 @@ func (e *Endpoint) SendEvent(userId uint32, event, userName, assistName, target 
 	select {
 	case mode.CarpinteroCh <- msg:
 	default:
-		logger.Warn("CarpinteroCh: канал закрыт или переполнен, не удалось отправить сообщение: %+v", msg)
+		//logger.Warn("CarpinteroCh: канал закрыт или переполнен, не удалось отправить сообщение: %+v", msg)
 	}
 }
 
@@ -92,7 +91,7 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 		case "instant":
 			err := SendInstantNotification(msg.UserID, msg.Event, msg.UserName, msg.AssistName, msg.Target)
 			if err != nil {
-				logger.Error("Ошибка отправки Instant уведомления: %v", err, msg.UserID)
+				//logger.Error("Ошибка отправки Instant уведомления: %v", err, msg.UserID)
 				lastError = err
 				continue
 			}
@@ -101,26 +100,26 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 		case "telegram":
 			// Проверяю что Telegram не null
 			if ch["channel_value"] == "null" {
-				logger.Error("у пользователя %d не задан Telegram ID, уведомление не отправлено", msg.UserID)
+				//logger.Error("у пользователя %d не задан Telegram ID, уведомление не отправлено", msg.UserID)
 				lastError = fmt.Errorf("у пользователя %d не задан Telegram ID", msg.UserID)
 				continue
 			}
 			// Подготовка сообщения Telegram
 			telegramValue, ok := ch["channel_value"].(string)
 			if !ok {
-				logger.Error("channel_value не является строкой", msg.UserID)
+				//logger.Error("channel_value не является строкой", msg.UserID)
 				lastError = fmt.Errorf("channel_value не является строкой")
 				continue
 			}
 			tId, err := strconv.ParseInt(telegramValue, 10, 64)
 			if err != nil {
-				logger.Error("ошибка преобразования Telegram ID: %v", err, msg.UserID)
+				//logger.Error("ошибка преобразования Telegram ID: %v", err, msg.UserID)
 				lastError = err
 				continue
 			}
 			err = SendTelegramNotification(msg.UserID, tId, msg.Event, msg.UserName, msg.AssistName, msg.Target)
 			if err != nil {
-				logger.Error("Ошибка отправки Telegram уведомления: %v", err, msg.UserID)
+				//logger.Error("Ошибка отправки Telegram уведомления: %v", err, msg.UserID)
 				lastError = err
 				continue
 			}
@@ -129,27 +128,28 @@ func (e *Endpoint) SendNotification(msg common.CarpCh) error {
 		case "mail":
 			// Проверяю что Email не null
 			if ch["channel_value"] == "null" {
-				logger.Error("у пользователя %d не задан Email, уведомление не отправлено", msg.UserID)
+				//logger.Error("у пользователя %d не задан Email, уведомление не отправлено", msg.UserID)
 				lastError = fmt.Errorf("у пользователя %d не задан Email", msg.UserID)
 				continue
 			}
 			// Подготовка сообщения Email
 			emailValue, ok := ch["channel_value"].(string)
 			if !ok {
-				logger.Error("channel_value не является строкой", msg.UserID)
+				//logger.Error("channel_value не является строкой", msg.UserID)
 				lastError = fmt.Errorf("channel_value не является строкой")
 				continue
 			}
 			err = SendEmailNotification(msg.UserID, emailValue, msg.Event, msg.UserName, msg.AssistName, msg.Target)
 			if err != nil {
-				logger.Error("ошибка отправки Email уведомления: %v", err, msg.UserID)
+				//logger.Error("ошибка отправки Email уведомления: %v", err, msg.UserID)
 				lastError = err
 				continue
 			}
 			successCount++
 
 		default:
-			logger.Warn("Неизвестный канал уведомлений: %s", ch["channel_type"], msg.UserID)
+			//logger.Warn("Неизвестный канал уведомлений: %s", ch["channel_type"], msg.UserID)
+			lastError = fmt.Errorf("неизвестный канал уведомлений: %s", ch["channel_type"])
 		}
 	}
 
@@ -208,7 +208,7 @@ func SendInstantNotification(uid uint32, event, userName, assistName, target str
 	return sendHTTPRequest(url, payload)
 }
 
-// Структура для информации о инициации платежа
+// PaymentInfo Структура для информации о инициации платежа
 type PaymentInfo struct {
 	UserId    int    `json:"userId"`
 	Currency  string `json:"currency"`
@@ -219,7 +219,7 @@ type PaymentInfo struct {
 	ExpiresAt int64  `json:"expiresAt"`
 }
 
-// Структура для информации о статусе платежа
+// PaymentStatus Структура для информации о статусе платежа
 type PaymentStatus struct {
 	OrderID        string  `json:"orderId"`
 	UserID         uint32  `json:"userId"`
@@ -289,7 +289,7 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 			)
 			err := json.Unmarshal([]byte(Target), &payInfo)
 			if err != nil {
-				logger.Error("Ошибка парсинга PaymentInfo: %v", err)
+				return "", fmt.Errorf("ошибка парсинга PaymentInfo: %v", err)
 			}
 
 			if UserName == "false" {
@@ -362,19 +362,28 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 	return msg, nil
 }
 
-func (e *Endpoint) NotificationListener() {
-	logger.Info("Запуск 'NotificationListener' для прослушивания канала mode.CarpinteroCh")
+func (e *Endpoint) NotificationListener(notifCh chan<- map[string]any) {
+	notifCh <- map[string]any{"msg": "Запуск 'NotificationListener' для прослушивания канала mode.CarpinteroCh",
+		"mod":  "Endpoint",
+		"type": 0, // 0 - Info
+		"uid":  0}
 
 	for {
 		select {
 		case msg, ok := <-mode.CarpinteroCh:
 			if !ok {
-				logger.Error("mode.CarpinteroCh closed")
+				notifCh <- map[string]any{"msg": "mode.CarpinteroCh closed",
+					"mod":  "Endpoint",
+					"type": 1, // 1 - Error
+					"uid":  0}
 				return
 			}
 			err := e.SendNotification(msg)
 			if err != nil {
-				logger.Error("'NotificationListener': ошибка отправки уведомления: %v", err, msg.UserID)
+				notifCh <- map[string]any{"msg": fmt.Sprintf("'NotificationListener': ошибка отправки уведомления: %v", err),
+					"mod":  "Endpoint",
+					"type": 1, // 1 - Error
+					"uid":  msg.UserID}
 			}
 		}
 	}

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -71,21 +70,25 @@ func (s *CalendarService) getCalendarService(userId uint32) (*calendar.Service, 
 		// Получаем актуальный токен (может быть обновлён)
 		freshToken, err := tokenSource.Token()
 		if err != nil {
+			// Проверяем на invalid_grant - токен отозван или истек
+			errMsg := err.Error()
+			if contains(errMsg, "invalid_grant") || contains(errMsg, "Token has been expired or revoked") {
+				return nil, fmt.Errorf("Google OAuth токен истёк или был отозван. Пожалуйста, повторно авторизуйте доступ к Google Calendar через настройки профиля")
+			}
 			return nil, fmt.Errorf("ошибка получения/обновления токена: %w", err)
 		}
 
 		// Если токен был обновлён - сохраняем в БД
 		if freshToken.AccessToken != token.AccessToken {
-			logger.Debug("Google OAuth токен был автоматически обновлён", userId)
 			err = s.db.SaveGoogleTokenByProvider(userId, s.provider, googleEmail, freshToken)
 			if err != nil {
-				logger.Warn("Не удалось сохранить обновлённый токен: %v", err)
+				return nil, fmt.Errorf("не удалось сохранить обновлённый токен: %v", err)
 			}
 		}
 	} else {
 		// Нет OAuth credentials - используем статичный токен (без автообновления)
 		tokenSource = oauth2.StaticTokenSource(token)
-		logger.Warn("OAuth credentials не настроены - токен не будет автоматически обновляться")
+		//logger.Warn("OAuth credentials не настроены - токен не будет автоматически обновляться")
 	}
 
 	// Создаем HTTP клиент с OAuth токеном
@@ -123,7 +126,7 @@ func (s *CalendarService) CreateEvent(params CreateEventParams) (string, error) 
 	userTimeZone, err := s.db.UserTimeZone(params.UserID)
 	if err != nil {
 		// Если не удалось получить таймзону, используем UTC как fallback
-		logger.Warn("Не удалось получить таймзону пользователя %d: %v, используется UTC", params.UserID, err)
+		//logger.Warn("Не удалось получить таймзону пользователя %d: %v, используется UTC", params.UserID, err)
 		userTimeZone = "UTC"
 	}
 
@@ -172,7 +175,7 @@ func (s *CalendarService) CreateEvent(params CreateEventParams) (string, error) 
 		return string(result), nil
 	}
 
-	logger.Info("Calendar: создано событие '%s' (ID: %s)", params.Title, createdEvent.Id, params.UserID)
+	//logger.Debug("Calendar: создано событие '%s' (ID: %s)", params.Title, createdEvent.Id, params.UserID)
 
 	// Возвращаем JSON с результатом
 	result := map[string]interface{}{
@@ -265,7 +268,7 @@ func (s *CalendarService) ListEvents(params ListEventsParams) (string, error) {
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	logger.Info("Calendar: получено %d событий", len(eventsList), params.UserID)
+	//logger.Debug("Calendar: получено %d событий", len(eventsList), params.UserID)
 	return string(resultJSON), nil
 }
 
@@ -290,7 +293,7 @@ func (s *CalendarService) DeleteEvent(params DeleteEventParams) (string, error) 
 		return string(result), nil
 	}
 
-	logger.Info("Calendar: удалено событие ID: %s", params.EventID, params.UserID)
+	//logger.Debug("Calendar: удалено событие ID: %s", params.EventID, params.UserID)
 
 	result := map[string]interface{}{
 		"success": true,

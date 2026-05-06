@@ -4,15 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/logger"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
 )
+
+// contains проверяет наличие подстроки (case-insensitive)
+func contains(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
 
 // SheetsService управляет операциями с Google Sheets
 type SheetsService struct {
@@ -70,21 +75,25 @@ func (s *SheetsService) getSheetsService(userId uint32) (*sheets.Service, error)
 		// Получаем актуальный токен (может быть обновлён)
 		freshToken, err := tokenSource.Token()
 		if err != nil {
+			// Проверяем на invalid_grant - токен отозван или истек
+			errMsg := err.Error()
+			if contains(errMsg, "invalid_grant") || contains(errMsg, "Token has been expired or revoked") {
+				return nil, fmt.Errorf("Google OAuth токен истёк или был отозван. Пожалуйста, повторно авторизуйте доступ к Google Sheets через настройки профиля")
+			}
 			return nil, fmt.Errorf("ошибка получения/обновления токена: %w", err)
 		}
 
 		// Если токен был обновлён - сохраняем в БД
 		if freshToken.AccessToken != token.AccessToken {
-			logger.Debug("Google OAuth токен был автоматически обновлён", userId)
 			err = s.db.SaveGoogleTokenByProvider(userId, s.provider, googleEmail, freshToken)
 			if err != nil {
-				logger.Warn("Не удалось сохранить обновлённый токен: %v", err)
+				return nil, fmt.Errorf("не удалось сохранить обновлённый токен: %v", err)
 			}
 		}
 	} else {
 		// Нет OAuth credentials - используем статичный токен (без автообновления)
 		tokenSource = oauth2.StaticTokenSource(token)
-		logger.Warn("OAuth credentials не настроены - токен не будет автоматически обновляться")
+		//logger.Warn("OAuth credentials не настроены - токен не будет автоматически обновляться")
 	}
 
 	// Создаем HTTP клиент с OAuth токеном
@@ -134,7 +143,7 @@ func (s *SheetsService) ReadRange(params ReadRangeParams) (string, error) {
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	logger.Info("Sheets: прочитано %d строк из %s", len(resp.Values), params.Range, params.UserID)
+	//logger.Debug("Sheets: прочитано %d строк из %s", len(resp.Values), params.Range, params.UserID)
 	return string(resultJSON), nil
 }
 
@@ -181,7 +190,7 @@ func (s *SheetsService) WriteRange(params WriteRangeParams) (string, error) {
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	logger.Info("Sheets: записано %d ячеек в %s", resp.UpdatedCells, params.Range, params.UserID)
+	//logger.Debug("Sheets: записано %d ячеек в %s", resp.UpdatedCells, params.Range, params.UserID)
 	return string(resultJSON), nil
 }
 
@@ -228,7 +237,7 @@ func (s *SheetsService) AppendRange(params AppendRangeParams) (string, error) {
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	logger.Info("Sheets: добавлено %d строк в %s", resp.Updates.UpdatedRows, params.Range, params.UserID)
+	//logger.Debug("Sheets: добавлено %d строк в %s", resp.Updates.UpdatedRows, params.Range, params.UserID)
 	return string(resultJSON), nil
 }
 
@@ -283,7 +292,7 @@ func (s *SheetsService) CreateSpreadsheet(params CreateSpreadsheetParams) (strin
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	logger.Info("Sheets: создана таблица '%s' (ID: %s)", params.Title, resp.SpreadsheetId, params.UserID)
+	//logger.Debug("Sheets: создана таблица '%s' (ID: %s)", params.Title, resp.SpreadsheetId, params.UserID)
 	return string(resultJSON), nil
 }
 
