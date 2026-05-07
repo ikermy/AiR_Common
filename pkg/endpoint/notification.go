@@ -362,28 +362,34 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 	return msg, nil
 }
 
-func (e *Endpoint) NotificationListener(notifCh chan<- map[string]any) {
-	notifCh <- map[string]any{"msg": "запуск 'NotificationListener' для прослушивания канала mode.CarpinteroCh",
-		"mod":  "Endpoint",
-		"type": 0, // 0 - Info
-		"uid":  0}
+func (e *Endpoint) NotificationListener(notifCh chan<- com.LogMsg) {
+	notifCh <- com.LogMsg{
+		Msg: "запуск 'NotificationListener' для прослушивания канала mode.CarpinteroCh",
+		Mod: "Endpoint",
+		Log: 0, // 0 - Info
+		UID: 0,
+	}
 
 	for {
 		select {
 		case msg, ok := <-mode.CarpinteroCh:
 			if !ok {
-				notifCh <- map[string]any{"msg": "mode.CarpinteroCh closed",
-					"mod":  "Endpoint",
-					"type": 1, // 1 - Error
-					"uid":  0}
+				notifCh <- com.LogMsg{
+					Msg: "mode.CarpinteroCh closed",
+					Mod: "Endpoint",
+					Log: 1, // 1 - Error
+					UID: 0,
+				}
 				return
 			}
 			err := e.SendNotification(msg)
 			if err != nil {
-				notifCh <- map[string]any{"msg": fmt.Sprintf("'NotificationListener': ошибка отправки уведомления: %v", err),
-					"mod":  "Endpoint",
-					"type": 1, // 1 - Error
-					"uid":  msg.UserID}
+				notifCh <- com.LogMsg{
+					Msg: fmt.Sprintf("'NotificationListener': ошибка отправки уведомления: %v", err),
+					Mod: "Endpoint",
+					Log: 1, // 1 - Error
+					UID: msg.UserID,
+				}
 			}
 		}
 	}

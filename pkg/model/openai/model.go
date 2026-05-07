@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/model"
@@ -888,22 +889,26 @@ func (m *OpenAIModel) TranscribeAudio(userId uint32, audioData []byte, fileName 
 	return text, nil
 }
 
-func (m *OpenAIModel) Shutdown(shutCh chan<- map[string]any) {
+func (m *OpenAIModel) Shutdown(shutCh chan<- com.LogMsg) {
 	var shutdownErrors []string
 
 	m.shutdownOnce.Do(func() {
-		shutCh <- map[string]any{"msg": "начало shutdown",
-			"mod":  "OpenAIModel",
-			"type": 0, // 0 - Info
-			"uid":  0}
+		shutCh <- com.LogMsg{
+			Msg: "начало shutdown",
+			Mod: "OpenAIModel",
+			Log: 0, // 0 - Info
+			UID: 0,
+		}
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 
-		shutCh <- map[string]any{"msg": "сохранение всех контекстов при завершении работы",
-			"mod":  "OpenAIModel",
-			"type": 0, // 0 - Info
-			"uid":  0}
+		shutCh <- com.LogMsg{
+			Msg: "сохранение всех контекстов при завершении работы",
+			Mod: "OpenAIModel",
+			Log: 0, // 0 - Info
+			UID: 0,
+		}
 		if err := m.saveAllContextsGracefullyCtx(shutdownCtx); err != nil {
 			shutdownErrors = append(shutdownErrors, fmt.Sprintf("ошибка сохранения контекстов: %v", err))
 		}
@@ -925,24 +930,30 @@ func (m *OpenAIModel) Shutdown(shutCh chan<- map[string]any) {
 		m.cleanupAllResponders()
 		m.cleanupWaitChannels()
 
-		shutCh <- map[string]any{"msg": "процесс завершения работы модуля завершен",
-			"mod":  "OpenAIModel",
-			"type": 0, // 0 - Info
-			"uid":  0}
+		shutCh <- com.LogMsg{
+			Msg: "процесс завершения работы модуля завершен",
+			Mod: "OpenAIModel",
+			Log: 0, // 0 - Info
+			UID: 0,
+		}
 	})
 
 	if len(shutdownErrors) > 0 {
 
-		shutCh <- map[string]any{"msg": fmt.Sprintf("ошибки при завершении работы: %s", strings.Join(shutdownErrors, "; ")),
-			"mod":  "OpenAIModel",
-			"type": 2, // 2 - Error
-			"uid":  0}
+		shutCh <- com.LogMsg{
+			Msg: fmt.Sprintf("ошибки при завершении работы: %s", strings.Join(shutdownErrors, "; ")),
+			Mod: "OpenAIModel",
+			Log: 2, // 2 - Error
+			UID: 0,
+		}
 	}
 
-	shutCh <- map[string]any{"msg": "модуль успешно завершил работу",
-		"mod":  "OpenAIModel",
-		"type": 0, // 0 - Info
-		"uid":  0}
+	shutCh <- com.LogMsg{
+		Msg: "модуль успешно завершил работу",
+		Mod: "OpenAIModel",
+		Log: 0, // 0 - Info
+		UID: 0,
+	}
 }
 
 // Вспомогательная функция для конвертации внутреннего RespModel в model.RespModel

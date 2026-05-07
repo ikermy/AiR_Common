@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/endpoint"
 	"github.com/ikermy/AiR_Common/pkg/mode"
@@ -84,14 +85,16 @@ func New(parent context.Context, mod Model, end Endpoint, bot BotInterface, oper
 }
 
 // Shutdown останавливает внутренний контекст Start и даёт возможность корректно завершить фоновые операции
-func (s *Start) Shutdown(shutCh chan<- map[string]any) {
+func (s *Start) Shutdown(shutCh chan<- com.LogMsg) {
 	if s.cancel != nil {
 		s.cancel()
 	}
-	shutCh <- map[string]any{"msg": "успешно завершил работу",
-		"mod":  "Startpoint",
-		"type": 0, // 0 - Info
-		"uid":  0}
+	shutCh <- com.LogMsg{
+		Msg: "успешно завершил работу",
+		Mod: "Startpoint",
+		Log: 0, // 0 - Info
+		UID: 0,
+	}
 }
 
 func (s *Start) ask(userId uint32, respId, dialogID uint64, arrAsk []string, files ...model.FileUpload) (model.AssistResponse, error) {

@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/model"
@@ -539,12 +540,14 @@ func (m *MistralModel) CleanUp() {
 }
 
 // Shutdown корректно завершает работу модели (реализация model.UniversalModel)
-func (m *MistralModel) Shutdown(shutCh chan<- map[string]any) {
+func (m *MistralModel) Shutdown(shutCh chan<- com.LogMsg) {
 	m.shutdownOnce.Do(func() {
-		shutCh <- map[string]any{"msg": "начало shutdown",
-			"mod":  "MistralModel",
-			"type": 0, // 0 - Info
-			"uid":  0}
+		shutCh <- com.LogMsg{
+			Msg: "начало shutdown",
+			Mod: "MistralModel",
+			Log: 0, // 0 - Info
+			UID: 0,
+		}
 
 		if m.cancel != nil {
 			m.cancel()
@@ -557,10 +560,12 @@ func (m *MistralModel) Shutdown(shutCh chan<- map[string]any) {
 		m.cleanupAllResponders()
 		m.cleanupWaitChannels()
 
-		shutCh <- map[string]any{"msg": "модуль успешно завершил работу",
-			"mod":  "MistralModel",
-			"type": 0, // 0 - Info
-			"uid":  0}
+		shutCh <- com.LogMsg{
+			Msg: "модуль успешно завершил работу",
+			Mod: "MistralModel",
+			Log: 0, // 0 - Info
+			UID: 0,
+		}
 	})
 }
 

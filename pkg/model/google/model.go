@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/model"
@@ -637,12 +638,14 @@ func (m *GoogleModel) CleanupExpiredResponders() {
 }
 
 // Shutdown корректно завершает работу модели
-func (m *GoogleModel) Shutdown(shutCh chan<- map[string]any) {
+func (m *GoogleModel) Shutdown(shutCh chan<- com.LogMsg) {
 	m.shutdownOnce.Do(func() {
-		shutCh <- map[string]any{"msg": "начало shutdown",
-			"mod":  "GoogleModel",
-			"type": 0, // 0 - Info
-			"uid":  0}
+		shutCh <- com.LogMsg{
+			Msg: "начало shutdown",
+			Mod: "GoogleModel",
+			Log: 0, // 0 - Info
+			UID: 0,
+		}
 	})
 
 	// Останавливаем все респонденты
@@ -659,10 +662,12 @@ func (m *GoogleModel) Shutdown(shutCh chan<- map[string]any) {
 		m.cancel()
 	}
 
-	shutCh <- map[string]any{"msg": "shutdown завершен",
-		"mod":  "GoogleModel",
-		"type": 0, // 0 - Info
-		"uid":  0}
+	shutCh <- com.LogMsg{
+		Msg: "shutdown завершен",
+		Mod: "GoogleModel",
+		Log: 0, // 0 - Info
+		UID: 0,
+	}
 }
 
 // TranscribeAudio транскрибирует аудио в текст (обёртка для клиента)

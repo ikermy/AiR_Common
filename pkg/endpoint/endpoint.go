@@ -120,11 +120,13 @@ func (e *Endpoint) CallOptionalTyped(val any) error {
 //}
 
 // Shutdown останавливает фоновые задачи и принудительно сохраняет буферы
-func (e *Endpoint) Shutdown(shutCh chan<- map[string]any) {
-	shutCh <- map[string]any{"msg": "Получен сигнал завершения, сохраняем диалоги",
-		"mod":  "Endpoint",
-		"type": 3, // 3 - Debug
-		"uid":  0}
+func (e *Endpoint) Shutdown(shutCh chan<- com.LogMsg) {
+	shutCh <- com.LogMsg{
+		Msg: "Получен сигнал завершения, сохраняем диалоги",
+		Mod: "Endpoint",
+		Log: 3, // 3 - Debug
+		UID: 0,
+	}
 
 	// Отменяем контекст, чтобы остановить горутины
 	if e.cancel != nil {
@@ -134,10 +136,12 @@ func (e *Endpoint) Shutdown(shutCh chan<- map[string]any) {
 	time.Sleep(100 * time.Millisecond)
 	// Финальный flush
 	if err := e.FlushAllBatches(); err != nil {
-		shutCh <- map[string]any{"msg": fmt.Sprintf("Ошибка при сохранении диалогов при завершении: %v", err),
-			"mod":  "Endpoint",
-			"type": 1, // 1 - Error
-			"uid":  0}
+		shutCh <- com.LogMsg{
+			Msg: fmt.Sprintf("Ошибка при сохранении диалогов при завершении: %v", err),
+			Mod: "Endpoint",
+			Log: 1, // 1 - Error
+			UID: 0,
+		}
 	}
 }
 

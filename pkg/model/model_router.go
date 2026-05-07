@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/mode"
@@ -41,7 +42,7 @@ type Inter interface {
 	TranscribeAudio(userId uint32, audioData []byte, fileName string) (string, error)
 	CleanUp()                                     // Фоновая очистка устаревших записей
 	InvalidateUserAgentConfigCache(userId uint32) // Инвалидирует кэш конфигурации модели для пользователя
-	Shutdown(shutCh chan<- map[string]any)
+	Shutdown(shutCh chan<- com.LogMsg)
 }
 
 // RouterInterface минимальный интерфейс для доступа к методам роутера
@@ -908,7 +909,7 @@ func (r *ModelRouter) SetRealtimeDisconnectCallback(respId uint64, callback func
 }
 
 // Shutdown завершает работу всех моделей
-func (r *ModelRouter) Shutdown(shutCh chan<- map[string]any) {
+func (r *ModelRouter) Shutdown(shutCh chan<- com.LogMsg) {
 	if r.openai != nil {
 		r.openai.Shutdown(shutCh)
 	}

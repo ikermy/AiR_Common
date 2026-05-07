@@ -72,6 +72,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/conf"
 )
 
@@ -373,7 +374,7 @@ func (c *CRM) Init(userID uint32) (*User, string, error) {
 	return u, debug, nil
 }
 
-func (c *CRM) Shutdown(shutCh chan<- map[string]any) {
+func (c *CRM) Shutdown(shutCh chan<- com.LogMsg) {
 	c.cancel() // Отменяем контекст
 
 	// Завершаем всех пользователей
@@ -393,15 +394,19 @@ func (c *CRM) Shutdown(shutCh chan<- map[string]any) {
 
 		select {
 		case <-done:
-			shutCh <- map[string]any{"msg": "Пользователь успешно завершил работу",
-				"mod":  "CRM",
-				"type": 3, // 3 - Debug
-				"uid":  userID}
+			shutCh <- com.LogMsg{
+				Msg:  "Пользователь успешно завершил работу",
+				Mod:  "CRM",
+				Log:  3, // 3 - Debug
+				UID:  userID,
+			}
 		case <-time.After(10 * time.Second):
-			shutCh <- map[string]any{"msg": "Таймаут ожидания завершения пользователя ",
-				"mod":  "CRM",
-				"type": 2, // 2 - Warn
-				"uid":  userID}
+			shutCh <- com.LogMsg{
+				Msg:  "Таймаут ожидания завершения пользователя",
+				Mod:  "CRM",
+				Log:  2, // 2 - Warn
+				UID:  userID,
+			}
 		}
 
 		// Закрываем HTTP-клиент
@@ -412,10 +417,12 @@ func (c *CRM) Shutdown(shutCh chan<- map[string]any) {
 		return true
 	})
 
-	shutCh <- map[string]any{"msg": "успешно завершил работу",
-		"mod":  "CRM",
-		"type": 0, // 0 - Info
-		"uid":  0}
+	shutCh <- com.LogMsg{
+		Msg: "успешно завершил работу",
+		Mod: "CRM",
+		Log: 0, // 0 - Info
+		UID: 0,
+	}
 }
 
 // getFromCache получает значение из кэша и обновляет время последнего обращения
