@@ -3,7 +3,7 @@ package mode
 import (
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/common"
+	"github.com/ikermy/AiR_Common/pkg/com"
 )
 
 const (
@@ -25,14 +25,14 @@ const (
 )
 
 var (
-	ProductionMode = false                        // Флаг, указывающий на режим продакшн
-	TestAnswer     = false                        // Тестовый режим, когда текстовый ответ на вопрос возвращается сразу, без обращения к модели
-	TextMsg        = false                        // Разрешает принимать текстовые сообщения в диалоге
-	AudioMsg       = false                        // Разрешает принимать аудио сообщения в диалоге
-	VoiceCall      = false                        // Разрешает принимать голосовые вызовы
-	CarpinteroCh   = make(chan common.CarpCh, 1)  // Канал для передачи уведомлений
-	Event          = make(chan uint64, 1)         // Канал для передачи Id диалога при отключении клиента
-	InstantCh      = make(chan common.InstMsg, 1) // Канал для передачи мгновенных сообщений в панель управления
+	ProductionMode = false                     // Флаг, указывающий на режим продакшн
+	TestAnswer     = false                     // Тестовый режим, когда текстовый ответ на вопрос возвращается сразу, без обращения к модели
+	TextMsg        = false                     // Разрешает принимать текстовые сообщения в диалоге
+	AudioMsg       = false                     // Разрешает принимать аудио сообщения в диалоге
+	VoiceCall      = false                     // Разрешает принимать голосовые вызовы
+	CarpinteroCh   = make(chan com.CarpCh, 1)  // Канал для передачи уведомлений
+	Event          = make(chan uint64, 1)      // Канал для передачи Id диалога при отключении клиента
+	InstantCh      = make(chan com.InstMsg, 1) // Канал для передачи мгновенных сообщений в панель управления
 	MailServerPort string
 	CarpinteroPort string
 	CarpinteroHost string

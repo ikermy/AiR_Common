@@ -3,9 +3,9 @@ package main
 import (
 	"log"
 
-	"github.com/ikermy/AiR_Common/pkg/common"
+	"github.com/ikermy/AiR_Common/pkg/com"
 )
 
 func main() {
-	log.Println(common.GetVersionInfo())
+	log.Println(com.GetVersionInfo())
 }

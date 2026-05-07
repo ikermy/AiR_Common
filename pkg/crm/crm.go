@@ -76,7 +76,7 @@ import (
 )
 
 type Inter interface {
-	Init(userID uint32) (*User, error)
+	Init(userID uint32) (*User, string, error)
 }
 
 const (

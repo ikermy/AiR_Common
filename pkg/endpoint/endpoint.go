@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/common"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 )
@@ -23,7 +23,7 @@ type Inter interface {
 	GetDialogHistory(dialogID uint64, limit int) ([]Message, error)
 	Meta(userId uint32, dialogID uint64, meta string, respName string, assistName string, metaAction string) error
 	SendEvent(userId uint32, event, userName, assistName, target string)
-	SendNotification(msg common.CarpCh) error
+	SendNotification(msg com.CarpCh) error
 }
 
 type DB comdb.Exterior

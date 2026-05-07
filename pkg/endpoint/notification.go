@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/common"
+	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
@@ -55,7 +55,7 @@ func sendHTTPRequest(url string, payload map[string]interface{}) error {
 }
 
 func (e *Endpoint) SendEvent(userId uint32, event, userName, assistName, target string) {
-	msg := common.CarpCh{
+	msg := com.CarpCh{
 		UserID:     userId,
 		Event:      event,
 		UserName:   userName,
@@ -70,7 +70,7 @@ func (e *Endpoint) SendEvent(userId uint32, event, userName, assistName, target 
 	}
 }
 
-func (e *Endpoint) SendNotification(msg common.CarpCh) error {
+func (e *Endpoint) SendNotification(msg com.CarpCh) error {
 	res, err := e.db.GetNotificationChannel(msg.UserID)
 	if err != nil {
 		return fmt.Errorf("ошибка получения каналов уведомлений: %w", err)
@@ -340,14 +340,14 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 		msg = fmt.Sprintf("Ассистент %s запросил переключение на оператора в диалоге с пользователем %s", AssistName, UserName)
 	// События подписки
 	case "subscription":
-		errMsg := map[common.ErrorCode]string{
-			common.ErrNoSubscription:       "У вас нет подписки. Пожалуйста, оформите подписку.",
-			common.ErrSubscriptionExpired:  "Ваша подписка истекла. Пожалуйста, продлите подписку.",
-			common.ErrMessageLimitExceeded: "Вы превысили лимит сообщений. Пожалуйста, пополните баланс.",
-			common.ErrInsufficientBalance:  "Недостаточно средств на балансе. Пожалуйста, пополните баланс.",
+		errMsg := map[com.ErrorCode]string{
+			com.ErrNoSubscription:       "У вас нет подписки. Пожалуйста, оформите подписку.",
+			com.ErrSubscriptionExpired:  "Ваша подписка истекла. Пожалуйста, продлите подписку.",
+			com.ErrMessageLimitExceeded: "Вы превысили лимит сообщений. Пожалуйста, пополните баланс.",
+			com.ErrInsufficientBalance:  "Недостаточно средств на балансе. Пожалуйста, пополните баланс.",
 		}
 		errorCode, _ := strconv.Atoi(Target)
-		msg = errMsg[common.ErrorCode(errorCode)]
+		msg = errMsg[com.ErrorCode(errorCode)]
 		// Разбан ботов для service lead generation
 	case "lead-botunban":
 		msg = fmt.Sprintf("Боты:\n%s\nразблокированны по таймеру, попробуйте их снова использовать", Target)
@@ -363,7 +363,7 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 }
 
 func (e *Endpoint) NotificationListener(notifCh chan<- map[string]any) {
-	notifCh <- map[string]any{"msg": "Запуск 'NotificationListener' для прослушивания канала mode.CarpinteroCh",
+	notifCh <- map[string]any{"msg": "запуск 'NotificationListener' для прослушивания канала mode.CarpinteroCh",
 		"mod":  "Endpoint",
 		"type": 0, // 0 - Info
 		"uid":  0}
