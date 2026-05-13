@@ -521,7 +521,7 @@ func (m *GoogleModel) sendToGeminiAPIStreaming(modelName string, payload map[str
 // parseGeminiResponseWithFunctionHandling парсит ответ и обрабатывает function calls через multi-turn conversation
 // Если модель вызывает функцию без текста, отправляем результат обратно модели для продолжения
 func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byte, history []GoogleContent,
-	payload map[string]interface{}, modelName string, provider create.ProviderType) (model.AssistResponse, error) {
+	payload map[string]interface{}, modelName string, provider create.ProviderType, userId uint32) (model.AssistResponse, error) {
 
 	var emptyResponse model.AssistResponse
 
@@ -576,7 +576,7 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 
 		// Обрабатываем все функции и собираем результаты
 		for _, fc := range functionCalls {
-			result, err := m.handleFunctionCall(fc, provider)
+			result, err := m.handleFunctionCall(fc, provider, userId)
 			if err != nil {
 				//logger.Warn("Ошибка обработки function call: %v", err)
 				continue
@@ -605,15 +605,15 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 		}
 
 		// Рекурсивно парсим ответ (модель должна вернуть текст)
-		return m.parseGeminiResponseWithFunctionHandling(response, history, payload, modelName, provider)
+		return m.parseGeminiResponseWithFunctionHandling(response, history, payload, modelName, provider, userId)
 	}
 
 	// Если есть function calls И текст - обрабатываем функции (но текст используем как ответ)
 	if len(functionCalls) > 0 && len(textParts) > 0 {
 		//logger.Debug("Модель вернула текст и вызвала функции")
 		for _, fc := range functionCalls {
-			//result, err := m.handleFunctionCall(fc, provider)
-			_, err := m.handleFunctionCall(fc, provider)
+			//result, err := m.handleFunctionCall(fc, provider, userId)
+			_, err := m.handleFunctionCall(fc, provider, userId)
 			if err != nil {
 				//logger.Warn("Ошибка обработки function call: %v", err)
 				continue
@@ -716,7 +716,7 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 }
 
 // handleFunctionCall обрабатывает вызов функции от модели
-func (m *GoogleModel) handleFunctionCall(functionCall map[string]interface{}, provider create.ProviderType) (map[string]interface{}, error) {
+func (m *GoogleModel) handleFunctionCall(functionCall map[string]interface{}, provider create.ProviderType, userId uint32) (map[string]interface{}, error) {
 	functionName, ok := functionCall["name"].(string)
 	if !ok {
 		return nil, fmt.Errorf("function call не содержит имени")
@@ -734,7 +734,7 @@ func (m *GoogleModel) handleFunctionCall(functionCall map[string]interface{}, pr
 
 	// Все функции обрабатываются через action handler
 	if m.actionHandler != nil {
-		result := m.actionHandler.RunAction(m.ctx, functionName, string(argsJSON), provider)
+		result := m.actionHandler.RunAction(m.ctx, functionName, string(argsJSON), provider, userId)
 
 		var resultMap map[string]interface{}
 		if err := json.Unmarshal([]byte(result), &resultMap); err != nil {
@@ -815,10 +815,10 @@ func (m *GoogleModel) processVideoGeneration(userId uint32, userText string, res
 	// Кодируем в base64 для передачи
 	videoBase64 := base64.StdEncoding.EncodeToString(videoData)
 
-	args := fmt.Sprintf(`{"user_id":"%d","image_data":"%s","file_name":"%s"}`,
-		userId, videoBase64, fileName)
+	args := fmt.Sprintf(`{"image_data":"%s","file_name":"%s"}`,
+		videoBase64, fileName)
 
-	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider)
+	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, userId)
 
 	// Парсим результат сохранения
 	var saveResult struct {
@@ -985,10 +985,10 @@ func (m *GoogleModel) processImageGeneration(userId uint32, userText string, res
 	imageBase64 := base64.StdEncoding.EncodeToString(imageData)
 
 	// Сохраняем через action handler
-	args := fmt.Sprintf(`{"user_id":"%d","image_data":"%s","file_name":"%s"}`,
-		userId, imageBase64, fileName)
+	args := fmt.Sprintf(`{"image_data":"%s","file_name":"%s"}`,
+		imageBase64, fileName)
 
-	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider)
+	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, userId)
 
 	// Парсим результат сохранения
 	var saveResult struct {
@@ -1759,7 +1759,7 @@ Question: %s`, realUserID, text)
 			//logger.Debug("onToolCall не указан, используем синхронную обработку функций", userId)
 
 			for _, fc := range functionCalls {
-				result, err := m.handleFunctionCall(fc, resp.Assist.Provider)
+				result, err := m.handleFunctionCall(fc, resp.Assist.Provider, resp.Assist.UserId)
 				if err != nil {
 					//logger.Warn("Ошибка обработки function call: %v", userId, err)
 					continue

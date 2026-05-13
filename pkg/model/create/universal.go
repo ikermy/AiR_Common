@@ -406,7 +406,7 @@ func BuildEnhancedPrompt(modelData *UniversalModelData, realUserID uint64) strin
 	enhancedPrompt := modelData.Prompt + "\n\n"
 
 	// Напоминание о необходимости получить актуальное время
-	enhancedPrompt += fmt.Sprintf("ВРЕМЯ: Используй get_current_time(user_id=\"%d\") для актуальной даты. Твои данные устарели.\n\n", realUserID)
+	enhancedPrompt += "ВРЕМЯ: Используй get_current_time() для получения актуальной даты и времени. Твои данные устарели.\n\n"
 
 	// Важное напоминание для активных функций
 	if modelData.MetaAction != "" || modelData.Operator {
@@ -422,13 +422,13 @@ func BuildEnhancedPrompt(modelData *UniversalModelData, realUserID uint64) strin
 
 	// S3 файлы
 	if modelData.S3 {
-		enhancedPrompt += fmt.Sprintf("S3_FILES (user_id=\"%d\"):\n"+
-			"Для создания файла:\n"+
-			"1. Вызови create_file(user_id=\"%d\",content=\"текст\",file_name=\"story.pdf\")\n"+
-			"2. Функция вернет готовый объект файла: {Url:\"https://...\", file_name:\"story.pdf\", type:\"doc\", caption:\"\"}\n"+
-			"3. Помести этот объект в твой JSON ответ: action.send_files = [объект_из_ответа]\n"+
-			"ЗАПРЕЩЕНО: выдумывать URL или создавать объект вручную!\n"+
-			"Типы: txt/pdf→doc, jpg/png→photo, mp4→video, mp3→audio\n\n", realUserID, realUserID)
+		enhancedPrompt += "S3_FILES:\n" +
+			"Для создания файла:\n" +
+			"1. Вызови create_file(content=\"текст\",file_name=\"story.pdf\")\n" +
+			"2. Функция вернет готовый объект файла: {Url:\"https://...\", file_name:\"story.pdf\", type:\"doc\", caption:\"\"}\n" +
+			"3. Помести этот объект в твой JSON ответ: action.send_files = [объект_из_ответа]\n" +
+			"ЗАПРЕЩЕНО: выдумывать URL или создавать объект вручную!\n" +
+			"Типы: txt/pdf→doc, jpg/png→photo, mp4→video, mp3→audio\n\n"
 	}
 
 	// Code Interpreter
@@ -448,22 +448,22 @@ func BuildEnhancedPrompt(modelData *UniversalModelData, realUserID uint64) strin
 
 	// Google Calendar
 	if modelData.GOAuth.HasCalendar() {
-		enhancedPrompt += fmt.Sprintf("CALENDAR (user_id=\"%d\"):\n"+
-			"Функции: create_event, list_events, delete_event, get_event\n"+
-			"Формат: RFC3339+таймзона (\"2026-02-15T14:00:00-03:00\")\n"+
-			"Всегда вызывай get_current_time перед датами!\n"+
-			"УДАЛЕНИЕ: Если знаешь event_id→delete_event, иначе list→delete. ЗАПРЕТ create при удалении.\n"+
-			"БЕЗ таймзоны=ошибка 400!\n\n", realUserID)
+		enhancedPrompt += "CALENDAR:\n" +
+			"Функции: calendar_create_event, calendar_list_events, calendar_delete_event, calendar_get_event\n" +
+			"Формат: RFC3339+таймзона (\"2026-02-15T14:00:00-03:00\")\n" +
+			"Всегда вызывай get_current_time() перед операциями с датами!\n" +
+			"УДАЛЕНИЕ: Если знаешь event_id→calendar_delete_event, иначе list→delete. ЗАПРЕТ create при удалении.\n" +
+			"БЕЗ таймзоны=ошибка 400!\n\n"
 	}
 
 	// Google Sheets
 	if modelData.GOAuth.HasSheets() {
-		enhancedPrompt += fmt.Sprintf("SHEETS (user_id=\"%d\"):\n"+
-			"ВСЕГДА вызывай функции! НЕ говори \"нет доступа\".\n"+
-			"Функции: read_range, write_range, append_range\n"+
-			"Формат range: 'Лист!A:F' или 'Sheet1!A1:D10'\n"+
-			"Подсчёт строк: read_range→len(values)-1\n"+
-			"При датах: СНАЧАЛА get_current_time\n\n", realUserID)
+		enhancedPrompt += "SHEETS:\n" +
+			"ВСЕГДА вызывай функции! НЕ говори \"нет доступа\".\n" +
+			"Функции: sheets_read_range, sheets_write_range, sheets_append_range\n" +
+			"Формат range: 'Лист!A:F' или 'Sheet1!A1:D10'\n" +
+			"Подсчёт строк: sheets_read_range→len(values)-1\n" +
+			"При датах: СНАЧАЛА get_current_time()\n\n"
 	}
 
 	// Web VSearch

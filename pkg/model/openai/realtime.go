@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -559,57 +558,28 @@ func buildRealtimeTools(tools []interface{}, agentConf *OpenAIAgentConfig) []int
 		})
 	}
 
-	// Если S3 включён — добавляем синтетический tool send_file_to_user.
-	// Модель вызывает его с конкретным URL из результата get_s3_files.
-	// Это позволяет модели самой выбрать нужный файл, а не отправлять все сразу.
-	if agentConf != nil && agentConf.S3 {
-		// Извлекаем user_id из существующего get_s3_files tool чтобы подставить const
-		userID := ""
-		for _, t := range tools {
-			tm, ok := t.(map[string]interface{})
-			if !ok {
-				continue
-			}
-			fn, _ := tm["name"].(string)
-			if fn != "get_s3_files" {
-				continue
-			}
-			if params, ok := tm["parameters"].(map[string]interface{}); ok {
-				if props, ok := params["properties"].(map[string]interface{}); ok {
-					if uidProp, ok := props["user_id"].(map[string]interface{}); ok {
-						userID, _ = uidProp["const"].(string)
-						// После buildRealtimeTools const уже заменён на description — ищем иначе
-						if userID == "" {
-							if desc, ok := uidProp["description"].(string); ok {
-								userID = strings.TrimPrefix(desc, "MUST be exactly: ")
-							}
-						}
-					}
-				}
-			}
-		}
-
+	// send_file_to_user — синтетический локальный tool: позволяет модели явно отправить файл
+	// пользователю по URL, полученному от любого файлового инструмента MCP.
+	// Добавляем всегда, когда есть хоть один function-tool — модель сама решит вызывать ли его.
+	// Обрабатывается в realtime_pump.go локально, до вызова RunAction.
+	if len(result) > 0 {
 		result = append(result, map[string]interface{}{
 			"type":        "function",
 			"name":        "send_file_to_user",
-			"description": "Send a specific file to the user. Call this after get_s3_files to send a file the user requested. Use the exact URL from get_s3_files result.",
+			"description": "Send a specific file to the user by URL. Call this when you have a file URL to deliver to the user (e.g. after listing files). Use the exact URL as received.",
 			"parameters": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"user_id": map[string]interface{}{
-						"type":        "string",
-						"description": fmt.Sprintf("MUST be exactly: %s", userID),
-					},
 					"url": map[string]interface{}{
 						"type":        "string",
-						"description": "Exact URL of the file from get_s3_files result",
+						"description": "Exact URL of the file to send",
 					},
 					"file_name": map[string]interface{}{
 						"type":        "string",
-						"description": "File name as returned by get_s3_files",
+						"description": "File name to display to the user",
 					},
 				},
-				"required": []string{"user_id", "url", "file_name"},
+				"required": []string{"url", "file_name"},
 			},
 		})
 	}

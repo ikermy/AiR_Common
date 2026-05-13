@@ -95,7 +95,30 @@ type GoogleManager interface {
 
 // ActionHandler интерфейс для обработки функций ассистента
 type ActionHandler interface {
-	RunAction(ctx context.Context, functionName, arguments string, provider create.ProviderType) string
+	RunAction(ctx context.Context, functionName, arguments string, provider create.ProviderType, userId uint32) string
+}
+
+// MCPToolDefinition описание инструмента, полученное от MCP сервера (tools/list).
+// inputSchema НЕ содержит user_id — он передаётся через X-Session-ID заголовок.
+type MCPToolDefinition struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	InputSchema interface{} `json:"inputSchema"` // JSON Schema параметров без user_id
+}
+
+// MCPConfigProvider расширяет ActionHandler методами получения конфигурации от MCP-сервера.
+// Реализуется UniversalActionHandler (pkg/model/action_handler.go).
+// Используется в buildAgentConfiguration (pkg/model/openai/model.go) через type assertion:
+//
+//	if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok { ... }
+type MCPConfigProvider interface {
+	ActionHandler
+	// FetchToolsList вызывает MCP tools/list и возвращает function-инструменты для данного пользователя.
+	// Нативные OpenAI инструменты (code_interpreter, web_search) добавляются отдельно.
+	FetchToolsList(ctx context.Context, userId uint32, provider create.ProviderType) ([]MCPToolDefinition, error)
+	// FetchSystemPrompt вызывает MCP prompts/get?name=system и возвращает prompt hint.
+	// Вызывающий код сам добавляет modelData.Prompt перед ним.
+	FetchSystemPrompt(ctx context.Context, userId uint32, provider create.ProviderType) (string, error)
 }
 
 // RealtimeEvent — событие голосовой сессии OpenAI Realtime API.

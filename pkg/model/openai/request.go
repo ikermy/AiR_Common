@@ -361,7 +361,7 @@ func (m *OpenAIModel) RequestStreaming(userId uint32, dialogID uint64, text stri
 			var result string
 			if m.actionHandler != nil {
 				//logger.Debug("[onToolCall] Вызываю action handler для функции '%s'...", functionName, userId)
-				result = m.actionHandler.RunAction(m.ctx, functionName, arguments, create.ProviderOpenAI)
+				result = m.actionHandler.RunAction(m.ctx, functionName, arguments, create.ProviderOpenAI, userId)
 				//logger.Debug("✅ [onToolCall] Получен результат от action handler для '%s': %s",
 				//	functionName, result, userId)
 			} else {

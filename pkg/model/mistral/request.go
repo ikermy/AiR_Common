@@ -260,7 +260,7 @@ func (m *MistralModel) Request(_ uint32, dialogID uint64, text string, files ...
 		functionCallCount++
 		//logger.Debug("Mistral вызвал функцию #%d: %s с аргументами: %s", functionCallCount, response.FuncName, response.FuncArgs, userId)
 
-		funcResult := m.actionHandler.RunAction(m.ctx, response.FuncName, response.FuncArgs, respModel.Assist.Provider)
+		funcResult := m.actionHandler.RunAction(m.ctx, response.FuncName, response.FuncArgs, respModel.Assist.Provider, respModel.Assist.UserId)
 		//logger.Debug("Результат функции #%d %s: %s", functionCallCount, response.FuncName, funcResult, userId)
 
 		// Сохраняем результат функции в контекст для истории
@@ -500,10 +500,10 @@ func (m *MistralModel) processResponse(response Response, realUserId uint64, pro
 			}
 
 			// Вызываем save_image_data через action handler с base64 данными
-			args := fmt.Sprintf(`{"user_id":"%d","image_data":"%s","file_name":"%s"}`,
-				realUserId, base64Encode(imageData), fileName)
+			args := fmt.Sprintf(`{"image_data":"%s","file_name":"%s"}`,
+				base64Encode(imageData), fileName)
 
-			result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider)
+			result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, uint32(realUserId))
 
 			var saveResult struct {
 				URL   string `json:"url"`
@@ -859,7 +859,7 @@ func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, 
 			//logger.Debug("Вызов функции #%d в раунде %d: %s с аргументами: %s",
 			//	i+1, functionCallRound, funcCall.Name, funcCall.Arguments, userId)
 
-			funcResult := m.actionHandler.RunAction(m.ctx, funcCall.Name, funcCall.Arguments, respModel.Assist.Provider)
+			funcResult := m.actionHandler.RunAction(m.ctx, funcCall.Name, funcCall.Arguments, respModel.Assist.Provider, respModel.Assist.UserId)
 			//logger.Debug("Результат функции %s: %s", funcCall.Name, funcResult, userId)
 
 			// Сохраняем результат функции

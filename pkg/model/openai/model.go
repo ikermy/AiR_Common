@@ -76,12 +76,9 @@ type OpenAIAgentConfig struct {
 	// Дополнительные возможности
 	Search      bool   `json:"search"`       // Поиск по векторному хранилищу
 	Interpreter bool   `json:"interpreter"`  // Code Interpreter
-	S3          bool   `json:"s3"`           // S3 хранилище
 	Haunter     bool   `json:"haunter"`      // Модель для поиска лидов
 	Operator    bool   `json:"operator"`     // Вызов оператора
 	MetaAction  string `json:"meta_action"`  // Целевое действие
-	HasCalendar bool   `json:"has_calendar"` // Google Calendar
-	HasSheets   bool   `json:"has_sheets"`   // Google Sheets
 	WebSearch   bool   `json:"web_search"`   // Веб-поиск
 	Image       bool   `json:"image"`        // Генерация изображений
 
@@ -366,10 +363,7 @@ func (m *OpenAIModel) loadAgentConfig(userId uint32, _ *RespModel) (*OpenAIAgent
 				agentConfig.Haunter = modelData.Haunter
 				agentConfig.Search = modelData.Search
 				agentConfig.Operator = modelData.Operator
-				agentConfig.S3 = modelData.S3
 				agentConfig.Interpreter = modelData.Interpreter
-				agentConfig.HasCalendar = modelData.GOAuth.Calendar
-				agentConfig.HasSheets = modelData.GOAuth.Sheets
 				agentConfig.WebSearch = modelData.WebSearch
 				agentConfig.RealtimeEnabled = modelData.Realtime
 				agentConfig.Image = modelData.Image
@@ -403,295 +397,74 @@ func (m *OpenAIModel) loadAgentConfig(userId uint32, _ *RespModel) (*OpenAIAgent
 	return agentConfig, haunter, nil
 }
 
-// buildAgentConfiguration формирует system_prompt, tools и response_format
-// По образцу Google провайдера - вся конфигурация в памяти
+// buildAgentConfiguration формирует system_prompt, tools и response_format.
+// Если MCP доступен: system_prompt = modelData.Prompt + hint от MCP, function-tools от MCP.
+// Если MCP недоступен: system_prompt = modelData.Prompt (без инструкций), function-tools не добавляются.
+// Нативные OpenAI инструменты (code_interpreter, web_search) добавляются всегда локально.
 func (m *OpenAIModel) buildAgentConfiguration(userId uint32, config *OpenAIAgentConfig, compressedData []byte) error {
-	// Получаем real_user_id
-	var realUserID uint64
-	if m.universalModel != nil {
-		var err error
-		realUserID, err = m.universalModel.GetRealUserID(userId)
-		if err != nil {
-			//logger.Warn("Не удалось получить real_user_id: %v", err, userId)
-			realUserID = uint64(userId)
-		}
-	} else {
-		realUserID = uint64(userId)
-	}
-
 	// Распаковываем данные модели
 	modelData, err := m.universalModel.DecompressModelData(compressedData, nil)
 	if err != nil {
 		return fmt.Errorf("ошибка распаковки: %w", err)
 	}
 
-	// Используем компактный формат, убираем повторения, сокращаем текст
-	systemPrompt := modelData.Prompt + "\n\n"
-
-	// Используем UID как аббревиатуру (вместо повторения user_id 4 раза)
-	systemPrompt += fmt.Sprintf("UID=%d. Time: get_current_time(UID)\n", realUserID)
-
-	// Компактная форма defaults (вместо длинных блоков ##ВАЖНО)
-	systemPrompt += "JSON: target=false"
-	if config.Operator {
-		systemPrompt += ", operator=false (op=true if ask)"
-	}
-	systemPrompt += "\n"
-
-	// Условие для target (если есть) - короткая форма
-	if config.MetaAction != "" {
-		systemPrompt += fmt.Sprintf("target=true: %s\n", config.MetaAction)
+	// =========================================================================
+	// SYSTEM PROMPT — получаем hint от MCP.
+	// Если MCP недоступен — используем только modelData.Prompt (без function-инструкций).
+	// =========================================================================
+	mcpAvailable := false
+	if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
+		if hint, err := mcpProvider.FetchSystemPrompt(m.ctx, userId, create.ProviderOpenAI); err == nil {
+			config.SystemPrompt = modelData.Prompt + "\n\n" + hint
+			mcpAvailable = true
+		}
+		// При ошибке — MCP недоступен, используем plain prompt
 	}
 
-	// Компактный список доступных tools через запятую (вместо отдельных блоков ##)
-	var availableTools []string
-	if config.S3 {
-		availableTools = append(availableTools, "S3")
-	}
-	if config.Interpreter {
-		availableTools = append(availableTools, "Py")
-	}
-	if config.HasCalendar {
-		availableTools = append(availableTools, "Cal")
-	}
-	if config.HasSheets {
-		availableTools = append(availableTools, "Sheets")
-	}
-	if config.WebSearch {
-		availableTools = append(availableTools, "Web")
+	if !mcpAvailable {
+		config.SystemPrompt = modelData.Prompt
 	}
 
-	if len(availableTools) > 0 {
-		systemPrompt += fmt.Sprintf("Tools: %s\n", strings.Join(availableTools, ","))
-	}
-
-	// Добавляем детальные инструкции для Google Sheets
-	if config.HasSheets {
-		systemPrompt += fmt.Sprintf("\nSheets: CALL sheets_read_range(UID=%d, spreadsheet_id, range)\n", realUserID) +
-			"DON'T say 'cannot get' - CALL function!\n" +
-			"spreadsheet_id find in prompt or user request.\n" +
-			"Row count: call sheets_read_range → calc len(values)-1\n" +
-			"IMPORTANT: Show table data in MESSAGE text, NOT in files! DON'T create files with table data!\n"
-	}
-
-	// Добавляем инструкции для Calendar если включен
-	if config.HasCalendar {
-		systemPrompt += fmt.Sprintf("\nCal: get_current_time → calendar_list_events/create/delete (UID=%d)\n", realUserID)
-	}
-
-	// Короткая инструкция по send_files (самое важное без избыточных объяснений)
-	systemPrompt += "\nsend_files=[] (S3 only)\nReturn: valid JSON"
-
-	// TODO паралельный вызов функций почему то не работает.. возможно не те функции
-	// ВАЖНО: Инструкция о параллельных вызовах функций (для ускорения)
-	//systemPrompt += "\n\n⚡ PARALLEL CALLS: Call multiple independent functions SIMULTANEOUSLY in one turn when possible!\n" +
-	//	"Example: User asks about calendar events → call get_current_time AND calendar_list_events TOGETHER (not one by one)!"
-
-	// КРИТИЧНО: Запрет создавать файлы с данными таблиц (всегда, независимо от инструментов)
-	if config.HasSheets {
-		systemPrompt += "\nTable data -> show in message text, NOT create files!"
-	}
-
-	// КРИТИЧНО: Разделение инструментов для создания файлов
-	if config.S3 && config.Interpreter {
-		// Оба инструмента
-		systemPrompt += "\n\nINSTRUMENTS:\n" +
-			"create_file - for user files in send_files\n" +
-			"python tool - ONLY calculations/graphs, NOT user files!\n" +
-			"User 'create file' -> create_file, NOT python!"
-	} else if config.S3 {
-		systemPrompt += "\n\nFile creation: use create_file function!"
-	} else if config.Interpreter {
-		systemPrompt += "\n\nPython tool: calculations only, NOT for creating user files!"
-	}
-
-	// КРИТИЧНО: Глобальная инструкция об использовании результатов функций
-	if config.S3 {
-		systemPrompt += "\n\nIMPORTANT: After calling functions (create_file, get_s3_files) use their results in final JSON response! Function results contain ready data for send_files (file_name, Url, type) - DO NOT IGNORE!"
-	}
-
-	config.SystemPrompt = systemPrompt
-
-	// Формируем tools
-	// ВАЖНО: Responses API поддерживает ВСЕ типы tools!
-	// file_search, code_interpreter, web_search, function - все работают!
+	// =========================================================================
+	// TOOLS — нативные OpenAI инструменты (всегда локально).
+	// Function-инструменты добавляются только если MCP доступен.
+	// =========================================================================
 	var tools []interface{}
-	userIDStr := fmt.Sprintf("%d", realUserID)
 
-	// ПРИМЕЧАНИЕ: file_search tool больше НЕ используется для OpenAI
-	// Семантический поиск теперь выполняется через RAG с локальными эмбеддингами:
-	// 1. Генерация эмбеддинга запроса (OpenAI Embeddings API)
-	// 2. Поиск похожих документов в MariaDB (VEC_Distance_Cosine)
-	// 3. Добавление контекста в system_prompt перед вызовом модели
-	// Реализация RAG: openai/request.go или openai/manager.go
-
-	// Code Interpreter - выполнение Python кода
+	// Code Interpreter — нативный OpenAI инструмент, не через MCP
 	// ВАЖНО: Responses API требует поле "container" для code_interpreter!
 	if config.Interpreter {
 		tools = append(tools, map[string]interface{}{
 			"type": "code_interpreter",
 			"container": map[string]interface{}{
-				"type":         "auto", // auto - автоматическое создание/переиспользование контейнера
-				"memory_limit": "1g",   // 1g (по умолчанию), 4g, 16g, или 64g
+				"type":         "auto",
+				"memory_limit": "1g",
 			},
 		})
 	}
 
-	// Web VSearch - поиск актуальной информации в интернете
+	// Web Search — нативный OpenAI инструмент, не через MCP
 	if config.WebSearch {
 		tools = append(tools, map[string]interface{}{
 			"type": "web_search",
 		})
 	}
 
-	// get_current_time - обязательная функция для работы с временем
-	tools = append(tools, map[string]interface{}{
-		"type": "function",
-		"name": "get_current_time",
-		"description": "Get EXACT current server time and date in user's timezone. " +
-			"MUST use this function BEFORE any date calculations.",
-		"strict": true, // Строгий режим - обязательное соответствие схеме
-		"parameters": map[string]interface{}{
-			"type":                 "object",
-			"properties":           map[string]interface{}{"user_id": map[string]interface{}{"type": "string", "const": userIDStr}},
-			"required":             []string{"user_id"},
-			"additionalProperties": false, // Запрет дополнительных полей (требование strict mode)
-		},
-	})
-
-	if config.S3 {
-		tools = append(tools,
-			map[string]interface{}{
-				"type": "function",
-				"name": "get_s3_files",
-				"description": "Get list of user's available files from S3 storage. " +
-					"Returns array of objects with fields: file_name, Url (full URL), type (file type).",
-				"strict": true,
-				"parameters": map[string]interface{}{
-					"type":                 "object",
-					"properties":           map[string]interface{}{"user_id": map[string]interface{}{"type": "string", "const": userIDStr}},
-					"required":             []string{"user_id"},
-					"additionalProperties": false,
-				},
-			},
-			map[string]interface{}{
-				"type": "function",
-				"name": "create_file",
-				"description": "PRIMARY function for creating files (txt, pdf, doc, etc). " +
-					"When user asks to create or send file - call this function IMMEDIATELY! " +
-					"Returns object {file_name: string, Url: string, type: string}. " +
-					"WORKFLOW: " +
-					"1) Call create_file with file content " +
-					"2) Get result with fields file_name, Url, type " +
-					"3) MUST use these fields in action.send_files of final response! " +
-					"EXAMPLE RESULT: {\"file_name\":\"story.pdf\", \"Url\":\"https://...\", \"type\":\"doc\"} " +
-					"DO NOT IGNORE function result - it must go to send_files!",
-				"strict": true,
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id":   map[string]interface{}{"type": "string", "const": userIDStr},
-						"content":   map[string]interface{}{"type": "string", "description": "File content"},
-						"file_name": map[string]interface{}{"type": "string", "description": "File name (e.g.: story.txt, report.pdf)"},
-					},
-					"required":             []string{"user_id", "content", "file_name"},
-					"additionalProperties": false,
-				},
-			},
-		)
-	}
-
-	if config.HasCalendar {
-		tools = append(tools,
-			map[string]interface{}{
-				"type": "function",
-				"name": "calendar_create_event",
-				"description": "Create new event in user's Google Calendar. " +
-					"Time format: RFC3339 with timezone (e.g.: 2026-02-15T14:00:00-03:00). " +
-					"MUST call get_current_time BEFORE date calculations!",
-				"strict": true,
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id":    map[string]interface{}{"type": "string", "const": userIDStr},
-						"title":      map[string]interface{}{"type": "string", "description": "Event title"},
-						"start_time": map[string]interface{}{"type": "string", "description": "Start time (RFC3339)"},
-						"end_time":   map[string]interface{}{"type": "string", "description": "End time (RFC3339)"},
-					},
-					"required":             []string{"user_id", "title", "start_time", "end_time"},
-					"additionalProperties": false,
-				},
-			},
-			map[string]interface{}{
-				"type":        "function",
-				"name":        "calendar_list_events",
-				"description": "Get list of events from user's Google Calendar.",
-				"strict":      true,
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id":     map[string]interface{}{"type": "string", "const": userIDStr},
-						"time_min":    map[string]interface{}{"type": []string{"string", "null"}, "description": "Period start (RFC3339)"},
-						"time_max":    map[string]interface{}{"type": []string{"string", "null"}, "description": "Period end (RFC3339)"},
-						"max_results": map[string]interface{}{"type": []string{"integer", "null"}, "description": "Max events count"},
-					},
-					"required":             []string{"user_id", "time_min", "time_max", "max_results"},
-					"additionalProperties": false,
-				},
-			},
-			map[string]interface{}{
-				"type":        "function",
-				"name":        "calendar_delete_event",
-				"description": "Delete event from user's Google Calendar.",
-				"strict":      true,
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id":  map[string]interface{}{"type": "string", "const": userIDStr},
-						"event_id": map[string]interface{}{"type": "string", "description": "Event ID to delete"},
-					},
-					"required":             []string{"user_id", "event_id"},
-					"additionalProperties": false,
-				},
-			},
-			map[string]interface{}{
-				"type":        "function",
-				"name":        "calendar_get_event",
-				"description": "Get event details from user's Google Calendar.",
-				"strict":      true,
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id":  map[string]interface{}{"type": "string", "const": userIDStr},
-						"event_id": map[string]interface{}{"type": "string", "description": "Event ID"},
-					},
-					"required":             []string{"user_id", "event_id"},
-					"additionalProperties": false,
-				},
-			},
-		)
-	}
-
-	if config.HasSheets {
-		tools = append(tools,
-			map[string]interface{}{
-				"type": "function",
-				"name": "sheets_read_range",
-				"description": "Read data from user's Google Sheets table. " +
-					"Returns array of rows with data from specified range.",
-				"strict": true,
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id":        map[string]interface{}{"type": "string", "const": userIDStr},
-						"spreadsheet_id": map[string]interface{}{"type": "string", "description": "Table ID from URL"},
-						"range":          map[string]interface{}{"type": "string", "description": "Range (e.g.: Sheet1!A:F)"},
-					},
-					"required":             []string{"user_id", "spreadsheet_id", "range"},
-					"additionalProperties": false,
-				},
-			},
-		)
+	// Function tools — только от MCP; если сервер недоступен — не добавляем
+	if mcpAvailable {
+		if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
+			if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, userId, create.ProviderOpenAI); err == nil {
+				for _, t := range mcpTools {
+					tools = append(tools, map[string]interface{}{
+						"type":        "function",
+						"name":        t.Name,
+						"description": t.Description,
+						"strict":      false,
+						"parameters":  t.InputSchema,
+					})
+				}
+			}
+		}
 	}
 
 	config.Tools = tools
@@ -714,6 +487,7 @@ func (m *OpenAIModel) buildAgentConfiguration(userId uint32, config *OpenAIAgent
 
 	// Передаём RealtimeVAD конфигурацию из распакованных данных модели
 	// (с уже применёнными дефолтными значениями из DecompressModelData)
+
 	config.RealtimeVAD = modelData.RealtimeVAD
 
 	return nil

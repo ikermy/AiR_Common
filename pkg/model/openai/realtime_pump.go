@@ -378,7 +378,7 @@ func (m *OpenAIModel) pumpFromOpenAI(rs *RealtimeSession) {
 				continue
 			}
 
-			rawResult := m.actionHandler.RunAction(rs.ctx, name, args, 1)
+			rawResult := m.actionHandler.RunAction(rs.ctx, name, args, 1, rs.userId)
 
 			modelResult := rawResult
 			if name == "get_s3_files" {

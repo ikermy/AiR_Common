@@ -28,105 +28,44 @@ You are operating in real-time voice mode.
 
 `
 
-// textModePatterns — регулярные выражения для удаления text-mode артефактов из SystemPrompt.
-var textModePatterns = []*regexp.Regexp{
-	// JSON: target=false, operator=false (op=true if ask)
-	regexp.MustCompile(`(?m)^JSON:.*\n?`),
-	// Return: valid JSON
-	regexp.MustCompile(`(?m)^Return: valid JSON.*\n?`),
-	// send_files=[] (S3 only)
-	regexp.MustCompile(`(?m)^send_files=\[].*\n?`),
-	// target=true: ...
-	regexp.MustCompile(`(?m)^target=true:.*\n?`),
-	// Table data -> show in message text, NOT create files!
-	regexp.MustCompile(`(?m)^Table data.*NOT create files!.*\n?`),
-	// IMPORTANT: After calling functions ... DO NOT IGNORE!
-	regexp.MustCompile(`(?m)^IMPORTANT: After calling functions.*\n?`),
-	// UID=... Time: get_current_time(UID)
-	regexp.MustCompile(`(?m)^UID=\d+\..*\n?`),
-	// Tools: S3,Cal,Sheets,Web
-	regexp.MustCompile(`(?m)^Tools: .*\n?`),
-	// Sheets: CALL sheets_read_range(...) блок (многострочный)
-	regexp.MustCompile(`(?ms)^Sheets: CALL.*?^\n`),
-	// Cal: get_current_time → ... блок
-	regexp.MustCompile(`(?m)^Cal: get_current_time.*\n?`),
-	// INSTRUMENTS: блок
-	regexp.MustCompile(`(?ms)^INSTRUMENTS:.*?(?:\n\n|$)`),
-	// File creation: use create_file function!
-	regexp.MustCompile(`(?m)^File creation:.*\n?`),
-	// Python tool: ...
-	regexp.MustCompile(`(?m)^Python tool:.*\n?`),
-}
-
-// buildRealtimeSystemPrompt строит голосовой промпт на основе уже готового config.SystemPrompt.
-// Алгоритм:
-//  1. Берём config.SystemPrompt (содержит промпт агента + text-mode инструкции)
-//  2. Удаляем text-mode артефакты (JSON schema, send_files, target, UID строки и т.д.)
-//  3. Добавляем universalRealtimeSystemPrompt сверху
-//  4. Добавляем голосовые инструкции по активным инструментам
+// buildRealtimeSystemPrompt строит голосовой промпт для Realtime API.
+// Источник истины — config, заполненный buildAgentConfiguration (данные от MCP):
+//   - config.SystemPrompt — промпт агента (modelData.Prompt + hint от MCP)
+//   - config.Tools — список инструментов от MCP
 //
-// Единственный источник истины — buildAgentConfiguration.
-// buildRealtimeSystemPrompt только адаптирует его под голос.
+// Алгоритм:
+//  1. universalRealtimeSystemPrompt (голосовой стиль)
+//  2. Если есть function-tools — универсальные инструкции по их использованию голосом
+//  3. Промпт агента из config.SystemPrompt (уже содержит все специфичные инструкции от MCP)
 func buildRealtimeSystemPrompt(config *OpenAIAgentConfig) string {
-	// Шаг 1: берём SystemPrompt и вырезаем text-mode артефакты
-	cleaned := config.SystemPrompt
-	for _, re := range textModePatterns {
-		cleaned = re.ReplaceAllString(cleaned, "")
-	}
-	// Убираем повторяющиеся пустые строки
-	multiNewline := regexp.MustCompile(`\n{3,}`)
-	cleaned = strings.TrimSpace(multiNewline.ReplaceAllString(cleaned, "\n\n"))
-
 	var b strings.Builder
 
-	// Шаг 2: голосовой стиль сверху
+	// Шаг 1: голосовой стиль
 	b.WriteString(universalRealtimeSystemPrompt)
 
-	// Шаг 3: голосовые инструкции по активным инструментам
-	var toolLines []string
-	toolLines = append(toolLines,
-		"- Before any tool call, say ONE short sentence: \"One moment.\" Then call immediately.",
-		"- After a tool returns — summarise in natural spoken language. DO NOT read raw JSON or URLs aloud.",
-		"- NEVER say \"I can't check\" if a tool exists — CALL IT.",
-		"- If a tool returns an error or unavailable — say so briefly and move on. Do NOT retry the same tool.",
-	)
-	if config.HasCalendar {
-		toolLines = append(toolLines,
-			"- ALWAYS call get_current_time BEFORE any calendar or date/time operation.",
-		)
-	} else {
-		toolLines = append(toolLines,
-			"- Call get_current_time ONLY when the user explicitly asks about current time or date.",
-		)
-	}
-	if config.HasSheets {
-		toolLines = append(toolLines,
-			"- Sheets: ALWAYS call sheets_read_range to get data.",
-			"- After reading table data — summarise it in spoken form. Do NOT read raw values aloud.",
-		)
-	}
-	if config.S3 {
-		toolLines = append(toolLines,
-			"- Files: FIRST call get_s3_files to get the list with exact URLs. THEN call send_file_to_user using the EXACT URL from get_s3_files response — NEVER invent or modify URLs. Send only the file(s) the user asked for.",
-		)
-		if config.Image {
-			toolLines = append(toolLines,
-				"- To GENERATE a new image: use save_image_data with a description.",
-			)
-		} else {
-			toolLines = append(toolLines,
-				"- Image generation is NOT available. If user asks for a new image — say you cannot do that.",
-			)
+	// Шаг 2: универсальные голосовые инструкции по инструментам (если они есть)
+	hasFunctionTools := false
+	for _, t := range config.Tools {
+		if tm, ok := t.(map[string]interface{}); ok {
+			if tm["type"] == "function" {
+				hasFunctionTools = true
+				break
+			}
 		}
 	}
-
-	b.WriteString("# Voice Tools\n")
-	for _, line := range toolLines {
-		b.WriteString(line + "\n")
+	if hasFunctionTools {
+		b.WriteString("# Voice Tools\n")
+		b.WriteString("- Before any tool call, say ONE short sentence: \"One moment.\" Then call immediately.\n")
+		b.WriteString("- After a tool returns — summarise in natural spoken language. DO NOT read raw JSON or URLs aloud.\n")
+		b.WriteString("- NEVER say \"I can't check\" if a tool exists — CALL IT.\n")
+		b.WriteString("- If a tool returns an error or unavailable — say so briefly and move on. Do NOT retry the same tool.\n")
+		b.WriteString("\n")
 	}
-	b.WriteString("\n")
 
-	// Шаг 4: очищенный промпт агента (личность, задача, данные)
+	// Шаг 3: промпт агента от MCP (содержит личность, задачу, специфичные инструкции)
+	// Убираем повторяющиеся пустые строки
+	multiNewline := regexp.MustCompile(`\n{3,}`)
+	cleaned := strings.TrimSpace(multiNewline.ReplaceAllString(config.SystemPrompt, "\n\n"))
 	if cleaned != "" {
 		b.WriteString("# Agent\n")
 		b.WriteString(cleaned)
