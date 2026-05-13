@@ -15,7 +15,6 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
-	"github.com/sashabaranov/go-openai"
 )
 
 // UniversalActionHandler универсальный обработчик функций для всех провайдеров
@@ -997,13 +996,13 @@ func (h *UniversalActionHandler) GetTools(provider create.ProviderType) interfac
 	}
 	functions = append(functions, sheetsFunctions...)
 
-	// Для OpenAI конвертируем в формат openai.Tool
+	// Для OpenAI конвертируем в формат ProviderTool
 	if provider == create.ProviderOpenAI {
-		tools := make([]openai.Tool, len(functions))
+		tools := make([]create.ProviderTool, len(functions))
 		for i, fn := range functions {
-			tools[i] = openai.Tool{
-				Type: openai.ToolTypeFunction,
-				Function: &openai.FunctionDefinition{
+			tools[i] = create.ProviderTool{
+				Type: create.ToolTypeFunction,
+				Function: &create.ToolFunctionDefinition{
 					Name:        fn["name"].(string),
 					Description: fn["description"].(string),
 					Parameters:  fn["parameters"],

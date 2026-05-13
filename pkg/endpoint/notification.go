@@ -372,6 +372,14 @@ func (e *Endpoint) NotificationListener(notifCh chan<- com.LogMsg) {
 
 	for {
 		select {
+		case <-e.ctx.Done():
+			notifCh <- com.LogMsg{
+				Msg: "остановка 'NotificationListener' из-за завершения контекста",
+				Mod: "Endpoint",
+				Log: 0, // 0 - Info
+				UID: 0,
+			}
+			return
 		case msg, ok := <-mode.CarpinteroCh:
 			if !ok {
 				notifCh <- com.LogMsg{
