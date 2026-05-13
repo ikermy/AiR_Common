@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.42.3"
-git tag -a v1.42.3 -m "test"
-git push origin master
-git push origin v1.42.3
+git commit -m "v1.42.4"
+git tag -a v1.42.4 -m "mcp: google MCP config fetchers, remove buildOpenAITools dead code"
+git push origin mcp_migrate
+git push origin v1.42.4

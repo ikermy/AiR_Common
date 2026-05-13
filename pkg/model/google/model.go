@@ -123,6 +123,28 @@ func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.Acti
 
 	// Создаём Google клиент с API ключом через конструктор
 	googleClient := create.NewGoogleAgentClient(ctx, conf.GPT.GoogleKey)
+	if mcpProvider, ok := actionHandler.(model.MCPConfigProvider); ok {
+		googleClient.SetMCPConfigFetchers(
+			func(fetchCtx context.Context, userId uint32, provider create.ProviderType) (string, error) {
+				return mcpProvider.FetchSystemPrompt(fetchCtx, userId, provider)
+			},
+			func(fetchCtx context.Context, userId uint32, provider create.ProviderType) ([]create.FunctionDeclaration, error) {
+				mcpTools, err := mcpProvider.FetchToolsList(fetchCtx, userId, provider)
+				if err != nil {
+					return nil, err
+				}
+				functions := make([]create.FunctionDeclaration, 0, len(mcpTools))
+				for _, t := range mcpTools {
+					functions = append(functions, create.FunctionDeclaration{
+						Name:        t.Name,
+						Description: t.Description,
+						Parameters:  t.InputSchema,
+					})
+				}
+				return functions, nil
+			},
+		)
+	}
 
 	m := &GoogleModel{
 		ctx:           ctx,
@@ -164,6 +186,9 @@ func (m *GoogleModel) SetClient(client *create.GoogleAgentClient) {
 // SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID
 func (m *GoogleModel) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
+	if m.client != nil {
+		m.client.SetUniversalModel(um)
+	}
 }
 
 // NewMessage реализует интерфейс model.Inter
@@ -227,12 +252,18 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 			if decompressErr != nil {
 				//logger.Warn("Ошибка распаковки данных модели: %v", decompressErr, userId)
 			} else {
-				// КРИТИЧЕСКИ ВАЖНО: Загружаем SystemInstruction из Prompt
-				if modelData.Prompt != "" {
+				// SystemInstruction: базовый prompt + hint от MCP, если он доступен.
+				promptText := modelData.Prompt
+				if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
+					if hint, fetchErr := mcpProvider.FetchSystemPrompt(m.ctx, userId, create.ProviderGoogle); fetchErr == nil && hint != "" {
+						promptText = modelData.Prompt + "\n\n" + hint
+					}
+				}
+				if promptText != "" {
 					agentConfig.SystemInstruction = map[string]interface{}{
 						"parts": []map[string]interface{}{
 							{
-								"text": modelData.Prompt,
+								"text": promptText,
 							},
 						},
 					}
@@ -280,9 +311,22 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 
 	// Формируем function_declarations для различных сервисов
 	var functionDeclarations []map[string]interface{}
+	toolsFromMCP := false
+	if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
+		if mcpTools, fetchErr := mcpProvider.FetchToolsList(m.ctx, userId, create.ProviderGoogle); fetchErr == nil {
+			for _, t := range mcpTools {
+				functionDeclarations = append(functionDeclarations, map[string]interface{}{
+					"name":        t.Name,
+					"description": t.Description,
+					"parameters":  t.InputSchema,
+				})
+			}
+			toolsFromMCP = true
+		}
+	}
 
 	// 1. Добавляем S3 функции ТОЛЬКО если есть real_user_id
-	if agentConfig.S3 && hasRealUserID {
+	if !toolsFromMCP && agentConfig.S3 && hasRealUserID {
 		functionDeclarations = append(functionDeclarations,
 			map[string]interface{}{
 				"name":        "get_s3_files",
@@ -324,7 +368,7 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 	}
 
 	// 1.5. Добавляем функцию получения текущего времени (всегда доступна)
-	if hasRealUserID {
+	if !toolsFromMCP && hasRealUserID {
 		functionDeclarations = append(functionDeclarations,
 			map[string]interface{}{
 				"name": "get_current_time",
@@ -346,7 +390,7 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 	}
 
 	// 2. Добавляем Google Calendar функции ТОЛЬКО если есть real_user_id
-	if agentConfig.HasCalendar && hasRealUserID {
+	if !toolsFromMCP && agentConfig.HasCalendar && hasRealUserID {
 		functionDeclarations = append(functionDeclarations,
 			map[string]interface{}{
 				"name":        "calendar_create_event",
@@ -437,7 +481,7 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 	}
 
 	// 3. Добавляем Google Sheets функции ТОЛЬКО если есть real_user_id
-	if agentConfig.HasSheets && hasRealUserID {
+	if !toolsFromMCP && agentConfig.HasSheets && hasRealUserID {
 		functionDeclarations = append(functionDeclarations,
 			map[string]interface{}{
 				"name": "sheets_read_range",

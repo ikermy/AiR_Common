@@ -381,7 +381,7 @@ func (m *OpenAIModel) sendSessionUpdate(rs *RealtimeSession) error {
 	instructions := buildRealtimeSystemPrompt(rs.agentConfig)
 
 	//logger.Debug("sendSessionUpdate: agentConfig.Tools raw count=%d respId=%d", len(rs.agentConfig.Tools), rs.respId, rs.userId)
-	tools := buildRealtimeTools(rs.agentConfig.Tools, rs.agentConfig)
+	tools := buildRealtimeTools(rs.agentConfig.Tools)
 	//logger.Warn("sendSessionUpdate: Tools after convert count=%d list=%v respId=%d", len(tools), tools, rs.respId, rs.userId)
 	// Собираем turn_detection из RealtimeVAD или используем дефолты
 	vad := rs.agentConfig.RealtimeVAD
@@ -485,14 +485,14 @@ func (rs *RealtimeSession) writeJSON(v interface{}) error {
 }
 
 // buildRealtimeTools конвертирует tools из формата Responses API в формат Realtime API.
-// Поддерживаются только function-инструменты.
+// Поддерживаются только function-инструменты, уже полученные от MCP.
 // create_file исключается — в голосовом режиме файлы просматриваются только через get_s3_files.
 //
 // Различия Realtime API от Responses API:
 //   - "strict" и "additionalProperties" не поддерживаются → удаляются
 //   - "const" в properties не поддерживается → заменяем на description "MUST be exactly: ..."
 //   - union types ["string","null"] не поддерживаются → берём первый тип
-func buildRealtimeTools(tools []interface{}, agentConf *OpenAIAgentConfig) []interface{} {
+func buildRealtimeTools(tools []interface{}) []interface{} {
 	var result []interface{}
 	for _, t := range tools {
 		toolMap, ok := t.(map[string]interface{})
@@ -501,9 +501,6 @@ func buildRealtimeTools(tools []interface{}, agentConf *OpenAIAgentConfig) []int
 		}
 		name, _ := toolMap["name"].(string)
 
-		if name == "save_image_data" && agentConf != nil && !agentConf.Image {
-			continue
-		}
 		// TODO сознательно отключён, нужно больше тестов!
 		if name == "create_file" {
 			continue

@@ -74,7 +74,15 @@ type GoogleAgentClient struct {
 	url            string
 	ctx            context.Context
 	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealUserID
+	promptFetcher  GooglePromptHintFetcher
+	toolsFetcher   GoogleFunctionDeclarationsFetcher
 }
+
+// GooglePromptHintFetcher опционально получает prompt hint от внешнего MCP-источника.
+type GooglePromptHintFetcher func(ctx context.Context, userId uint32, provider ProviderType) (string, error)
+
+// GoogleFunctionDeclarationsFetcher опционально получает function declarations от внешнего MCP-источника.
+type GoogleFunctionDeclarationsFetcher func(ctx context.Context, userId uint32, provider ProviderType) ([]FunctionDeclaration, error)
 
 // ============================================================================
 // TYPED STRUCTURES FOR FUNCTION DECLARATIONS
@@ -97,9 +105,9 @@ type FunctionParameters struct {
 
 // FunctionDeclaration описывает одну функцию для Function Calling
 type FunctionDeclaration struct {
-	Name        string             `json:"name"`
-	Description string             `json:"description"`
-	Parameters  FunctionParameters `json:"parameters"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Parameters  interface{} `json:"parameters"`
 }
 
 // GoogleTool описывает инструмент (tool) для Google Gemini API
@@ -115,6 +123,18 @@ func NewGoogleAgentClient(ctx context.Context, apiKey string) *GoogleAgentClient
 		url:    mode.GoogleAgentsURL,
 		ctx:    ctx,
 	}
+}
+
+// SetMCPConfigFetchers устанавливает внешние fetchers для prompt hint и function declarations.
+// Используется как первый шаг миграции Google на MCP без import cycle между create и model.
+func (m *GoogleAgentClient) SetMCPConfigFetchers(promptFetcher GooglePromptHintFetcher, toolsFetcher GoogleFunctionDeclarationsFetcher) {
+	m.promptFetcher = promptFetcher
+	m.toolsFetcher = toolsFetcher
+}
+
+// SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID в create-time операциях.
+func (m *GoogleAgentClient) SetUniversalModel(um *UniversalModel) {
+	m.universalModel = um
 }
 
 // ============================================================================
@@ -217,133 +237,144 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 		return UMCR{}, fmt.Errorf("ошибка получения реального user_id: %v", err)
 	}
 
-	// Build enhancedPrompt dynamically based on model capabilities
-	enhancedPrompt := modelData.Prompt + "\n\n"
+	// Сначала пробуем получить hint от MCP; при ошибке используем локальный legacy builder.
+	enhancedPrompt := modelData.Prompt
+	mcpPromptApplied := false
+	if m.promptFetcher != nil {
+		if hint, fetchErr := m.promptFetcher(m.ctx, userId, ProviderGoogle); fetchErr == nil && hint != "" {
+			enhancedPrompt = modelData.Prompt + "\n\n" + hint
+			mcpPromptApplied = true
+		}
+	}
 
-	// Time reminder for ALL models
-	enhancedPrompt += fmt.Sprintf("CURRENT TIME:\n"+
-		"IMPORTANT: Use get_current_time(user_id=\"%d\") to get actual date/time\n"+
-		"DO NOT use your internal knowledge about dates - it is OUTDATED!\n\n", realUserId)
+	if !mcpPromptApplied {
+		enhancedPrompt += "\n\n"
 
-	// Important reminder - only for active functions
-	if modelData.MetaAction != "" || modelData.Operator {
-		enhancedPrompt += "IMPORTANT REMINDER:\n" +
-			"In EVERY response you MUST:\n"
+		// Time reminder for ALL models
+		enhancedPrompt += fmt.Sprintf("CURRENT TIME:\n"+
+			"IMPORTANT: Use get_current_time(user_id=\"%d\") to get actual date/time\n"+
+			"DO NOT use your internal knowledge about dates - it is OUTDATED!\n\n", realUserId)
 
+		// Important reminder - only for active functions
+		if modelData.MetaAction != "" || modelData.Operator {
+			enhancedPrompt += "IMPORTANT REMINDER:\n" +
+				"In EVERY response you MUST:\n"
+
+			if modelData.MetaAction != "" {
+				enhancedPrompt += "1. Check GOAL condition (from your instructions above) and set target correctly\n"
+			}
+
+			if modelData.Operator {
+				enhancedPrompt += "2. Check if operator needed (from your instructions above) and set operator correctly\n"
+			}
+
+			enhancedPrompt += "3. DO NOT IGNORE these checks!\n\n"
+		}
+
+		// File handling instructions (optimized version)
+		if modelData.S3 {
+			enhancedPrompt += "S3: get_s3_files, create_file\n" +
+				"Types: .jpg/.png=photo, .mp4=video, .mp3=audio, other=doc\n" +
+				"When sending files: use caption (NOT message)\n\n"
+		}
+
+		// Code Interpreter instructions only if enabled
+		if modelData.Interpreter {
+			enhancedPrompt += "CODE INTERPRETER:\n" +
+				"You can execute code for:\n" +
+				"- Data analysis and calculations\n" +
+				"- Creating charts and visualizations\n" +
+				"- Processing files (CSV, Excel, JSON, etc.)\n" +
+				"Use code execution when necessary\n\n"
+		}
+
+		// Video generation instructions only if enabled
+		if modelData.Video {
+			enhancedPrompt += "VIDEO GENERATION:\n" +
+				"When user asks to create/generate/draw video:\n" +
+				"1. Describe in your text response what you are creating\n" +
+				"2. System will AUTOMATICALLY generate and send video to user\n" +
+				"3. You can specify: duration (4-8 sec), aspect ratio (16:9, 9:16, 1:1)\n" +
+				"4. DO NOT add video files to send_files - they will be added automatically!\n" +
+				"5. Just reply to user that you are creating video with description\n\n"
+		}
+
+		// Web search instructions
+		if modelData.WebSearch {
+			enhancedPrompt += "WEB SEARCH (Google VSearch):\n" +
+				"You have access to current internet information via Google VSearch tool.\n" +
+				"MANDATORY use google_search when:\n" +
+				"   - User asks about current events, weather, news, currency rates\n" +
+				"   - Requests information not in your knowledge base (data after October 2023)\n" +
+				"   - Asks for current facts about companies, people, places\n" +
+				"   - Says \"what's on the internet\", \"find information\", \"google it\"\n" +
+				"1. ALWAYS use search for queries with dates, time, current statistics\n" +
+				"2. After getting search results - summarize them clearly\n" +
+				"3. Cite information sources when appropriate\n" +
+				"4. If you are NOT SURE about information - USE SEARCH instead of refusing!\n\n"
+		}
+
+		// Google Calendar instructions (optimized version)
+		if modelData.GOAuth.HasCalendar() {
+			enhancedPrompt += fmt.Sprintf("CALENDAR: user_id=\"%d\"\n"+
+				"Functions: calendar_create_event, calendar_list_events, calendar_delete_event\n"+
+				"RFC3339: \"2026-02-05T15:00:00+03:00\"\n"+
+				"ALWAYS call get_current_time BEFORE calculating dates!\n"+
+				"After operation - confirm action with details\n\n"+
+				"DELETING EVENTS:\n"+
+				"DO NOT create events when deleting! Algorithm:\n"+
+				"1. calendar_list_events -> get event_id\n"+
+				"2. calendar_delete_event(user_id, event_id) for each\n\n",
+				realUserId)
+		}
+
+		// Google Sheets instructions (optimized version)
+		if modelData.GOAuth.HasSheets() {
+			enhancedPrompt += fmt.Sprintf("SHEETS: user_id=\"%d\"\n"+
+				"spreadsheet_id from prompt (FULL ID ~40 chars, NOT name!)\n"+
+				"Functions: sheets_read_range (read), sheets_write_range (write), sheets_append_range (append)\n"+
+				"After function call - process result and show data to user\n\n", realUserId)
+		}
+
+		// Image generation instructions
+		if modelData.Image {
+			enhancedPrompt += "IMAGE GENERATION:\n" +
+				"When user asks to create/draw/generate image:\n" +
+				"1. Describe in detail in your response (in message field) what you are creating.\n" +
+				"2. System will AUTOMATICALLY generate image based on your description and add it to send_files.\n" +
+				"3. IMPORTANT: DO NOT add images to send_files yourself! Leave send_files empty [].\n" +
+				"4. DO NOT invent fake URLs (example.com etc.) - system will add real URL after generation.\n" +
+				"5. Just describe what you are creating in message field, and system will do the rest.\n\n"
+		}
+
+		// JSON response field rules
+		enhancedPrompt += "RULES for JSON response fields:\n\n"
+
+		// Target field instructions
 		if modelData.MetaAction != "" {
-			enhancedPrompt += "1. Check GOAL condition (from your instructions above) and set target correctly\n"
+			enhancedPrompt += "**target** (boolean) - Is dialog GOAL achieved:\n" +
+				"  Check goal condition from YOUR INSTRUCTIONS ABOVE\n" +
+				"  If condition EXACTLY met -> target: true\n" +
+				"  If condition NOT met -> target: false\n\n"
+		} else {
+			enhancedPrompt += "**target**: ALWAYS false (no goal)\n\n"
 		}
 
+		// Operator field instructions
 		if modelData.Operator {
-			enhancedPrompt += "2. Check if operator needed (from your instructions above) and set operator correctly\n"
+			enhancedPrompt += "**operator** (boolean) - Is operator required:\n" +
+				"  Check operator call condition from YOUR INSTRUCTIONS ABOVE\n" +
+				"  If user requests operator -> operator: true\n" +
+				"  In all other cases -> operator: false\n\n"
+		} else {
+			enhancedPrompt += "**operator**: ALWAYS false (operator call disabled)\n\n"
 		}
 
-		enhancedPrompt += "3. DO NOT IGNORE these checks!\n\n"
+		// Final instruction on response format
+		enhancedPrompt += "IMPORTANT: Your response MUST be valid JSON in the following format:\n" +
+			GoogleSchemaJSON + "\n\n" +
+			"Always return response strictly in this JSON format."
 	}
-
-	// File handling instructions (optimized version)
-	if modelData.S3 {
-		enhancedPrompt += "S3: get_s3_files, create_file\n" +
-			"Types: .jpg/.png=photo, .mp4=video, .mp3=audio, other=doc\n" +
-			"When sending files: use caption (NOT message)\n\n"
-	}
-
-	// Code Interpreter instructions only if enabled
-	if modelData.Interpreter {
-		enhancedPrompt += "CODE INTERPRETER:\n" +
-			"You can execute code for:\n" +
-			"- Data analysis and calculations\n" +
-			"- Creating charts and visualizations\n" +
-			"- Processing files (CSV, Excel, JSON, etc.)\n" +
-			"Use code execution when necessary\n\n"
-	}
-
-	// Video generation instructions only if enabled
-	if modelData.Video {
-		enhancedPrompt += "VIDEO GENERATION:\n" +
-			"When user asks to create/generate/draw video:\n" +
-			"1. Describe in your text response what you are creating\n" +
-			"2. System will AUTOMATICALLY generate and send video to user\n" +
-			"3. You can specify: duration (4-8 sec), aspect ratio (16:9, 9:16, 1:1)\n" +
-			"4. DO NOT add video files to send_files - they will be added automatically!\n" +
-			"5. Just reply to user that you are creating video with description\n\n"
-	}
-
-	// Web search instructions
-	if modelData.WebSearch {
-		enhancedPrompt += "WEB SEARCH (Google VSearch):\n" +
-			"You have access to current internet information via Google VSearch tool.\n" +
-			"MANDATORY use google_search when:\n" +
-			"   - User asks about current events, weather, news, currency rates\n" +
-			"   - Requests information not in your knowledge base (data after October 2023)\n" +
-			"   - Asks for current facts about companies, people, places\n" +
-			"   - Says \"what's on the internet\", \"find information\", \"google it\"\n" +
-			"1. ALWAYS use search for queries with dates, time, current statistics\n" +
-			"2. After getting search results - summarize them clearly\n" +
-			"3. Cite information sources when appropriate\n" +
-			"4. If you are NOT SURE about information - USE SEARCH instead of refusing!\n\n"
-	}
-
-	// Google Calendar instructions (optimized version)
-	if modelData.GOAuth.HasCalendar() {
-		enhancedPrompt += fmt.Sprintf("CALENDAR: user_id=\"%d\"\n"+
-			"Functions: calendar_create_event, calendar_list_events, calendar_delete_event\n"+
-			"RFC3339: \"2026-02-05T15:00:00+03:00\"\n"+
-			"ALWAYS call get_current_time BEFORE calculating dates!\n"+
-			"After operation - confirm action with details\n\n"+
-			"DELETING EVENTS:\n"+
-			"DO NOT create events when deleting! Algorithm:\n"+
-			"1. calendar_list_events -> get event_id\n"+
-			"2. calendar_delete_event(user_id, event_id) for each\n\n",
-			realUserId)
-	}
-
-	// Google Sheets instructions (optimized version)
-	if modelData.GOAuth.HasSheets() {
-		enhancedPrompt += fmt.Sprintf("SHEETS: user_id=\"%d\"\n"+
-			"spreadsheet_id from prompt (FULL ID ~40 chars, NOT name!)\n"+
-			"Functions: sheets_read_range (read), sheets_write_range (write), sheets_append_range (append)\n"+
-			"After function call - process result and show data to user\n\n", realUserId)
-	}
-
-	// Image generation instructions
-	if modelData.Image {
-		enhancedPrompt += "IMAGE GENERATION:\n" +
-			"When user asks to create/draw/generate image:\n" +
-			"1. Describe in detail in your response (in message field) what you are creating.\n" +
-			"2. System will AUTOMATICALLY generate image based on your description and add it to send_files.\n" +
-			"3. IMPORTANT: DO NOT add images to send_files yourself! Leave send_files empty [].\n" +
-			"4. DO NOT invent fake URLs (example.com etc.) - system will add real URL after generation.\n" +
-			"5. Just describe what you are creating in message field, and system will do the rest.\n\n"
-	}
-
-	// JSON response field rules
-	enhancedPrompt += "RULES for JSON response fields:\n\n"
-
-	// Target field instructions
-	if modelData.MetaAction != "" {
-		enhancedPrompt += "**target** (boolean) - Is dialog GOAL achieved:\n" +
-			"  Check goal condition from YOUR INSTRUCTIONS ABOVE\n" +
-			"  If condition EXACTLY met -> target: true\n" +
-			"  If condition NOT met -> target: false\n\n"
-	} else {
-		enhancedPrompt += "**target**: ALWAYS false (no goal)\n\n"
-	}
-
-	// Operator field instructions
-	if modelData.Operator {
-		enhancedPrompt += "**operator** (boolean) - Is operator required:\n" +
-			"  Check operator call condition from YOUR INSTRUCTIONS ABOVE\n" +
-			"  If user requests operator -> operator: true\n" +
-			"  In all other cases -> operator: false\n\n"
-	} else {
-		enhancedPrompt += "**operator**: ALWAYS false (operator call disabled)\n\n"
-	}
-
-	// Final instruction on response format
-	enhancedPrompt += "IMPORTANT: Your response MUST be valid JSON in the following format:\n" +
-		GoogleSchemaJSON + "\n\n" +
-		"Always return response strictly in this JSON format."
 
 	// Build payload for agent creation
 	// Google Gemini API uses system_instruction for prompt
@@ -383,10 +414,17 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 		})
 	}
 
-	// 2. Добавляем S3 (Function Calling)
+	// 2. Добавляем Function Calling инструменты: сначала MCP, при ошибке - локальный fallback.
 	var allFunctions []FunctionDeclaration
+	toolsFromMCP := false
+	if m.toolsFetcher != nil {
+		if fetched, fetchErr := m.toolsFetcher(m.ctx, userId, ProviderGoogle); fetchErr == nil {
+			allFunctions = fetched
+			toolsFromMCP = true
+		}
+	}
 
-	if modelData.S3 {
+	if !toolsFromMCP && modelData.S3 {
 		allFunctions = append(allFunctions,
 			FunctionDeclaration{
 				Name:        "get_s3_files",
@@ -428,7 +466,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	}
 
 	// 3. Добавляем Google Calendar (Function Calling)
-	if modelData.GOAuth.HasCalendar() {
+	if !toolsFromMCP && modelData.GOAuth.HasCalendar() {
 		allFunctions = append(allFunctions,
 			FunctionDeclaration{
 				Name:        "calendar_create_event",
@@ -519,7 +557,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	}
 
 	// 4. Добавляем Google Sheets (Function Calling)
-	if modelData.GOAuth.HasSheets() {
+	if !toolsFromMCP && modelData.GOAuth.HasSheets() {
 		allFunctions = append(allFunctions,
 			FunctionDeclaration{
 				Name:        "sheets_read_range",
