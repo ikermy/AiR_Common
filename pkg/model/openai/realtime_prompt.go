@@ -75,93 +75,92 @@ func buildRealtimeSystemPrompt(config *OpenAIAgentConfig) string {
 	return b.String()
 }
 
-// extractFilesForRealtime разбирает результат файловых функций (get_s3_files, create_file, save_image_data).
+// extractFilesForRealtime пытается извлечь файлы из результата любого MCP-инструмента
+// по структуре JSON-ответа, без привязки к имени функции.
+//
+// Поддерживаемые форматы:
+//  1. Объект с полем "url" или "Url" → один файл (create_file, save_image_data и любые другие)
+//  2. Массив строк-URL → список файлов (get_s3_files и аналоги)
+//  3. Строка, являющаяся JSON-массивом URL → список файлов
+//
 // Возвращает:
-//   - files — массив объектов {type, Url, file_name, caption} для отправки клиенту
+//   - files        — массив объектов {type, Url, file_name, caption} для отправки клиенту
 //   - voiceConfirm — текст для модели БЕЗ URL (чтобы не озвучивала ссылки)
-func extractFilesForRealtime(funcName, rawResult string) (files []map[string]interface{}, voiceConfirm string) {
-	switch funcName {
-
-	case "save_image_data":
-		var r map[string]interface{}
-		if err := json.Unmarshal([]byte(rawResult), &r); err != nil {
-			return nil, ""
-		}
-		url, _ := r["url"].(string)
-		if url == "" {
-			return nil, ""
-		}
-		fileName := filepath.Base(url)
-		files = []map[string]interface{}{{
-			"type": "photo", "Url": url, "file_name": fileName, "caption": "",
-		}}
-		voiceConfirm = fmt.Sprintf(
-			`{"status":"ok","file_name":%q,"type":"photo"}`,
-			fileName)
-		return
-
-	case "create_file":
-		var r map[string]interface{}
-		if err := json.Unmarshal([]byte(rawResult), &r); err != nil {
-			return nil, ""
-		}
-		url, _ := r["url"].(string)
-		if url == "" {
-			url, _ = r["Url"].(string)
-		}
-		fileName, _ := r["file_name"].(string)
-		if fileName == "" && url != "" {
-			fileName = filepath.Base(url)
-		}
-		fileType, _ := r["type"].(string)
-		if fileType == "" {
-			fileType = realtimeFileType(url)
-		}
-		if url == "" {
-			return nil, ""
-		}
-		files = []map[string]interface{}{{
-			"type": fileType, "Url": url, "file_name": fileName, "caption": "",
-		}}
-		voiceConfirm = fmt.Sprintf(
-			`{"status":"ok","file_name":%q,"type":%q}`,
-			fileName, fileType)
-		return
-
-	case "get_s3_files":
-		var wrapper map[string]interface{}
-		if err := json.Unmarshal([]byte(rawResult), &wrapper); err != nil {
-			return nil, ""
-		}
-		outputStr, _ := wrapper["output"].(string)
-		if outputStr == "" {
-			return nil, ""
-		}
-		var urls []string
-		if err := json.Unmarshal([]byte(outputStr), &urls); err != nil {
-			return nil, ""
-		}
-		if len(urls) == 0 {
-			voiceConfirm = `{"status":"ok","count":0}`
-			return
-		}
-		// Конвертируем все URL в файлы для отправки клиенту — аналогично текстовому режиму.
-		// Модели возвращаем только имена файлов (без URL), чтобы не озвучивала ссылки.
-		nameParts := make([]string, 0, len(urls))
-		for _, u := range urls {
-			fileName := filepath.Base(u)
-			fileType := realtimeFileType(u)
-			files = append(files, map[string]interface{}{
-				"type": fileType, "Url": u, "file_name": fileName, "caption": "",
-			})
-			nameParts = append(nameParts, fmt.Sprintf("%q", fileName))
-		}
-		voiceConfirm = fmt.Sprintf(
-			`{"status":"ok","count":%d,"file_names":[%s]}`,
-			len(urls), strings.Join(nameParts, ","))
-		return
+func extractFilesForRealtime(rawResult string) (files []map[string]interface{}, voiceConfirm string) {
+	raw := strings.TrimSpace(rawResult)
+	if raw == "" {
+		return nil, ""
 	}
-	return nil, ""
+
+	// Попытка 1: объект с "url"/"Url" → один файл
+	if strings.HasPrefix(raw, "{") {
+		var r map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &r); err == nil {
+			url, _ := r["url"].(string)
+			if url == "" {
+				url, _ = r["Url"].(string)
+			}
+			if url != "" && isFileURL(url) {
+				fileName, _ := r["file_name"].(string)
+				if fileName == "" {
+					fileName = filepath.Base(url)
+				}
+				fileType, _ := r["type"].(string)
+				if fileType == "" {
+					fileType = realtimeFileType(url)
+				}
+				files = []map[string]interface{}{{
+					"type": fileType, "Url": url, "file_name": fileName, "caption": "",
+				}}
+				voiceConfirm = fmt.Sprintf(`{"status":"ok","file_name":%q,"type":%q}`, fileName, fileType)
+				return
+			}
+		}
+	}
+
+	// Попытка 2: массив строк-URL (прямой или обёрнутый в {"output":"[...]"})
+	var urlList []string
+
+	if strings.HasPrefix(raw, "[") {
+		_ = json.Unmarshal([]byte(raw), &urlList)
+	} else if strings.HasPrefix(raw, "{") {
+		var wrapper map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &wrapper); err == nil {
+			if outputStr, ok := wrapper["output"].(string); ok {
+				_ = json.Unmarshal([]byte(outputStr), &urlList)
+			}
+		}
+	}
+
+	if len(urlList) == 0 {
+		return nil, ""
+	}
+
+	// Фильтруем: только строки, похожие на URL с файловым расширением
+	nameParts := make([]string, 0, len(urlList))
+	for _, u := range urlList {
+		if !isFileURL(u) {
+			continue
+		}
+		fileName := filepath.Base(u)
+		fileType := realtimeFileType(u)
+		files = append(files, map[string]interface{}{
+			"type": fileType, "Url": u, "file_name": fileName, "caption": "",
+		})
+		nameParts = append(nameParts, fmt.Sprintf("%q", fileName))
+	}
+	if len(files) == 0 {
+		return nil, ""
+	}
+	voiceConfirm = fmt.Sprintf(`{"status":"ok","count":%d,"file_names":[%s]}`,
+		len(files), strings.Join(nameParts, ","))
+	return
+}
+
+// isFileURL возвращает true если строка похожа на URL с путём к файлу.
+func isFileURL(s string) bool {
+	return (strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://")) &&
+		filepath.Ext(filepath.Base(s)) != ""
 }
 
 // realtimeFileType определяет тип файла по расширению.

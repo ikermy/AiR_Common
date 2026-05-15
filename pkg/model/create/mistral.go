@@ -1,4 +1,4 @@
-package create
+﻿package create
 
 import (
 	"bytes"
@@ -77,6 +77,15 @@ type MistralAgentClient struct {
 	url            string
 	ctx            context.Context
 	universalModel *UniversalModel // Ссылка на UniversalModel для доступа к GetRealUserID
+	promptFetcher  GooglePromptHintFetcher
+	toolsFetcher   GoogleFunctionDeclarationsFetcher
+}
+
+// SetMCPConfigFetchers устанавливает внешние fetchers для prompt hint и function declarations.
+// Аналогично GoogleAgentClient.SetMCPConfigFetchers — используется при создании агента.
+func (m *MistralAgentClient) SetMCPConfigFetchers(promptFetcher GooglePromptHintFetcher, toolsFetcher GoogleFunctionDeclarationsFetcher) {
+	m.promptFetcher = promptFetcher
+	m.toolsFetcher = toolsFetcher
 }
 
 // deleteMistralModel удаляет Mistral Agent (с поддержкой WS сообщений)
@@ -260,138 +269,33 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 
 	description := fmt.Sprintf("Agent for user %d", userId)
 
-	// Получаем реальный user_id через universalModel
-	realUserId, err := m.universalModel.GetRealUserID(userId)
-	if err != nil {
-		return UMCR{}, fmt.Errorf("ошибка получения реального user_id: %v", err)
-	} // Формируем enhancedPrompt динамически в зависимости от возможностей модели
+	// ============================================================================
+	// SYSTEM PROMPT — базовый prompt + hint от MCP.
+	// Все инструкции по функциям приходят от MCP (FetchSystemPrompt).
+	// Хардкодированные инструкции по S3/Calendar/Sheets/Image удалены.
+	// ============================================================================
 	enhancedPrompt := modelData.Prompt + "\n\n"
 
-	// Reminder to get current time from server for ALL models
-	enhancedPrompt += fmt.Sprintf("CURRENT TIME:\n"+
-		"IMPORTANT: To get the current date and time use get_current_time(user_id=\"%d\")\n"+
-		"DO NOT use your internal knowledge about the date - it is OUTDATED!\n\n", realUserId)
+	if m.promptFetcher != nil {
+		if hint, fetchErr := m.promptFetcher(m.ctx, userId, ProviderMistral); fetchErr == nil && hint != "" {
+			enhancedPrompt += hint + "\n\n"
+		}
+	}
 
-	// Add important reminder - only for active functions
+	// Напоминание про target/operator — системные поля ответа, не зависят от MCP.
 	if modelData.MetaAction != "" || modelData.Operator {
 		enhancedPrompt += "IMPORTANT REMINDER:\n" +
 			"In EVERY response you MUST:\n"
-
 		if modelData.MetaAction != "" {
 			enhancedPrompt += "1. Check the GOAL condition (from your instructions above) and set target correctly\n"
 		}
-
 		if modelData.Operator {
 			enhancedPrompt += "2. Check if operator is needed (from your instructions above) and set operator correctly\n"
 		}
-
 		enhancedPrompt += "3. DO NOT ignore these checks!\n\n"
 	}
 
-	// Add system info about user_id only if file functions are enabled
-	if modelData.S3 {
-		enhancedPrompt += fmt.Sprintf("SYSTEM INFO:\n"+
-			"- Your user_id: \"%d\" (STRING, NOT A NUMBER!)\n"+
-			"- Pass user_id as a STRING in ALL function calls: {\"user_id\": \"%d\"}\n"+
-			"- DO NOT ask the user for user_id, use ONLY this value\n\n", realUserId, realUserId)
-	}
-
-	// Add file instructions only if S3 is enabled
-	if modelData.S3 {
-		enhancedPrompt += "FILE OPERATIONS:\n" +
-			"1. If user asks to CREATE a new file - ALWAYS call create_file with the content first\n" +
-			"2. After creating the file call get_s3_files to get the updated list with the new file\n" +
-			"3. Then send the created file via send_files\n" +
-			"4. If user asks to show existing files - call get_s3_files and send the needed ones\n" +
-			"5. Determine file type: .jpg/.png/.gif → photo, .mp4 → video, .mp3 → audio, .txt/.pdf etc → doc\n\n"
-	}
-
-	// Add image generation instructions only if Image is enabled
-	if modelData.Image {
-		enhancedPrompt += "IMAGE GENERATION:\n" +
-			"When user asks to draw/generate/create an image:\n" +
-			"1. Describe in your text response what you are drawing\n" +
-			"2. The system will AUTOMATICALLY generate and send the image to the user\n" +
-			"3. DO NOT add files to send_files - they will be added automatically!\n" +
-			"4. Just tell the user you are creating the image\n\n"
-	}
-
-	// Add web search instructions only if WebSearch is enabled
-	if modelData.WebSearch {
-		enhancedPrompt += "WEB SEARCH:\n" +
-			"When user asks a question requiring up-to-date information from the internet:\n" +
-			"1. The system will AUTOMATICALLY perform an internet search\n" +
-			"2. Use the results to form your answer\n" +
-			"3. Reference sources when appropriate\n\n"
-	}
-
-	// Add GOOGLE CALENDAR instructions
-	if modelData.GOAuth.HasCalendar() {
-		enhancedPrompt += "GOOGLE CALENDAR - Event management:\n" +
-			"You have access to the user's Google Calendar.\n\n" +
-			fmt.Sprintf("user_id for all functions: \"%d\" (string)\n\n", realUserId) +
-			"Available functions:\n" +
-			"- calendar_create_event - create event\n" +
-			"- calendar_list_events - list events\n" +
-			"- calendar_delete_event - delete event\n" +
-			"- calendar_get_event - event details\n\n" +
-			"IMPORTANT for time handling:\n" +
-			"- Time format: RFC3339 (e.g.: \"2026-02-05T15:00:00+03:00\")\n" +
-			"- ALWAYS call get_current_time BEFORE calculating dates!\n" +
-			"- Default duration: 1 hour\n" +
-			"- After create/delete confirm the action and show the link\n\n" +
-			"CRITICAL - DELETING EVENTS:\n" +
-			"When user asks to DELETE an event:\n" +
-			"1. FORBIDDEN to create new events (calendar_create_event)\n" +
-			"2. Deletion algorithm:\n" +
-			"   a) FIRST get event list: calendar_list_events\n" +
-			"   b) Find the required event_id in results\n" +
-			"   c) THEN delete each: calendar_delete_event(user_id, event_id)\n" +
-			"3. For \"all events today\": get via calendar_list_events, delete each one\n" +
-			"4. DO NOT create events when deleting!\n\n"
-	}
-
-	// Add GOOGLE SHEETS instructions
-	if modelData.GOAuth.HasSheets() {
-		enhancedPrompt += "GOOGLE SHEETS - Spreadsheet operations:\n" +
-			"You have access to the user's Google Sheets.\n\n" +
-			fmt.Sprintf("user_id for all functions: \"%d\" (string)\n\n", realUserId) +
-			"CRITICAL - ALWAYS CALL FUNCTIONS:\n" +
-			"1. User asks about table data → IMMEDIATELY call sheets_read_range\n" +
-			"2. Need to count rows → call sheets_read_range, count len(values)-1 (minus headers)\n" +
-			"3. Need to write data → call sheets_write_range\n" +
-			"4. Need to append a row → call sheets_append_range\n" +
-			"5. DO NOT reason about API methods (getMaxRows, getDataRange, Google Apps Script)!\n" +
-			"6. DO NOT suggest writing scripts in Google Apps Script or Python!\n" +
-			"7. ACT: call the available functions RIGHT NOW!\n\n" +
-			"Available functions:\n" +
-			"- sheets_read_range - read data from spreadsheet\n" +
-			"- sheets_write_range - write/update data\n" +
-			"- sheets_append_range - append rows to the end\n" +
-			"- sheets_create_spreadsheet - create new spreadsheet\n" +
-			"- sheets_get_info - spreadsheet info (sheets, sizes)\n\n" +
-			"IMPORTANT:\n" +
-			"- spreadsheet_id comes from user's prompt or URL (between /d/ and /edit)\n" +
-			"- If a table ID is given in the prompt - use IT (full ID from prompt)\n" +
-			"- Range format: 'Sheet1!A1:F100' or 'Sheet1!A:F' (whole sheet)\n" +
-			"- To count rows use: len(values) - 1 (subtract headers)\n" +
-			"- Always read current data before writing\n" +
-			"- Report result after operations (row/cell count)\n\n"
-	}
-
-	// Add file type mapping only if S3 or Image is enabled
-	if modelData.S3 || modelData.Image {
-		enhancedPrompt += "File type for send_files:\n" +
-			"   - .jpg/.png/.gif/.webp → \"photo\"\n" +
-			"   - .mp4/.avi → \"video\"\n" +
-			"   - .mp3/.wav → \"audio\"\n" +
-			"   - .txt/.pdf/.doc and others → \"doc\"\n\n"
-	}
-
-	// Add instructions for target and operator fields
-	enhancedPrompt += "RULES for JSON response fields:\n\n"
-
-	// target instructions
+	// target/operator rules
 	if modelData.MetaAction != "" {
 		enhancedPrompt += "**target** (boolean) - Is the dialog GOAL achieved:\n" +
 			"  Check the goal condition from YOUR INSTRUCTIONS ABOVE\n" +
@@ -400,8 +304,6 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	} else {
 		enhancedPrompt += "**target**: ALWAYS false (no goal)\n\n"
 	}
-
-	// operator instructions
 	if modelData.Operator {
 		enhancedPrompt += "**operator** (boolean) - Is operator required:\n" +
 			"  Check the operator condition from YOUR INSTRUCTIONS ABOVE\n" +
@@ -411,7 +313,6 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 		enhancedPrompt += "**operator**: ALWAYS false (operator disabled)\n\n"
 	}
 
-	// Final instruction for response format (always)
 	enhancedPrompt += "IMPORTANT: Your response MUST be valid JSON (you may wrap in ```json):\n" +
 		MistralSchemaJSON + "\n\n" +
 		"Always return response strictly in this JSON format. You may use markdown: ```json\\n{...}\\n```"
@@ -423,359 +324,51 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 		"instructions": enhancedPrompt,
 	}
 
-	// ВАЖНО: Mistral API НЕ поддерживает response_format при создании агентов!
-	// response_format работает только в AI Studio UI, но не через API.
-	// Структурированный JSON вывод настраивается через instructions в промпте.
-	// Документация: https://docs.mistral.ai/api/#tag/agents
-
-	// Формируем массив tools (функции и built-in tools)
+	// ============================================================================
+	// FUNCTION TOOLS — только от MCP. Нет fallback-хардкода.
+	// ============================================================================
 	var tools []map[string]interface{}
 
-	// Добавляем функцию get_current_time ВСЕГДА (для получения актуального времени)
-	// ВАЖНО: user_id передается через промпт (enhancedPrompt выше), а не через const в параметрах
-	tools = append(tools,
-		map[string]interface{}{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name": "get_current_time",
-				"description": "Returns the EXACT current time and date from the server in the user's timezone. " +
-					"ALWAYS use this function BEFORE calculating dates (tomorrow, next week, on Monday, etc.). " +
-					"DO NOT use your internal knowledge about the date - it is OUTDATED!",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": "User ID",
-						},
+	if m.toolsFetcher != nil {
+		if mcpFunctions, fetchErr := m.toolsFetcher(m.ctx, userId, ProviderMistral); fetchErr == nil {
+			for _, f := range mcpFunctions {
+				tools = append(tools, map[string]interface{}{
+					"type": "function",
+					"function": map[string]interface{}{
+						"name":        f.Name,
+						"description": f.Description,
+						"parameters":  f.Parameters,
 					},
-					"required": []string{"user_id"},
-				},
-			},
-		},
-	)
-
-	// Добавляем функции get_s3_files и create_file ТОЛЬКО если включен S3
-	if modelData.S3 {
-		tools = append(tools,
-			map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        "get_s3_files",
-					"description": "Returns the list of user's available files from S3",
-					"parameters": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"user_id": map[string]interface{}{
-								"type":        "string",
-								"description": "User ID",
-							},
-						},
-						"required": []string{"user_id"},
-					},
-				},
-			},
-			map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        "create_file",
-					"description": "Creates a text file and saves it to S3",
-					"parameters": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"user_id": map[string]interface{}{
-								"type":        "string",
-								"description": "User ID",
-							},
-							"content": map[string]interface{}{
-								"type":        "string",
-								"description": "Text content of the file",
-							},
-							"file_name": map[string]interface{}{
-								"type":        "string",
-								"description": "File name with extension (.txt, .md, etc.)",
-							},
-						},
-						"required": []string{"user_id", "content", "file_name"},
-					},
-				},
-			},
-		)
+				})
+			}
+		}
 	}
 
-	// Добавляем функции Google Calendar если включен
-	if modelData.GOAuth.HasCalendar() {
-		tools = append(tools,
-			map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        "calendar_create_event",
-					"description": "Creates a new event in the user's Google Calendar",
-					"parameters": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"user_id": map[string]interface{}{
-								"type":        "string",
-								"description": "User ID",
-							},
-							"title": map[string]interface{}{
-								"type":        "string",
-								"description": "Event title",
-							},
-							"description": map[string]interface{}{
-								"type":        "string",
-								"description": "Event description (optional)",
-							},
-							"start_time": map[string]interface{}{
-								"type":        "string",
-								"description": "Start time in RFC3339 format",
-							},
-							"end_time": map[string]interface{}{
-								"type":        "string",
-								"description": "End time in RFC3339 format",
-							},
-							"location": map[string]interface{}{
-								"type":        "string",
-								"description": "Event location (optional)",
-							},
-						},
-						"required": []string{"user_id", "title", "start_time", "end_time"},
-					},
-				},
-			},
-			map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        "calendar_list_events",
-					"description": "Retrieves a list of events from Google Calendar",
-					"parameters": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"user_id": map[string]interface{}{
-								"type":        "string",
-								"description": "User ID",
-							},
-							"time_min": map[string]interface{}{
-								"type":        "string",
-								"description": "Period start in RFC3339 (optional)",
-							},
-							"time_max": map[string]interface{}{
-								"type":        "string",
-								"description": "Period end in RFC3339 (optional)",
-							},
-							"max_results": map[string]interface{}{
-								"type":        "integer",
-								"description": "Maximum number of events (default 10)",
-							},
-						},
-						"required": []string{"user_id"},
-					},
-				},
-			},
-			map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        "calendar_delete_event",
-					"description": "Deletes an event from Google Calendar",
-					"parameters": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"user_id": map[string]interface{}{
-								"type":        "string",
-								"description": "User ID",
-							},
-							"event_id": map[string]interface{}{
-								"type":        "string",
-								"description": "Event ID to delete",
-							},
-						},
-						"required": []string{"user_id", "event_id"},
-					},
-				},
-			},
-			map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        "calendar_get_event",
-					"description": "Gets event details from Google Calendar",
-					"parameters": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"user_id": map[string]interface{}{
-								"type":        "string",
-								"description": "User ID",
-							},
-							"event_id": map[string]interface{}{
-								"type":        "string",
-								"description": "Event ID to get details for",
-							},
-						},
-						"required": []string{"user_id", "event_id"},
-					},
-				},
-			},
-		)
-	}
 
-	// Добавляем функции Google Sheets если включен
-	if modelData.GOAuth.HasSheets() {
-		tools = append(tools,
-			map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        "sheets_read_range",
-					"description": "Reads data from the specified range in Google Sheets",
-					"parameters": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"user_id": map[string]interface{}{
-								"type":        "string",
-								"description": "User ID",
-							},
-							"spreadsheet_id": map[string]interface{}{
-								"type":        "string",
-								"description": "Google Sheets spreadsheet ID (from URL or prompt)",
-							},
-							"range": map[string]interface{}{
-								"type":        "string",
-								"description": "Range to read (e.g.: 'Sheet1!A:F' or 'Sheet1!A1:D10')",
-							},
-						},
-						"required": []string{"user_id", "spreadsheet_id", "range"},
-					},
-				},
-			},
-			map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        "sheets_write_range",
-					"description": "Writes data to the specified range in Google Sheets",
-					"parameters": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"user_id": map[string]interface{}{
-								"type":        "string",
-								"description": "User ID",
-							},
-							"spreadsheet_id": map[string]interface{}{
-								"type":        "string",
-								"description": "Google Sheets spreadsheet ID",
-							},
-							"range": map[string]interface{}{
-								"type":        "string",
-								"description": "Starting cell for writing (e.g.: 'Sheet1!A1')",
-							},
-							"values": map[string]interface{}{
-								"type":        "array",
-								"description": "2D array of values to write",
-								"items": map[string]interface{}{
-									"type": "array",
-									"items": map[string]interface{}{
-										"type": "string",
-									},
-								},
-							},
-						},
-						"required": []string{"user_id", "spreadsheet_id", "range", "values"},
-					},
-				},
-			},
-			map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        "sheets_append_range",
-					"description": "Appends data to the end of a Google Sheets spreadsheet",
-					"parameters": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"user_id": map[string]interface{}{
-								"type":        "string",
-								"description": "User ID",
-							},
-							"spreadsheet_id": map[string]interface{}{
-								"type":        "string",
-								"description": "Google Sheets spreadsheet ID",
-							},
-							"range": map[string]interface{}{
-								"type":        "string",
-								"description": "Column range to append to (e.g.: 'Sheet1!A:D')",
-							},
-							"values": map[string]interface{}{
-								"type":        "array",
-								"description": "2D array of values to append",
-								"items": map[string]interface{}{
-									"type": "array",
-									"items": map[string]interface{}{
-										"type": "string",
-									},
-								},
-							},
-						},
-						"required": []string{"user_id", "spreadsheet_id", "range", "values"},
-					},
-				},
-			},
-		)
-	}
-
-	// Добавляем функцию lead_target если есть MetaAction
-	if modelData.MetaAction != "" {
-		tools = append(tools,
-			map[string]interface{}{
-				"type": "function",
-				"function": map[string]interface{}{
-					"name":        "lead_target",
-					"description": "Triggers a meta-action to achieve the dialog goal",
-					"parameters": map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"resp_id": map[string]interface{}{
-								"type":        "integer",
-								"description": "Respondent ID",
-							},
-						},
-						"required": []string{"resp_id"},
-					},
-				},
-			},
-		)
-	}
-
-	// Добавляем built-in tools (встроенные возможности Mistral)
-	// Согласно документации: https://docs.mistral.ai/agents/tools/built-in/
-	// ВАЖНО: Названия должны точно совпадать с API!
+	// ============================================================================
+	// BUILT-IN MISTRAL TOOLS — нативные возможности API, не MCP-функции.
+	// ============================================================================
 	if modelData.Interpreter {
-		tools = append(tools, map[string]interface{}{
-			"type": "code_interpreter",
-		})
+		tools = append(tools, map[string]interface{}{"type": "code_interpreter"})
 	}
 	if modelData.Image {
-		tools = append(tools, map[string]interface{}{
-			"type": "image_generation",
-		})
+		tools = append(tools, map[string]interface{}{"type": "image_generation"})
 	}
 	if modelData.WebSearch {
-		tools = append(tools, map[string]interface{}{
-			"type": "web_search",
-		})
+		tools = append(tools, map[string]interface{}{"type": "web_search"})
 	}
 
-	// Добавляем document_library если есть поиск по документам или загружены файлы
+	// document_library — если включён поиск по документам
 	if modelData.Search || len(fileIDs) > 0 || len(modelData.VecIds.VectorId) > 0 {
 		documentLibraryTool := map[string]interface{}{
 			"type": "document_library",
 		}
-
-		// library_ids должен быть на том же уровне что и type
-		// Согласно документации: https://docs.mistral.ai/agents/tools/built-in/document_library
 		if len(modelData.VecIds.VectorId) > 0 {
 			documentLibraryTool["library_ids"] = modelData.VecIds.VectorId
 		}
-
 		tools = append(tools, documentLibraryTool)
 	}
 
-	// Добавляем tools в payload если есть
 	if len(tools) > 0 {
 		payload["tools"] = tools
 	}
@@ -813,42 +406,22 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 		return UMCR{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
-	// Извлекаем ID созданного агента
 	agentID, ok := response["id"].(string)
 	if !ok {
 		return UMCR{}, fmt.Errorf("не удалось получить ID созданного агента")
 	}
 
-	// Формируем AllIds аналогично OpenAI
-	// Структура: {"FileIds": [...], "VectorId": [...]}
-	// Если нет файлов и библиотеки - возвращаем nil (будет NULL в БД)
 	var allIds []byte
-
-	// Проверяем есть ли хоть что-то для сохранения
-	hasFiles := len(fileIDs) > 0
-	hasLibrary := len(modelData.VecIds.VectorId) > 0
-
-	if hasFiles || hasLibrary {
-		// Есть данные - формируем JSON
+	if len(fileIDs) > 0 || len(modelData.VecIds.VectorId) > 0 {
 		type VecIds struct {
 			FileIds  []Ids    `json:"FileIds"`
 			VectorId []string `json:"VectorId"`
 		}
-
-		vecIds := VecIds{
-			FileIds:  fileIDs,                   // ID документов в библиотеке
-			VectorId: modelData.VecIds.VectorId, // ID библиотеки
-		}
-
-		// Преобразуем в JSON
-		var err error
+		vecIds := VecIds{FileIds: fileIDs, VectorId: modelData.VecIds.VectorId}
 		allIds, err = json.Marshal(vecIds)
 		if err != nil {
 			return UMCR{}, fmt.Errorf("ошибка при преобразовании vecIds в JSON: %w", err)
 		}
-	} else {
-		// Нет данных - оставляем nil (будет NULL в БД)
-		allIds = nil
 	}
 
 	return UMCR{

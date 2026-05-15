@@ -380,28 +380,26 @@ func (m *OpenAIModel) pumpFromOpenAI(rs *RealtimeSession) {
 
 			rawResult := m.actionHandler.RunAction(rs.ctx, name, args, 1, rs.userId)
 
+			// Пытаемся извлечь файлы из результата любого инструмента по структуре JSON.
+			// Нет привязки к именам функций — работает для любых MCP-инструментов,
+			// возвращающих URL файлов.
 			modelResult := rawResult
-			if name == "get_s3_files" {
-				// modelResult = rawResult (полный JSON с URL для модели).
-				// Файлы в pendingFiles НЕ добавляем — только через send_file_to_user.
-			} else if name == "create_file" || name == "save_image_data" {
-				if extractedFiles, voiceConfirm := extractFilesForRealtime(name, rawResult); len(extractedFiles) > 0 {
-					for _, f := range extractedFiles {
-						fileType, _ := f["type"].(string)
-						fileURL, _ := f["Url"].(string)
-						fileName, _ := f["file_name"].(string)
-						caption, _ := f["caption"].(string)
-						pendingFiles = append(pendingFiles, model.File{
-							Type:     model.FileType(fileType),
-							URL:      fileURL,
-							FileName: fileName,
-							Caption:  caption,
-						})
-					}
-					modelResult = voiceConfirm
-				} else if voiceConfirm != "" {
-					modelResult = voiceConfirm
+			if extractedFiles, voiceConfirm := extractFilesForRealtime(rawResult); len(extractedFiles) > 0 {
+				for _, f := range extractedFiles {
+					fileType, _ := f["type"].(string)
+					fileURL, _ := f["Url"].(string)
+					fileName, _ := f["file_name"].(string)
+					caption, _ := f["caption"].(string)
+					pendingFiles = append(pendingFiles, model.File{
+						Type:     model.FileType(fileType),
+						URL:      fileURL,
+						FileName: fileName,
+						Caption:  caption,
+					})
 				}
+				modelResult = voiceConfirm
+			} else if voiceConfirm != "" {
+				modelResult = voiceConfirm
 			}
 
 			rs.publishEvent(RealtimeEvent{

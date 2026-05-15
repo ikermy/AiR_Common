@@ -110,6 +110,32 @@ func NewAsRouterOption() model.RouterOption {
 
 		// Устанавливаем UniversalModel для доступа к DecompressModelData
 		universalModel := create.New(ctx, db, cfg)
+
+		// Подключаем MCP fetchers для create-time операций (создание агента через Mistral API).
+		// Аналогично google/model.go: function declarations и prompt hint — только от MCP.
+		if mcpProvider, ok := model.ActionHandler(actionHandler).(model.MCPConfigProvider); ok {
+			universalModel.SetMistralMCPFetchers(
+				func(fetchCtx context.Context, userId uint32, provider create.ProviderType) (string, error) {
+					return mcpProvider.FetchSystemPrompt(fetchCtx, userId, provider)
+				},
+				func(fetchCtx context.Context, userId uint32, provider create.ProviderType) ([]create.FunctionDeclaration, error) {
+					mcpTools, err := mcpProvider.FetchToolsList(fetchCtx, userId, provider)
+					if err != nil {
+						return nil, err
+					}
+					functions := make([]create.FunctionDeclaration, 0, len(mcpTools))
+					for _, t := range mcpTools {
+						functions = append(functions, create.FunctionDeclaration{
+							Name:        t.Name,
+							Description: t.Description,
+							Parameters:  t.InputSchema,
+						})
+					}
+					return functions, nil
+				},
+			)
+		}
+
 		mistralModel.SetUniversalModel(universalModel)
 
 		// Регистрируем модель в роутере

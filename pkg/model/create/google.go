@@ -231,150 +231,16 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 		return UMCR{}, fmt.Errorf("modelData.GptType.Name не может быть пустым")
 	}
 
-	// Получаем реальный user_id через universalModel
-	realUserId, err := m.universalModel.GetRealUserID(userId)
-	if err != nil {
-		return UMCR{}, fmt.Errorf("ошибка получения реального user_id: %v", err)
-	}
-
-	// Сначала пробуем получить hint от MCP; при ошибке используем локальный legacy builder.
+	// System prompt: базовый prompt + hint от MCP, если он доступен.
+	// При недоступности MCP — используем только modelData.Prompt (без function-инструкций).
+	// Локальный legacy builder удалён (MCP_MIGRATION.md раздел 14).
 	enhancedPrompt := modelData.Prompt
-	mcpPromptApplied := false
 	if m.promptFetcher != nil {
 		if hint, fetchErr := m.promptFetcher(m.ctx, userId, ProviderGoogle); fetchErr == nil && hint != "" {
 			enhancedPrompt = modelData.Prompt + "\n\n" + hint
-			mcpPromptApplied = true
 		}
 	}
 
-	if !mcpPromptApplied {
-		enhancedPrompt += "\n\n"
-
-		// Time reminder for ALL models
-		enhancedPrompt += fmt.Sprintf("CURRENT TIME:\n"+
-			"IMPORTANT: Use get_current_time(user_id=\"%d\") to get actual date/time\n"+
-			"DO NOT use your internal knowledge about dates - it is OUTDATED!\n\n", realUserId)
-
-		// Important reminder - only for active functions
-		if modelData.MetaAction != "" || modelData.Operator {
-			enhancedPrompt += "IMPORTANT REMINDER:\n" +
-				"In EVERY response you MUST:\n"
-
-			if modelData.MetaAction != "" {
-				enhancedPrompt += "1. Check GOAL condition (from your instructions above) and set target correctly\n"
-			}
-
-			if modelData.Operator {
-				enhancedPrompt += "2. Check if operator needed (from your instructions above) and set operator correctly\n"
-			}
-
-			enhancedPrompt += "3. DO NOT IGNORE these checks!\n\n"
-		}
-
-		// File handling instructions (optimized version)
-		if modelData.S3 {
-			enhancedPrompt += "S3: get_s3_files, create_file\n" +
-				"Types: .jpg/.png=photo, .mp4=video, .mp3=audio, other=doc\n" +
-				"When sending files: use caption (NOT message)\n\n"
-		}
-
-		// Code Interpreter instructions only if enabled
-		if modelData.Interpreter {
-			enhancedPrompt += "CODE INTERPRETER:\n" +
-				"You can execute code for:\n" +
-				"- Data analysis and calculations\n" +
-				"- Creating charts and visualizations\n" +
-				"- Processing files (CSV, Excel, JSON, etc.)\n" +
-				"Use code execution when necessary\n\n"
-		}
-
-		// Video generation instructions only if enabled
-		if modelData.Video {
-			enhancedPrompt += "VIDEO GENERATION:\n" +
-				"When user asks to create/generate/draw video:\n" +
-				"1. Describe in your text response what you are creating\n" +
-				"2. System will AUTOMATICALLY generate and send video to user\n" +
-				"3. You can specify: duration (4-8 sec), aspect ratio (16:9, 9:16, 1:1)\n" +
-				"4. DO NOT add video files to send_files - they will be added automatically!\n" +
-				"5. Just reply to user that you are creating video with description\n\n"
-		}
-
-		// Web search instructions
-		if modelData.WebSearch {
-			enhancedPrompt += "WEB SEARCH (Google VSearch):\n" +
-				"You have access to current internet information via Google VSearch tool.\n" +
-				"MANDATORY use google_search when:\n" +
-				"   - User asks about current events, weather, news, currency rates\n" +
-				"   - Requests information not in your knowledge base (data after October 2023)\n" +
-				"   - Asks for current facts about companies, people, places\n" +
-				"   - Says \"what's on the internet\", \"find information\", \"google it\"\n" +
-				"1. ALWAYS use search for queries with dates, time, current statistics\n" +
-				"2. After getting search results - summarize them clearly\n" +
-				"3. Cite information sources when appropriate\n" +
-				"4. If you are NOT SURE about information - USE SEARCH instead of refusing!\n\n"
-		}
-
-		// Google Calendar instructions (optimized version)
-		if modelData.GOAuth.HasCalendar() {
-			enhancedPrompt += fmt.Sprintf("CALENDAR: user_id=\"%d\"\n"+
-				"Functions: calendar_create_event, calendar_list_events, calendar_delete_event\n"+
-				"RFC3339: \"2026-02-05T15:00:00+03:00\"\n"+
-				"ALWAYS call get_current_time BEFORE calculating dates!\n"+
-				"After operation - confirm action with details\n\n"+
-				"DELETING EVENTS:\n"+
-				"DO NOT create events when deleting! Algorithm:\n"+
-				"1. calendar_list_events -> get event_id\n"+
-				"2. calendar_delete_event(user_id, event_id) for each\n\n",
-				realUserId)
-		}
-
-		// Google Sheets instructions (optimized version)
-		if modelData.GOAuth.HasSheets() {
-			enhancedPrompt += fmt.Sprintf("SHEETS: user_id=\"%d\"\n"+
-				"spreadsheet_id from prompt (FULL ID ~40 chars, NOT name!)\n"+
-				"Functions: sheets_read_range (read), sheets_write_range (write), sheets_append_range (append)\n"+
-				"After function call - process result and show data to user\n\n", realUserId)
-		}
-
-		// Image generation instructions
-		if modelData.Image {
-			enhancedPrompt += "IMAGE GENERATION:\n" +
-				"When user asks to create/draw/generate image:\n" +
-				"1. Describe in detail in your response (in message field) what you are creating.\n" +
-				"2. System will AUTOMATICALLY generate image based on your description and add it to send_files.\n" +
-				"3. IMPORTANT: DO NOT add images to send_files yourself! Leave send_files empty [].\n" +
-				"4. DO NOT invent fake URLs (example.com etc.) - system will add real URL after generation.\n" +
-				"5. Just describe what you are creating in message field, and system will do the rest.\n\n"
-		}
-
-		// JSON response field rules
-		enhancedPrompt += "RULES for JSON response fields:\n\n"
-
-		// Target field instructions
-		if modelData.MetaAction != "" {
-			enhancedPrompt += "**target** (boolean) - Is dialog GOAL achieved:\n" +
-				"  Check goal condition from YOUR INSTRUCTIONS ABOVE\n" +
-				"  If condition EXACTLY met -> target: true\n" +
-				"  If condition NOT met -> target: false\n\n"
-		} else {
-			enhancedPrompt += "**target**: ALWAYS false (no goal)\n\n"
-		}
-
-		// Operator field instructions
-		if modelData.Operator {
-			enhancedPrompt += "**operator** (boolean) - Is operator required:\n" +
-				"  Check operator call condition from YOUR INSTRUCTIONS ABOVE\n" +
-				"  If user requests operator -> operator: true\n" +
-				"  In all other cases -> operator: false\n\n"
-		} else {
-			enhancedPrompt += "**operator**: ALWAYS false (operator call disabled)\n\n"
-		}
-
-		// Final instruction on response format
-		enhancedPrompt += "IMPORTANT: Your response MUST be valid JSON in the following format:\n" +
-			GoogleSchemaJSON + "\n\n" +
-			"Always return response strictly in this JSON format."
-	}
 
 	// Build payload for agent creation
 	// Google Gemini API uses system_instruction for prompt
@@ -388,10 +254,47 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 		},
 	}
 
-	// Добавляем generation_config с response_schema если нет tools
-	// ВАЖНО: response_schema на этапе создания агента применяется только если нет function_declarations
-	// При запросах (request.go) schema добавляется в зависимости от наличия tools в данном запросе
-	hasTools := modelData.S3 || modelData.Interpreter || modelData.WebSearch || modelData.GOAuth.HasCalendar() || modelData.GOAuth.HasSheets()
+	// Добавляем generation_config с response_schema если нет tools.
+	// Решение принимается ПОСЛЕ получения MCP-инструментов, чтобы учесть function_declarations.
+	// ВАЖНО: response_schema несовместима с function_declarations в Google Gemini API.
+
+	// ============================================================================
+	// ФОРМИРОВАНИЕ TOOLS
+	// ============================================================================
+	var googleTools []GoogleTool
+
+	// 1. Добавляем Веб-поиск (Google Search) — нативный инструмент, не через MCP
+	if modelData.WebSearch {
+		googleTools = append(googleTools, GoogleTool{
+			GoogleSearch: &struct{}{},
+		})
+	}
+
+	// 2. Function Calling инструменты — только от MCP.
+	// При недоступности MCP инструменты не добавляются (MCP_MIGRATION.md раздел 14).
+	var allFunctions []FunctionDeclaration
+	if m.toolsFetcher != nil {
+		if fetched, fetchErr := m.toolsFetcher(m.ctx, userId, ProviderGoogle); fetchErr == nil {
+			allFunctions = fetched
+		}
+	}
+
+	if len(allFunctions) > 0 {
+		googleTools = append(googleTools, GoogleTool{
+			FunctionDeclarations: allFunctions,
+		})
+	}
+
+	// 3. Code Interpreter — нативный инструмент, только если нет function_declarations
+	// ВАЖНО: Google Gemini НЕ поддерживает одновременное использование
+	// function_declarations и code_execution в одном запросе
+	hasAnyFunctionDeclarations := len(allFunctions) > 0
+	if modelData.Interpreter && !hasAnyFunctionDeclarations {
+		googleTools = append(googleTools, GoogleTool{})
+	}
+
+	// Теперь знаем итоговый набор инструментов → определяем совместимость с response_schema
+	hasTools := modelData.WebSearch || modelData.Interpreter || hasAnyFunctionDeclarations
 
 	if !hasTools {
 		// Только без tools можем добавить response_schema при создании
@@ -399,294 +302,6 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 			"response_mime_type": "application/json",
 			"response_schema":    ParseModelSchemaJSON(false), // false = БЕЗ additionalProperties для Google
 		}
-	}
-
-	// ============================================================================
-	// ФОРМИРОВАНИЕ TOOLS
-	// ============================================================================
-	// Инициализируем слайс инструментов
-	var googleTools []GoogleTool
-
-	// 1. Добавляем Веб-поиск (Google VSearch)
-	if modelData.WebSearch {
-		googleTools = append(googleTools, GoogleTool{
-			GoogleSearch: &struct{}{},
-		})
-	}
-
-	// 2. Добавляем Function Calling инструменты: сначала MCP, при ошибке - локальный fallback.
-	var allFunctions []FunctionDeclaration
-	toolsFromMCP := false
-	if m.toolsFetcher != nil {
-		if fetched, fetchErr := m.toolsFetcher(m.ctx, userId, ProviderGoogle); fetchErr == nil {
-			allFunctions = fetched
-			toolsFromMCP = true
-		}
-	}
-
-	if !toolsFromMCP && modelData.S3 {
-		allFunctions = append(allFunctions,
-			FunctionDeclaration{
-				Name:        "get_s3_files",
-				Description: fmt.Sprintf("Gets user's files list from S3. IMPORTANT: user_id must be STRING \"%d\"", realUserId),
-				Parameters: FunctionParameters{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"user_id": {
-							Type:        "string",
-							Description: fmt.Sprintf("User ID (STRING): \"%d\"", realUserId),
-						},
-					},
-					Required: []string{"user_id"},
-				},
-			},
-			FunctionDeclaration{
-				Name:        "create_file",
-				Description: "Creates new file in user's S3 storage",
-				Parameters: FunctionParameters{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"user_id": {
-							Type:        "string",
-							Description: fmt.Sprintf("User ID (STRING): \"%d\"", realUserId),
-						},
-						"content": {
-							Type:        "string",
-							Description: "File content",
-						},
-						"file_name": {
-							Type:        "string",
-							Description: "File name with extension",
-						},
-					},
-					Required: []string{"user_id", "content", "file_name"},
-				},
-			},
-		)
-	}
-
-	// 3. Добавляем Google Calendar (Function Calling)
-	if !toolsFromMCP && modelData.GOAuth.HasCalendar() {
-		allFunctions = append(allFunctions,
-			FunctionDeclaration{
-				Name:        "calendar_create_event",
-				Description: "Creates new event in user's Google Calendar",
-				Parameters: FunctionParameters{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"user_id": {
-							Type:        "string",
-							Description: fmt.Sprintf("User ID (STRING): \"%d\"", realUserId),
-						},
-						"title": {
-							Type:        "string",
-							Description: "Event title",
-						},
-						"description": {
-							Type:        "string",
-							Description: "Event description (optional)",
-						},
-						"start_time": {
-							Type:        "string",
-							Description: "Start time in RFC3339 format (e.g.: '2026-02-04T10:00:00Z')",
-						},
-						"end_time": {
-							Type:        "string",
-							Description: "End time in RFC3339 format",
-						},
-						"location": {
-							Type:        "string",
-							Description: "Event location (optional)",
-						},
-						"attendees": {
-							Type:        "array",
-							Description: "Email addresses of attendees (optional)",
-							Items: &PropertySchema{
-								Type: "string",
-							},
-						},
-					},
-					Required: []string{"user_id", "title", "start_time", "end_time"},
-				},
-			},
-			FunctionDeclaration{
-				Name:        "calendar_list_events",
-				Description: "Gets events list from user's Google Calendar",
-				Parameters: FunctionParameters{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"user_id": {
-							Type:        "string",
-							Description: fmt.Sprintf("User ID (STRING): \"%d\"", realUserId),
-						},
-						"time_min": {
-							Type:        "string",
-							Description: "Period start in RFC3339 (optional, default - current time)",
-						},
-						"time_max": {
-							Type:        "string",
-							Description: "Period end in RFC3339 (optional)",
-						},
-						"max_results": {
-							Type:        "integer",
-							Description: "Maximum number of events (default 10)",
-						},
-					},
-					Required: []string{"user_id"},
-				},
-			},
-			FunctionDeclaration{
-				Name:        "calendar_delete_event",
-				Description: "Deletes event from Google Calendar",
-				Parameters: FunctionParameters{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"user_id": {
-							Type:        "string",
-							Description: fmt.Sprintf("User ID (STRING): \"%d\"", realUserId),
-						},
-						"event_id": {
-							Type:        "string",
-							Description: "Event ID to delete",
-						},
-					},
-					Required: []string{"user_id", "event_id"},
-				},
-			},
-		)
-	}
-
-	// 4. Добавляем Google Sheets (Function Calling)
-	if !toolsFromMCP && modelData.GOAuth.HasSheets() {
-		allFunctions = append(allFunctions,
-			FunctionDeclaration{
-				Name:        "sheets_read_range",
-				Description: "Reads data from specified range in Google Sheets",
-				Parameters: FunctionParameters{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"user_id": {
-							Type:        "string",
-							Description: fmt.Sprintf("User ID (STRING): \"%d\"", realUserId),
-						},
-						"spreadsheet_id": {
-							Type:        "string",
-							Description: "Google Sheets spreadsheet ID (from URL)",
-						},
-						"range": {
-							Type:        "string",
-							Description: "Range to read (e.g.: 'Sheet1!A1:D10')",
-						},
-					},
-					Required: []string{"user_id", "spreadsheet_id", "range"},
-				},
-			},
-			FunctionDeclaration{
-				Name:        "sheets_write_range",
-				Description: "Writes data to specified range in Google Sheets",
-				Parameters: FunctionParameters{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"user_id": {
-							Type:        "string",
-							Description: fmt.Sprintf("User ID (STRING): \"%d\"", realUserId),
-						},
-						"spreadsheet_id": {
-							Type:        "string",
-							Description: "Google Sheets spreadsheet ID",
-						},
-						"range": {
-							Type:        "string",
-							Description: "Starting cell for writing (e.g.: 'Sheet1!A1')",
-						},
-						"values": {
-							Type:        "array",
-							Description: "2D array of values to write",
-							Items: &PropertySchema{
-								Type: "array",
-								Items: &PropertySchema{
-									Type: "string",
-								},
-							},
-						},
-					},
-					Required: []string{"user_id", "spreadsheet_id", "range", "values"},
-				},
-			},
-			FunctionDeclaration{
-				Name:        "sheets_append_range",
-				Description: "Appends data to the end of Google Sheets table",
-				Parameters: FunctionParameters{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"user_id": {
-							Type:        "string",
-							Description: fmt.Sprintf("User ID (STRING): \"%d\"", realUserId),
-						},
-						"spreadsheet_id": {
-							Type:        "string",
-							Description: "Google Sheets spreadsheet ID",
-						},
-						"range": {
-							Type:        "string",
-							Description: "Column range for appending (e.g.: 'Sheet1!A:D')",
-						},
-						"values": {
-							Type:        "array",
-							Description: "2D array of values to append",
-							Items: &PropertySchema{
-								Type: "array",
-								Items: &PropertySchema{
-									Type: "string",
-								},
-							},
-						},
-					},
-					Required: []string{"user_id", "spreadsheet_id", "range", "values"},
-				},
-			},
-			FunctionDeclaration{
-				Name:        "sheets_create_spreadsheet",
-				Description: "Creates new Google Sheets spreadsheet",
-				Parameters: FunctionParameters{
-					Type: "object",
-					Properties: map[string]PropertySchema{
-						"user_id": {
-							Type:        "string",
-							Description: fmt.Sprintf("User ID (STRING): \"%d\"", realUserId),
-						},
-						"title": {
-							Type:        "string",
-							Description: "New spreadsheet title",
-						},
-						"sheet_names": {
-							Type:        "array",
-							Description: "Sheet names (optional)",
-							Items: &PropertySchema{
-								Type: "string",
-							},
-						},
-					},
-					Required: []string{"user_id", "title"},
-				},
-			},
-		)
-	}
-
-	// Добавляем все function_declarations в один tool если есть функции
-	if len(allFunctions) > 0 {
-		googleTools = append(googleTools, GoogleTool{
-			FunctionDeclarations: allFunctions,
-		})
-	}
-
-	// 5. Добавляем Code Interpreter (только если нет function_declarations)
-	// ВАЖНО: Google Gemini НЕ поддерживает одновременное использование
-	// function_declarations и code_execution в одном запросе
-	hasAnyFunctionDeclarations := len(allFunctions) > 0
-	if modelData.Interpreter && !hasAnyFunctionDeclarations {
-		// Code execution требует специального формата (не используем GoogleTool структуру)
-		googleTools = append(googleTools, GoogleTool{})
 	}
 
 	// Конвертируем googleTools в формат для JSON API

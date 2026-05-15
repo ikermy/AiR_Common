@@ -266,55 +266,44 @@ func New(ctx context.Context, db DB, conf *conf.Conf) *UniversalModel {
 	return m
 }
 
+// SetMistralMCPFetchers устанавливает MCP-fetchers на mistralClient.
+// Вызывается из mistral/model.go после инициализации UniversalModel.
+func (m *UniversalModel) SetMistralMCPFetchers(promptFetcher GooglePromptHintFetcher, toolsFetcher GoogleFunctionDeclarationsFetcher) {
+	if m.mistralClient != nil {
+		m.mistralClient.SetMCPConfigFetchers(promptFetcher, toolsFetcher)
+	}
+}
+
 type GptType struct {
 	Name string `json:"name"`
 	ID   uint8  `json:"id"`
 }
 
-type GOAuth struct {
-	Calendar bool `json:"calendar"`
-	Sheets   bool `json:"sheets"`
-}
-
-// Enabled возвращает true если хотя бы одна функция включена
-func (g GOAuth) Enabled() bool {
-	return g.Calendar || g.Sheets
-}
-
-// HasCalendar проверяет доступ к Calendar
-func (g GOAuth) HasCalendar() bool {
-	return g.Calendar
-}
-
-// HasSheets проверяет доступ к Sheets
-func (g GOAuth) HasSheets() bool {
-	return g.Sheets
-}
-
 // UniversalModelData универсальная структура хранения данных моделей
+// Примечание: Calendar/Sheets (ранее GOAuth) теперь управляются исключительно MCP сервером —
+// клиент не хранит эти флаги, инструменты и инструкции приходят через FetchToolsList/FetchSystemPrompt.
 type UniversalModelData struct {
 	Name        string       `json:"name"`                   // Имя модели только для удобства идентификации
 	Prompt      string       `json:"prompt"`                 // Промпт модели
-	MetaAction  string       `json:"mact"`                   // Заданая цель модели (уведомление о достижении целы) вызывается меткой в структуре ответа "target"
+	MetaAction  string       `json:"mact"`                   // Заданная цель модели (уведомление о достижении целы) вызывается меткой в структуре ответа "target"
 	Triggers    []string     `json:"trig"`                   // Триггеры модели
-	FileIds     []Ids        `json:"fileIds"`                // ID файлов для загрзки в векторное хранилище?
+	FileIds     []Ids        `json:"fileIds"`                // ID файлов для загрузки в векторное хранилище?
 	VecIds      VecIds       `json:"vecIds"`                 // ID файлов в векторном хранилище
 	Operator    bool         `json:"operator"`               // Вызов ответом от модели "operator" флаг переключения на оператора
 	Search      bool         `json:"search"`                 // Поиск по векторному хранилищу, если загружены файлы для дообучения модели
-	Interpreter bool         `json:"interpreter"`            // Генерация кода (Code Interpreter) для OpenAI
+	Interpreter bool         `json:"interpreter"`            // Генерация кода (Code Interpreter) для OpenAI — нативный инструмент провайдера
 	S3          bool         `json:"s3"`                     // Работа моделей с файлами в S3-хранилище
 	Haunter     bool         `json:"haunter"`                // Модель будет использоваться для поиска лидов
-	Image       bool         `json:"image"`                  // Генерация изображений (Mistral, Google)
-	WebSearch   bool         `json:"web_search"`             // Веб-поиск
+	Image       bool         `json:"image"`                  // Генерация изображений (Mistral, Google) — нативный инструмент провайдера
+	WebSearch   bool         `json:"web_search"`             // Веб-поиск — нативный инструмент провайдера (google_search / web_search)
 	Realtime    bool         `json:"realtime"`               // Голосовой режим реального времени (только OpenAI Realtime API)
 	RealtimeVAD *RealtimeVAD `json:"realtime_vad,omitempty"` // Параметры VAD и генерации для Realtime режима
 	// Google-специфичные возможности
-	Video bool `json:"video"` // Генерация видео (Google Veo/Imagen 3)
+	Video bool `json:"video"` // Генерация видео (Google Veo/Imagen 3) — нативный инструмент провайдера
 	//////////////////////////////////
 	Espero   EsperoConfig `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
 	GptType  *GptType     `json:"gpttype"`
 	Provider ProviderType `json:"provider"` // "openai=1", "mistral=2..."
-	GOAuth   GOAuth       `json:"g_oauth"`  // Google OAuth Integration - статус подключения Google аккаунта работает для всех провайдеров
 }
 
 // RealtimeVAD параметры голосовой активности (VAD) и генерации для OpenAI Realtime API.
@@ -382,141 +371,6 @@ type EsperoConfig struct {
 type UserModelsResponse struct {
 	Models         map[string]*UniversalModelData `json:"models"`          // Модели по провайдерам ("openai", "mistral")
 	ActiveProvider string                         `json:"active_provider"` // Активный провайдер
-}
-
-// ============================================================================
-// UNIVERSAL PROMPT BUILDER - устранение дублирования кода между провайдерами
-// ============================================================================
-
-// BuildEnhancedPrompt создаёт ОБЩУЮ часть промпта для всех провайдеров
-// Возвращает базовый промпт с инструкциями по:
-// - Текущему времени
-// - Важным напоминаниям (target/operator)
-// - S3 файлам
-// - Code Interpreter
-// - Генерации изображений/видео
-// - Google Calendar
-// - Google Sheets
-// - Web VSearch
-// - Поиску в документах
-// - Правилам отправки файлов
-//
-// НЕ включает провайдер-специфичные инструкции по формату JSON ответа
-func BuildEnhancedPrompt(modelData *UniversalModelData, realUserID uint64) string {
-	enhancedPrompt := modelData.Prompt + "\n\n"
-
-	// Напоминание о необходимости получить актуальное время
-	enhancedPrompt += "ВРЕМЯ: Используй get_current_time() для получения актуальной даты и времени. Твои данные устарели.\n\n"
-
-	// Важное напоминание для активных функций
-	if modelData.MetaAction != "" || modelData.Operator {
-		enhancedPrompt += "ВАЖНО в КАЖДОМ ответе:\n"
-		if modelData.MetaAction != "" {
-			enhancedPrompt += "- Проверь условие ЦЕЛИ и установи target\n"
-		}
-		if modelData.Operator {
-			enhancedPrompt += "- Проверь нужен ли оператор и установи operator\n"
-		}
-		enhancedPrompt += "\n"
-	}
-
-	// S3 файлы
-	if modelData.S3 {
-		enhancedPrompt += "S3_FILES:\n" +
-			"Для создания файла:\n" +
-			"1. Вызови create_file(content=\"текст\",file_name=\"story.pdf\")\n" +
-			"2. Функция вернет готовый объект файла: {Url:\"https://...\", file_name:\"story.pdf\", type:\"doc\", caption:\"\"}\n" +
-			"3. Помести этот объект в твой JSON ответ: action.send_files = [объект_из_ответа]\n" +
-			"ЗАПРЕЩЕНО: выдумывать URL или создавать объект вручную!\n" +
-			"Типы: txt/pdf→doc, jpg/png→photo, mp4→video, mp3→audio\n\n"
-	}
-
-	// Code Interpreter
-	if modelData.Interpreter {
-		enhancedPrompt += "CODE_INTERPRETER: Выполняй Python для анализа, графиков, файлов.\n\n"
-	}
-
-	// Генерация изображений
-	if modelData.Image {
-		enhancedPrompt += "IMAGE_GEN: Опиши что рисуешь, система сгенерирует. НЕ добавляй в send_files.\n\n"
-	}
-
-	// Генерация видео
-	if modelData.Video {
-		enhancedPrompt += "VIDEO_GEN (Google Veo): Опиши что создаёшь, система сгенерирует. НЕ добавляй в send_files.\n\n"
-	}
-
-	// Google Calendar
-	if modelData.GOAuth.HasCalendar() {
-		enhancedPrompt += "CALENDAR:\n" +
-			"Функции: calendar_create_event, calendar_list_events, calendar_delete_event, calendar_get_event\n" +
-			"Формат: RFC3339+таймзона (\"2026-02-15T14:00:00-03:00\")\n" +
-			"Всегда вызывай get_current_time() перед операциями с датами!\n" +
-			"УДАЛЕНИЕ: Если знаешь event_id→calendar_delete_event, иначе list→delete. ЗАПРЕТ create при удалении.\n" +
-			"БЕЗ таймзоны=ошибка 400!\n\n"
-	}
-
-	// Google Sheets
-	if modelData.GOAuth.HasSheets() {
-		enhancedPrompt += "SHEETS:\n" +
-			"ВСЕГДА вызывай функции! НЕ говори \"нет доступа\".\n" +
-			"Функции: sheets_read_range, sheets_write_range, sheets_append_range\n" +
-			"Формат range: 'Лист!A:F' или 'Sheet1!A1:D10'\n" +
-			"Подсчёт строк: sheets_read_range→len(values)-1\n" +
-			"При датах: СНАЧАЛА get_current_time()\n\n"
-	}
-
-	// Web VSearch
-	if modelData.WebSearch {
-		enhancedPrompt += "WEB_SEARCH: Используй для новостей, актуальных данных (курсы, погода), проверки фактов.\n\n"
-	}
-
-	// File VSearch
-	if modelData.Search {
-		enhancedPrompt += "FILE_SEARCH: Ищи в загруженных документах. Ссылайся на источники.\n\n"
-	}
-
-	// Правила send_files
-	if modelData.S3 || modelData.Interpreter || modelData.Image {
-		enhancedPrompt += "SEND_FILES: [] если нет файлов. При упоминании файлов→добавь в send_files (type,Url,file_name,caption).\n\n"
-	}
-
-	return enhancedPrompt
-}
-
-// BuildOpenAIPromptSuffix добавляет OpenAI-специфичные инструкции по формату ответа
-// schemaJSON - сгенерированная JSON Schema (из GenerateModelSchema)
-func BuildOpenAIPromptSuffix(modelData *UniversalModelData, schemaJSON []byte) string {
-	suffix := "ФОРМАТ JSON:\n"
-
-	// Добавляем JSON Schema
-	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, schemaJSON, "", "  "); err == nil {
-		suffix += prettyJSON.String() + "\n\n"
-	} else {
-		suffix += string(schemaJSON) + "\n\n"
-	}
-
-	// Правила
-	suffix += "ПРАВИЛА:\n" +
-		"message - текст ответа\n" +
-		"action.send_files - массив ([] если нет)\n"
-
-	// Target
-	if modelData.MetaAction != "" {
-		suffix += "target - проверь ЦЕЛЬ из инструкций, установи true/false\n"
-	} else {
-		suffix += "target - ВСЕГДА false\n"
-	}
-
-	// Operator
-	if modelData.Operator {
-		suffix += "operator - проверь условие вызова, установи true/false\n"
-	}
-
-	suffix += "\nВозвращай только валидный JSON."
-
-	return suffix
 }
 
 // CreateModel создаёт новую модель (универсальный метод)
@@ -1138,16 +992,8 @@ func (m *UniversalModel) DecompressModelData(compressedData []byte, vecIds *VecI
 	if prov, ok := rawData["provider"].(float64); ok {
 		modelData.Provider = ProviderType(prov)
 	}
-	if goauthMap, ok := rawData["g_oauth"].(map[string]interface{}); ok {
-		goauth := GOAuth{}
-		if calendar, ok := goauthMap["calendar"].(bool); ok {
-			goauth.Calendar = calendar
-		}
-		if sheets, ok := goauthMap["sheets"].(bool); ok {
-			goauth.Sheets = sheets
-		}
-		modelData.GOAuth = goauth
-	}
+	// g_oauth (GOAuth) удалён: Calendar/Sheets теперь управляются исключительно MCP сервером.
+	// Поле намеренно игнорируется при десериализации для обратной совместимости с уже сохранёнными данными.
 	if esperoMap, ok := rawData["espero"].(map[string]interface{}); ok {
 		espero := EsperoConfig{}
 		if limit, ok := esperoMap["limit"].(float64); ok {

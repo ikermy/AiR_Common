@@ -507,12 +507,6 @@ func buildRealtimeTools(tools []interface{}) []interface{} {
 		}
 
 		description, _ := toolMap["description"].(string)
-		if name == "get_s3_files" {
-			description = "Get the full list of user's files with their exact URLs. " +
-				"Returns JSON with file names and full URLs. " +
-				"After getting the list — call send_file_to_user using the EXACT URL from this response. " +
-				"NEVER invent or modify URLs."
-		}
 
 		parameters := toolMap["parameters"]
 		if paramsMap, ok := parameters.(map[string]interface{}); ok {

@@ -1343,20 +1343,6 @@ func (m *GoogleModel) RequestStreaming(userId uint32, dialogID uint64, text stri
 		return toolOutputs, nil
 	}
 
-	// Получаем real_user_id для использования в динамических промптах
-	var realUserID uint64
-	if m.universalModel != nil {
-		var err error
-		realUserID, err = m.universalModel.GetRealUserID(userId)
-		if err != nil {
-			//logger.Warn("Не удалось получить real_user_id в RequestStreaming: %v, используем userId", userId, err)
-			realUserID = uint64(userId)
-		}
-	} else {
-		//	logger.Warn("UniversalModel не установлен в RequestStreaming, используем userId как fallback", userId)
-		realUserID = uint64(userId)
-	}
-
 	// ============================================================================
 	// ОПТИМИЗАЦИЯ: Запускаем applyRAG как можно раньше для параллельного выполнения
 	// всех тяжёлых операций (загрузка истории, получение респондента, эмбеддинги)
@@ -1387,9 +1373,6 @@ func (m *GoogleModel) RequestStreaming(userId uint32, dialogID uint64, text stri
 	// Используем данные из applyRAG
 	history := ragResult.history
 	resp := ragResult.resp
-	if ragResult.realUserID != 0 {
-		realUserID = ragResult.realUserID
-	}
 
 	// Обновляем TTL респондента
 	resp.TTL = time.Now().Add(m.UserModelTTl)
@@ -1403,28 +1386,6 @@ func (m *GoogleModel) RequestStreaming(userId uint32, dialogID uint64, text stri
 		//logger.Info("[USER:%d] RAG: добавлено контекста (%d символов)", userId, len(ragResult.contextText))
 	}
 
-	// КРИТИЧЕСКИ ВАЖНО: Если включены Google Sheets и пользователь спрашивает о таблице
-	// добавляем прямое напоминание использовать функции
-	// TODO убрать это и протестировать без этого костыля
-	if resp.AgentConfig.HasSheets && text != "" {
-		lowerText := strings.ToLower(text)
-		if strings.Contains(lowerText, "таблиц") || strings.Contains(lowerText, "ячейк") ||
-			strings.Contains(lowerText, "строк") || strings.Contains(lowerText, "данн") ||
-			strings.Contains(lowerText, "sheet") || strings.Contains(lowerText, "лид") {
-
-			//logger.Debug("Sheets запрос обнаружен, добавляем краткое напоминание с JSON инструкцией", userId)
-
-			// Краткое напоминание с явной инструкцией вернуть JSON
-			enhancedText = fmt.Sprintf(`SHEETS: Use full spreadsheet_id from prompt (~40 chars)
-ACTIONS:
-1. Find spreadsheet_id in system prompt (search "spreadsheet_id:")
-2. Call: sheets_read_range(user_id="%d", spreadsheet_id="...", range="...")
-3. MUST return result in JSON:
-   {"message":"Table data:\n...", "action":{"send_files":[]}, "target":false, "operator":false}
-
-Question: %s`, realUserID, text)
-		}
-	}
 
 	// Ждём результат RAG из горутины (он может прийти раньше, позже или вообще не прийти если что-то пошло по дуге)
 	ragContent := ""
@@ -1458,44 +1419,6 @@ Question: %s`, realUserID, text)
 
 	if resp.AgentConfig.SystemInstruction != nil {
 		payload["system_instruction"] = resp.AgentConfig.SystemInstruction
-
-		// КРИТИЧЕСКИ ВАЖНО: Если есть Google Sheets - модифицируем SystemInstruction
-		// добавляя напоминание ИСПОЛЬЗОВАТЬ функции, а не отказываться
-		if resp.AgentConfig.HasSheets {
-			if sysInstr, ok := payload["system_instruction"].(map[string]interface{}); ok {
-				if parts, ok := sysInstr["parts"].([]interface{}); ok && len(parts) > 0 {
-					if firstPart, ok := parts[0].(map[string]interface{}); ok {
-						if text, ok := firstPart["text"].(string); ok {
-							enhancedSysText := text + "\n\n" +
-								"GOOGLE SHEETS ACCESS ENABLED\n\n" +
-								"TABLE ID can be specified in:\n" +
-								"- THIS PROMPT ABOVE (e.g., 'YOUR TABLE: ID 18kxy...')\n" +
-								"- USER REQUEST (e.g., 'show table 18kxy...')\n\n" +
-								"YOU MUST search ID in BOTH places!\n" +
-								"DO NOT ask user to provide ID again!\n" +
-								"DO NOT say 'I need ID' - check prompt AND request!\n\n" +
-								"FORBIDDEN phrases:\n" +
-								"- 'To read data, I need ID'\n" +
-								"- 'Please specify table ID'\n" +
-								"- 'I cannot get content without ID'\n\n" +
-								"REQUIRED ACTIONS:\n" +
-								"1. CHECK this prompt above - is there ID?\n" +
-								"2. CHECK user request - is there ID?\n" +
-								"3. FIND ID in either place (formats: ID:, spreadsheet_id, long string, etc.)\n" +
-								"4. FIND sheet (formats: Sheet:, sheet:, on sheet, in request)\n" +
-								"5. IMMEDIATELY call: sheets_read_range(user_id=\"" + fmt.Sprintf("%d", realUserID) + "\", spreadsheet_id=\"<from_prompt_or_request>\", range=\"<sheet>!A:Z\")\n\n" +
-								"Examples:\n" +
-								"- Prompt: 'YOUR CRM TABLE: ID: 18kxy...' -> use this ID!\n" +
-								"- Request: 'show table 18kxy_zkXIrTIvPk...' -> ID in request!\n" +
-								"- Prompt: 'Sheet: Leads' -> range='Leads!A:Z'"
-
-							firstPart["text"] = enhancedSysText
-							//logger.Debug("Модифицирован SystemInstruction: добавлено напоминание о Google Sheets", userId)
-						}
-					}
-				}
-			}
-		}
 	}
 
 	if resp.AgentConfig.GenerationConfig != nil {
@@ -1513,68 +1436,9 @@ Question: %s`, realUserID, text)
 		}
 
 		// Добавляем JSON reminder в начало истории
+		// Инструкции по инструментам (calendar, sheets и пр.) приходят от MCP через FetchSystemPrompt —
+		// здесь только базовое напоминание о формате JSON-ответа.
 		jsonReminderText := "IMPORTANT: All responses MUST be strictly in JSON format according to schema:\n" + create.GoogleSchemaJSON + "\n\nNever respond with plain text!"
-
-		hasGoogleSearch := resp.AgentConfig.WebSearch
-		if hasGoogleSearch {
-			jsonReminderText += "\n\nGOOGLE SEARCH ACCESS ENABLED!\n" +
-				"- When user asks about current events, weather, news - use google_search!\n" +
-				"- DO NOT refuse saying 'no internet access' - you HAVE google_search!\n" +
-				"- Just call google_search function with query to get internet results."
-		}
-
-		hasCalendar := false
-		for _, tool := range resp.AgentConfig.Tools {
-			if funcs, ok := tool["function_declarations"].([]interface{}); ok {
-				for _, fn := range funcs {
-					if fnMap, ok := fn.(map[string]interface{}); ok {
-						if name, ok := fnMap["name"].(string); ok && name == "calendar_create_event" {
-							hasCalendar = true
-							break
-						}
-					}
-				}
-			}
-			if hasCalendar {
-				break
-			}
-		}
-		if hasCalendar {
-			jsonReminderText += "\n\nGOOGLE CALENDAR ACCESS ENABLED!\n" +
-				"- DO NOT refuse saying 'no Calendar access' - you HAVE it!\n" +
-				"- Use functions: calendar_create_event, calendar_list_events, calendar_delete_event\n" +
-				"- CALL functions when user asks about events/meetings!"
-		}
-
-		hasSheets := false
-		for _, tool := range resp.AgentConfig.Tools {
-			if funcs, ok := tool["function_declarations"].([]interface{}); ok {
-				for _, fn := range funcs {
-					if fnMap, ok := fn.(map[string]interface{}); ok {
-						if name, ok := fnMap["name"].(string); ok && name == "sheets_read_range" {
-							hasSheets = true
-							break
-						}
-					}
-				}
-			}
-			if hasSheets {
-				break
-			}
-		}
-		if hasSheets {
-			jsonReminderText += "\n\n" +
-				"GOOGLE SHEETS ACCESS ENABLED\n\n" +
-				"FORBIDDEN phrases:\n" +
-				"- 'I cannot view'\n" +
-				"- 'I have no access to the table'\n\n" +
-				"REQUIRED:\n" +
-				"- Use sheets_read_range, sheets_write_range, sheets_append_range\n" +
-				"- Call functions IMMEDIATELY when user asks about table\n" +
-				"- spreadsheet_id from prompt is YOUR table, use it\n\n" +
-				"Example: 'what's in CRM table' -> IMMEDIATELY call:\n" +
-				"sheets_read_range(user_id='...', spreadsheet_id='18kxy...', range='Leads!A:F')"
-		}
 
 		jsonReminderMessage := GoogleContent{
 			Role: "user",
@@ -1588,25 +1452,7 @@ Question: %s`, realUserID, text)
 			Role: "model",
 			Parts: []map[string]interface{}{
 				{
-					"text": fmt.Sprintf(`{"message":"Understood, all my responses will be strictly in JSON format%s%s%s","action":{"send_files":[]},"target":false,"operator":false}`,
-						func() string {
-							if hasGoogleSearch {
-								return " and I will actively use google_search for current information"
-							}
-							return ""
-						}(),
-						func() string {
-							if hasCalendar {
-								return ", I have access to Google Calendar and will use functions for events"
-							}
-							return ""
-						}(),
-						func() string {
-							if hasSheets {
-								return ", I have access to Google Sheets and will use functions for tables"
-							}
-							return ""
-						}()),
+					"text": `{"message":"Understood, all my responses will be strictly in JSON format","action":{"send_files":[]},"target":false,"operator":false}`,
 				},
 			},
 		}

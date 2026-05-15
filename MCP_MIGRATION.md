@@ -13,10 +13,15 @@
 | `POST /mcp` зарегистрирован | ✅ **Готово** | `routes.go` → `w.mcpHandler.ServeHTTP` |
 | Блок `/action` удалён | ✅ **Готово** | Из `routes.go` полностью убран |
 | `GET /s3/:id/:filename` перенесён | ✅ **Готово** | Публичный маршрут вне `/action` |
-| `user_id` убран из аргументов инструментов | ✅ **Готово** | Схемы `GetTools` и промпты `BuildEnhancedPrompt` очищены |
+| `user_id` убран из аргументов инструментов | ✅ **Готово** | Схемы инструментов и промпты очищены |
 | `RunAction` принимает `userId uint32` явно | ✅ **Готово** | Сигнатура и все провайдеры обновлены |
-| `AiR_Common` переключён на `/mcp` | ✅ **Готово** | `action_handler.go` — `callMCP` + `RunAction.default` |
+| `AiR_Common` переключён на `/mcp` | ✅ **Готово** | `action_handler.go` — `callMCP` + `RunAction` → всё через MCP |
 | Промпт-билдеры обновлены | ✅ **Готово** | `user_id` убран из инструкций по вызову инструментов |
+| Хардкод tools удалён — Google | ✅ **Готово** | `google/model.go` — только MCP `tools/list` |
+| Хардкод tools удалён — OpenAI | ✅ **Готово** | `openai/model.go` — только MCP `tools/list` |
+| Хардкод tools удалён — Mistral | ✅ **Готово** | `create/mistral.go` — только MCP `tools/list` |
+| `GetTools` удалён из `action_handler.go` | ✅ **Готово** | Мёртвый хардкод удалён полностью |
+| `lead_target` перенесён в MCP | ⏳ **Требует реализации в AiR_Landing** | `RunAction` уже маршрутизирует через MCP; нужен handler в `tools.go` |
 
 ---
 
@@ -819,3 +824,86 @@ func (m *OpenAIModel) buildAgentConfiguration(userId uint32, config *OpenAIAgent
 2. В `internal/app/mcp/handler.go`: добавить диспетчер для `prompts/list` и `prompts/get` (раздел 15.4)
 3. Убедиться что `tools/list` возвращает инструменты **без** поля `user_id` в `inputSchema`
 4. Протестировать curl (разделы 11 + 15.5)
+
+---
+
+## 17. Перенос `lead_target` в MCP-сервер
+
+### 17.1 Предыстория
+
+До миграции `lead_target` обрабатывался в `RunAction` как отдельный `case` с прямым HTTP-вызовом
+на `http://localhost:8091/service/lead/target?rid={resp_id}`.
+
+**Изменения в AiR_Common (уже выполнены):**
+- `case "lead_target"` удалён из `RunAction` — инструмент теперь маршрутизируется через MCP как любой другой
+- Хардкодированное определение tool `lead_target` удалено из `create/mistral.go`
+- `GetTools` удалён из `action_handler.go` полностью
+
+### 17.2 Что нужно реализовать в AiR_Landing
+
+#### `internal/app/mcp/tools.go` — регистрация инструмента
+
+```go
+// lead_target добавляется в tools/list только если у пользователя включён MetaAction.
+// MetaAction — поле модели в БД; проверяется при формировании списка инструментов.
+if model.MetaAction != "" {
+    tools = append(tools, Tool{
+        Name:        "lead_target",
+        Description: "Triggers when the dialog goal is achieved. Call this to confirm goal completion.",
+        InputSchema: Schema{
+            Type: "object",
+            Properties: map[string]Property{
+                "resp_id": {
+                    Type:        "integer",
+                    Description: "Respondent ID (conversation session ID)",
+                },
+            },
+            Required: []string{"resp_id"},
+        },
+    })
+}
+```
+
+#### `internal/app/mcp/handler.go` — обработка вызова
+
+```go
+case "lead_target":
+    var params struct {
+        RespId int64 `json:"resp_id"`
+    }
+    if err := json.Unmarshal(args, &params); err != nil {
+        return toolError("invalid lead_target parameters")
+    }
+    // Вызов внутреннего Meta-сервиса
+    url := fmt.Sprintf("http://localhost:8091/service/lead/target?rid=%d", params.RespId)
+    req, _ := http.NewRequestWithContext(ctx, "POST", url, nil)
+    resp, err := http.DefaultClient.Do(req)
+    if err != nil {
+        return toolError("lead_target service unavailable: " + err.Error())
+    }
+    defer resp.Body.Close()
+    return toolText(`{"target": true}`)
+```
+
+### 17.3 Поведение при недоступности MCP
+
+Если MCP-сервер не реализовал `lead_target` — инструмент просто не появится в `tools/list`,
+и модель не будет его вызывать. MetaAction не сработает.
+Это **правильное поведение** — нет silent failure, функциональность явно отсутствует.
+
+### 17.4 Проверка (curl)
+
+```bash
+# tools/list — убедиться что lead_target появляется для пользователя с MetaAction
+curl -sk -X POST https://localhost:8081/mcp \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: {userId}:{providerType}" \
+  -d '{"jsonrpc":"2.0","id":"1","method":"tools/list","params":{}}' | jq '.result.tools[].name'
+
+# tools/call — прямой вызов
+curl -sk -X POST https://localhost:8081/mcp \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: {userId}:{providerType}" \
+  -d '{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"lead_target","arguments":{"resp_id":123}}}' | jq '.'
+```
+

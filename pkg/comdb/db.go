@@ -197,12 +197,13 @@ func (d *DB) MainCTX() context.Context {
 }
 
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction
-// Также извлекает параметры Google модели: Image, WebSearch, Video, Haunter и Search
-func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, triggers []string, espero *Espero, image, webSearch, video, haunter, search, operator, s3, interpreter, calendar, sheets bool, err error) {
+// Также извлекает параметры Google модели: Image, WebSearch, Video, Haunter и Search.
+// Примечание: calendar и sheets (GOAuth) удалены — теперь управляются исключительно MCP сервером.
+func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, triggers []string, espero *Espero, image, webSearch, video, haunter, search, operator, s3, interpreter bool, err error) {
 	// Создаем reader для распаковки данных
 	gzipReader, err := gzip.NewReader(bytes.NewReader(compressedData))
 	if err != nil {
-		return "", nil, nil, false, false, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при создании gzip reader: %w", err)
+		return "", nil, nil, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при создании gzip reader: %w", err)
 	}
 	defer func(gzipReader *gzip.Reader) {
 		_ = gzipReader.Close()
@@ -211,13 +212,13 @@ func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, tri
 	// Читаем распакованные данные
 	decompressedData, err := io.ReadAll(gzipReader)
 	if err != nil {
-		return "", nil, nil, false, false, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при распаковке данных: %w", err)
+		return "", nil, nil, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при распаковке данных: %w", err)
 	}
 
 	// Разбираем JSON
 	var modelData map[string]interface{}
 	if err := json.Unmarshal(decompressedData, &modelData); err != nil {
-		return "", nil, nil, false, false, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
+		return "", nil, nil, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
 	}
 
 	// Извлекаем поля MetaAction
@@ -285,18 +286,10 @@ func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, tri
 		interpreter = val
 	}
 
-	// Для Calendar и Sheets проверяем OAuth конфигурацию
-	// Эти флаги хранятся внутри объекта g_oauth
-	if gOAuth, ok := modelData["g_oauth"].(map[string]interface{}); ok {
-		if val, ok := gOAuth["calendar"].(bool); ok {
-			calendar = val
-		}
-		if val, ok := gOAuth["sheets"].(bool); ok {
-			sheets = val
-		}
-	}
+	// g_oauth (GOAuth.Calendar, GOAuth.Sheets) намеренно не извлекается:
+	// Calendar/Sheets инструменты управляются исключительно MCP сервером (tools/list).
 
-	return metaAction, triggers, espero, image, webSearch, video, haunter, search, operator, s3, interpreter, calendar, sheets, nil
+	return metaAction, triggers, espero, image, webSearch, video, haunter, search, operator, s3, interpreter, nil
 }
 
 // ReadContext читает контекст диалога из базы данных

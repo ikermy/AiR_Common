@@ -86,10 +86,8 @@ type GoogleAgentConfig struct {
 	MetaAction string `json:"meta_action"` // Целевое действие модели
 
 	// Флаги для Google Services
-	S3          bool `json:"s3"`           // S3 хранилище
-	Interpreter bool `json:"interpreter"`  // Code Interpreter
-	HasCalendar bool `json:"has_calendar"` // Google Calendar доступен
-	HasSheets   bool `json:"has_sheets"`   // Google Sheets доступен
+	S3          bool `json:"s3"`          // S3 хранилище
+	Interpreter bool `json:"interpreter"` // Code Interpreter
 }
 
 // DialogCache кэширует историю диалога в памяти для быстрого доступа
@@ -281,8 +279,6 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 				agentConfig.MetaAction = modelData.MetaAction
 				agentConfig.S3 = modelData.S3
 				agentConfig.Interpreter = modelData.Interpreter
-				agentConfig.HasCalendar = modelData.GOAuth.Calendar
-				agentConfig.HasSheets = modelData.GOAuth.Sheets
 			}
 		} else {
 			return fmt.Errorf("UniversalModel не установлен, невозможно загрузить данные модели для пользователя %d", userId)
@@ -297,21 +293,9 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 		})
 	}
 
-	// Получаем real_user_id для использования в функциях
-	// КРИТИЧЕСКИ ВАЖНО: без real_user_id функции S3, Calendar и Sheets работать не будут!
-	var hasRealUserID bool
-
-	realUserID, err := m.universalModel.GetRealUserID(userId)
-	if err != nil {
-		//logger.Error("Не удалось получить real_user_id для userId=%d: %v. Функции S3, Calendar и Sheets будут ОТКЛЮЧЕНЫ!", userId, err, userId)
-		hasRealUserID = false
-	} else {
-		hasRealUserID = true
-	}
-
-	// Формируем function_declarations для различных сервисов
+	// Формируем function_declarations от MCP сервера.
+	// Если MCP недоступен — function tools не добавляются (модель работает только с modelData.Prompt).
 	var functionDeclarations []map[string]interface{}
-	toolsFromMCP := false
 	if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
 		if mcpTools, fetchErr := mcpProvider.FetchToolsList(m.ctx, userId, create.ProviderGoogle); fetchErr == nil {
 			for _, t := range mcpTools {
@@ -321,287 +305,7 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 					"parameters":  t.InputSchema,
 				})
 			}
-			toolsFromMCP = true
 		}
-	}
-
-	// 1. Добавляем S3 функции ТОЛЬКО если есть real_user_id
-	if !toolsFromMCP && agentConfig.S3 && hasRealUserID {
-		functionDeclarations = append(functionDeclarations,
-			map[string]interface{}{
-				"name":        "get_s3_files",
-				"description": fmt.Sprintf("Получает список файлов пользователя из S3. ВАЖНО: user_id должен быть СТРОКОЙ \"%d\"", realUserID),
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserID),
-						},
-					},
-					"required": []string{"user_id"},
-				},
-			},
-			map[string]interface{}{
-				"name":        "create_file",
-				"description": "Создает новый файл в S3 хранилище пользователя",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserID),
-						},
-						"content": map[string]interface{}{
-							"type":        "string",
-							"description": "Содержимое файла",
-						},
-						"file_name": map[string]interface{}{
-							"type":        "string",
-							"description": "Имя файла с расширением",
-						},
-					},
-					"required": []string{"user_id", "content", "file_name"},
-				},
-			},
-		)
-	}
-
-	// 1.5. Добавляем функцию получения текущего времени (всегда доступна)
-	if !toolsFromMCP && hasRealUserID {
-		functionDeclarations = append(functionDeclarations,
-			map[string]interface{}{
-				"name": "get_current_time",
-				"description": "Получает ТОЧНОЕ текущее время и дату с сервера в часовом поясе пользователя. " +
-					"ОБЯЗАТЕЛЬНО используй эту функцию ПЕРЕД расчётом дат (завтра, через неделю, в понедельник и т.д.). " +
-					"НЕ используй свои внутренние знания о дате - они УСТАРЕЛИ!",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserID),
-						},
-					},
-					"required": []string{"user_id"},
-				},
-			},
-		)
-	}
-
-	// 2. Добавляем Google Calendar функции ТОЛЬКО если есть real_user_id
-	if !toolsFromMCP && agentConfig.HasCalendar && hasRealUserID {
-		functionDeclarations = append(functionDeclarations,
-			map[string]interface{}{
-				"name":        "calendar_create_event",
-				"description": "Создает новое событие в Google Calendar пользователя",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserID),
-						},
-						"title": map[string]interface{}{
-							"type":        "string",
-							"description": "Название события",
-						},
-						"description": map[string]interface{}{
-							"type":        "string",
-							"description": "Описание события (опционально)",
-						},
-						"start_time": map[string]interface{}{
-							"type":        "string",
-							"description": "Время начала в RFC3339 формате (например: '2026-02-04T10:00:00Z')",
-						},
-						"end_time": map[string]interface{}{
-							"type":        "string",
-							"description": "Время окончания в RFC3339 формате",
-						},
-						"location": map[string]interface{}{
-							"type":        "string",
-							"description": "Место проведения (опционально)",
-						},
-						"attendees": map[string]interface{}{
-							"type":        "array",
-							"description": "Email адреса участников (опционально)",
-							"items": map[string]interface{}{
-								"type": "string",
-							},
-						},
-					},
-					"required": []string{"user_id", "title", "start_time", "end_time"},
-				},
-			},
-			map[string]interface{}{
-				"name":        "calendar_list_events",
-				"description": "Получает список событий из Google Calendar пользователя",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserID),
-						},
-						"time_min": map[string]interface{}{
-							"type":        "string",
-							"description": "Начало периода в RFC3339 (опционально, по умолчанию - текущее время)",
-						},
-						"time_max": map[string]interface{}{
-							"type":        "string",
-							"description": "Конец периода в RFC3339 (опционально)",
-						},
-						"max_results": map[string]interface{}{
-							"type":        "integer",
-							"description": "Максимальное количество событий (по умолчанию 10)",
-						},
-					},
-					"required": []string{"user_id"},
-				},
-			},
-			map[string]interface{}{
-				"name":        "calendar_delete_event",
-				"description": "Удаляет событие из Google Calendar",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserID),
-						},
-						"event_id": map[string]interface{}{
-							"type":        "string",
-							"description": "ID события для удаления",
-						},
-					},
-					"required": []string{"user_id", "event_id"},
-				},
-			},
-		)
-	}
-
-	// 3. Добавляем Google Sheets функции ТОЛЬКО если есть real_user_id
-	if !toolsFromMCP && agentConfig.HasSheets && hasRealUserID {
-		functionDeclarations = append(functionDeclarations,
-			map[string]interface{}{
-				"name": "sheets_read_range",
-				"description": "Читает данные из указанного диапазона в Google Sheets. " +
-					"КРИТИЧЕСКИ ВАЖНО: spreadsheet_id это ДЛИННАЯ строка (~40 символов) типа '18kxy_zkXIrTIvPkxC1OJx6cKi_dpzDLsAGy4mQHcGYs', " +
-					"а НЕ название таблицы ('crm', 'лиды' и т.д.). Найди полный ID в системном промпте (ищи 'spreadsheet_id: \"...\"').",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserID),
-						},
-						"spreadsheet_id": map[string]interface{}{
-							"type": "string",
-							"description": "ПОЛНЫЙ ID таблицы Google Sheets из системного промпта (длинная строка ~40 символов, например '18kxy_zkXIrTIvPkxC1OJx6cKi_dpzDLsAGy4mQHcGYs'). " +
-								"ЗАПРЕЩЕНО использовать название таблицы ('crm', 'лиды') - только ПОЛНЫЙ ID!",
-						},
-						"range": map[string]interface{}{
-							"type":        "string",
-							"description": "Диапазон для чтения (например: 'Лиды!A:F' где 'Лиды' - название листа из системного промпта)",
-						},
-					},
-					"required": []string{"user_id", "spreadsheet_id", "range"},
-				},
-			},
-			map[string]interface{}{
-				"name": "sheets_write_range",
-				"description": "Записывает данные в указанный диапазон Google Sheets. " +
-					"ВАЖНО: используй ПОЛНЫЙ spreadsheet_id из системного промпта, а не название таблицы!",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserID),
-						},
-						"spreadsheet_id": map[string]interface{}{
-							"type": "string",
-							"description": "ПОЛНЫЙ ID таблицы из системного промпта (длинная строка ~40 символов). " +
-								"НЕ используй название таблицы!",
-						},
-						"range": map[string]interface{}{
-							"type":        "string",
-							"description": "Начальная ячейка для записи (например: 'Sheet1!A1')",
-						},
-						"values": map[string]interface{}{
-							"type":        "array",
-							"description": "Двумерный массив значений для записи",
-							"items": map[string]interface{}{
-								"type": "array",
-								"items": map[string]interface{}{
-									"type": "string",
-								},
-							},
-						},
-					},
-					"required": []string{"user_id", "spreadsheet_id", "range", "values"},
-				},
-			},
-			map[string]interface{}{
-				"name": "sheets_append_range",
-				"description": "Добавляет данные в конец таблицы Google Sheets. " +
-					"ВАЖНО: используй ПОЛНЫЙ spreadsheet_id из системного промпта, а не название таблицы!",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserID),
-						},
-						"spreadsheet_id": map[string]interface{}{
-							"type": "string",
-							"description": "ПОЛНЫЙ ID таблицы из системного промпта (длинная строка ~40 символов). " +
-								"НЕ используй название таблицы!",
-						},
-						"range": map[string]interface{}{
-							"type":        "string",
-							"description": "Диапазон колонок для добавления (например: 'Sheet1!A:D')",
-						},
-						"values": map[string]interface{}{
-							"type":        "array",
-							"description": "Двумерный массив значений для добавления",
-							"items": map[string]interface{}{
-								"type": "array",
-								"items": map[string]interface{}{
-									"type": "string",
-								},
-							},
-						},
-					},
-					"required": []string{"user_id", "spreadsheet_id", "range", "values"},
-				},
-			},
-			map[string]interface{}{
-				"name":        "sheets_create_spreadsheet",
-				"description": "Создает новую таблицу Google Sheets",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"user_id": map[string]interface{}{
-							"type":        "string",
-							"description": fmt.Sprintf("ID пользователя (СТРОКА): \"%d\"", realUserID),
-						},
-						"title": map[string]interface{}{
-							"type":        "string",
-							"description": "Название новой таблицы",
-						},
-						"sheet_names": map[string]interface{}{
-							"type":        "array",
-							"description": "Названия листов (опционально)",
-							"items": map[string]interface{}{
-								"type": "string",
-							},
-						},
-					},
-					"required": []string{"user_id", "title"},
-				},
-			},
-		)
 	}
 
 	// 4. Если есть function_declarations, добавляем их в Tools
@@ -655,7 +359,7 @@ func (m *GoogleModel) loadAgentConfig(userId uint32, respModel *GoogleRespModel)
 
 	// Логируем загруженную конфигурацию для отладки
 	//logger.Debug("Загружена конфигурация Google агента: model=%s, tools=%d, WebSearch=%v, S3=%v, Calendar=%v, Sheets=%v, Interpreter=%v, VSearch=%v, hasVector=%v",
-	//	agentConfig.ModelName, len(agentConfig.Tools), agentConfig.WebSearch, agentConfig.S3, agentConfig.HasCalendar, agentConfig.HasSheets,
+	//	agentConfig.ModelName, len(agentConfig.Tools), agentConfig.WebSearch, agentConfig.S3,
 	//	agentConfig.Interpreter, agentConfig.VSearch, agentConfig.HasVector, userId)
 
 	return nil
