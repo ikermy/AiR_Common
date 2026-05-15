@@ -31,7 +31,7 @@ func (m *Model) DeleteTempFile(fileID string) error {
 	return nil
 }
 
-func (m *Model) GetFileAsReaderData(url string) (io.Reader, error) {
+func (m *Model) GetFileAsReader(_ uint32, url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла")
 	}

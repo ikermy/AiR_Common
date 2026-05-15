@@ -213,7 +213,7 @@ func (r *Router) GetFileAsReader(userID uint32, url string) (io.Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения активного менеджера для userID %d: %w", userID, err)
 	}
-	return manager.GetFileAsReaderData(url)
+	return manager.GetFileAsReader(userID, url)
 }
 
 // GetOrSetRespGPT делегирует к модели на основе Provider из Assistant
@@ -378,7 +378,7 @@ func (r *Router) TranscribeAudio(userID uint32, audioData []byte, fileName strin
 	if err != nil {
 		return "", fmt.Errorf("ошибка получения активного менеджера для userID %d: %w", userID, err)
 	}
-	return manager.TranscribeAudioData(audioData, fileName)
+	return manager.TranscribeAudio(userID, audioData, fileName)
 }
 
 // GetRealtimeProvider возвращает RealtimeProvider если активная модель поддерживает Realtime API

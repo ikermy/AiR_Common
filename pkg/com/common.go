@@ -18,7 +18,7 @@ type CarpCh struct {
 	UserName   string
 	AssistName string
 	Target     string
-	userID     uint32
+	UserID     uint32
 }
 
 // ErrorCode - константы кодов ошибок подписки

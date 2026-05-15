@@ -110,14 +110,14 @@ func (s *SheetsService) getSheetsService(userID uint32) (*sheets.Service, error)
 
 // ReadRangeParams параметры для чтения диапазона ячеек
 type ReadRangeParams struct {
-	userID        uint32 `json:"user_id,string"`
+	UserID        uint32 `json:"user_id,string"`
 	SpreadsheetID string `json:"spreadsheet_id"` // ID таблицы из URL
 	Range         string `json:"range"`          // Например: "Sheet1!A1:D10"
 }
 
 // ReadRange читает данные из указанного диапазона
 func (s *SheetsService) ReadRange(params ReadRangeParams) (string, error) {
-	sheetsService, err := s.getSheetsService(params.userID)
+	sheetsService, err := s.getSheetsService(params.UserID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
@@ -149,7 +149,7 @@ func (s *SheetsService) ReadRange(params ReadRangeParams) (string, error) {
 
 // WriteRangeParams параметры для записи данных
 type WriteRangeParams struct {
-	userID        uint32          `json:"user_id,string"`
+	UserID        uint32          `json:"user_id,string"`
 	SpreadsheetID string          `json:"spreadsheet_id"`
 	Range         string          `json:"range"`  // Например: "Sheet1!A1"
 	Values        [][]interface{} `json:"values"` // Двумерный массив значений
@@ -157,7 +157,7 @@ type WriteRangeParams struct {
 
 // WriteRange записывает данные в указанный диапазон
 func (s *SheetsService) WriteRange(params WriteRangeParams) (string, error) {
-	sheetsService, err := s.getSheetsService(params.userID)
+	sheetsService, err := s.getSheetsService(params.UserID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
@@ -196,7 +196,7 @@ func (s *SheetsService) WriteRange(params WriteRangeParams) (string, error) {
 
 // AppendRangeParams параметры для добавления данных в конец таблицы
 type AppendRangeParams struct {
-	userID        uint32          `json:"user_id,string"`
+	UserID        uint32          `json:"user_id,string"`
 	SpreadsheetID string          `json:"spreadsheet_id"`
 	Range         string          `json:"range"` // Например: "Sheet1!A:D"
 	Values        [][]interface{} `json:"values"`
@@ -204,7 +204,7 @@ type AppendRangeParams struct {
 
 // AppendRange добавляет данные в конец таблицы
 func (s *SheetsService) AppendRange(params AppendRangeParams) (string, error) {
-	sheetsService, err := s.getSheetsService(params.userID)
+	sheetsService, err := s.getSheetsService(params.UserID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
@@ -243,14 +243,14 @@ func (s *SheetsService) AppendRange(params AppendRangeParams) (string, error) {
 
 // CreateSpreadsheetParams параметры для создания новой таблицы
 type CreateSpreadsheetParams struct {
-	userID     uint32   `json:"user_id,string"`
+	UserID     uint32   `json:"user_id,string"`
 	Title      string   `json:"title"`
 	SheetNames []string `json:"sheet_names"` // Названия листов, опционально
 }
 
 // CreateSpreadsheet создает новую Google Sheets таблицу
 func (s *SheetsService) CreateSpreadsheet(params CreateSpreadsheetParams) (string, error) {
-	sheetsService, err := s.getSheetsService(params.userID)
+	sheetsService, err := s.getSheetsService(params.UserID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
@@ -298,13 +298,13 @@ func (s *SheetsService) CreateSpreadsheet(params CreateSpreadsheetParams) (strin
 
 // GetSpreadsheetInfoParams параметры для получения информации о таблице
 type GetSpreadsheetInfoParams struct {
-	userID        uint32 `json:"user_id,string"`
+	UserID        uint32 `json:"user_id,string"`
 	SpreadsheetID string `json:"spreadsheet_id"`
 }
 
 // GetSpreadsheetInfo получает информацию о таблице (название, листы и т.д.)
 func (s *SheetsService) GetSpreadsheetInfo(params GetSpreadsheetInfoParams) (string, error) {
-	sheetsService, err := s.getSheetsService(params.userID)
+	sheetsService, err := s.getSheetsService(params.UserID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil

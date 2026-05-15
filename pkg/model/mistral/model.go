@@ -161,8 +161,8 @@ func (m *Model) NewMessage(operator model.Operator, msgType string, content *mod
 	}
 }
 
-// GetFileAsReaderData загружает файл по URL (реализация model.UniversalModel)
-func (m *Model) GetFileAsReaderData(url string) (io.Reader, error) {
+// GetFileAsReader загружает файл по URL (реализация model.UniversalModel)
+func (m *Model) GetFileAsReader(_ uint32, url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
 	}
@@ -403,8 +403,8 @@ func (m *Model) saveConversationId(dialogID uint64, conversationId string) {
 	}
 }
 
-// TranscribeAudioData обёртка
-func (m *Model) TranscribeAudioData(audioData []byte, fileName string) (string, error) {
+// TranscribeAudio обёртка
+func (m *Model) TranscribeAudio(_ uint32, audioData []byte, fileName string) (string, error) {
 	return m.transcribeAudioFile(audioData, fileName)
 }
 

@@ -161,7 +161,7 @@ func (d *DB) ListModelEmbeddings(modelId uint64, provider create.ProviderType) (
 		var provider sql.NullString
 		var embeddingDim int
 
-		err := rows.Scan(&doc.userID, &provider, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &embeddingDim, &metadataJSON, &doc.CreatedAt)
+		err := rows.Scan(&doc.UserID, &provider, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &embeddingDim, &metadataJSON, &doc.CreatedAt)
 		if err != nil {
 			continue
 		}
@@ -251,7 +251,7 @@ func (d *DB) SearchSimilarEmbeddings(modelId uint64, provider create.ProviderTyp
 		var embeddingDim int
 		var distance float32 // Не используется в результате, но нужен для Scan
 
-		err := rows.Scan(&doc.userID, &provider, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &embeddingDim, &metadataJSON, &doc.CreatedAt, &distance)
+		err := rows.Scan(&doc.UserID, &provider, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &embeddingDim, &metadataJSON, &doc.CreatedAt, &distance)
 		if err != nil {
 			continue
 		}

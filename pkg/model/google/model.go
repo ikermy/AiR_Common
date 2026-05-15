@@ -418,8 +418,8 @@ func (m *Model) Shutdown(shutCh chan<- com.LogMsg) {
 	}
 }
 
-// TranscribeAudioData транскрибирует аудио в текст (обёртка для клиента)
-func (m *Model) TranscribeAudioData(audioData []byte, mimeType string) (string, error) {
+// TranscribeAudio транскрибирует аудио в текст (обёртка для клиента)
+func (m *Model) TranscribeAudio(_ uint32, audioData []byte, mimeType string) (string, error) {
 	if m.client == nil {
 		return "", fmt.Errorf("google клиент не инициализирован")
 	}

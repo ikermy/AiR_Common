@@ -196,7 +196,7 @@ func (m *Model) NewMessage(operator model.Operator, msgType string, content *mod
 	}
 }
 
-func (m *Model) GetFileAsReaderData(url string) (io.Reader, error) {
+func (m *Model) GetFileAsReader(_ uint32, url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
 	}
@@ -636,7 +636,7 @@ func (m *Model) DeleteTempFile(fileID string) error {
 	return nil
 }
 
-func (m *Model) TranscribeAudioData(audioData []byte, fileName string) (string, error) {
+func (m *Model) TranscribeAudio(_ uint32, audioData []byte, fileName string) (string, error) {
 	// Используем существующий метод OpenAIAgentClient.TranscribeAudio
 	if m.client == nil {
 		return "", fmt.Errorf("OpenAI клиент не инициализирован")

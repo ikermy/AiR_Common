@@ -105,7 +105,7 @@ func (s *CalendarService) getCalendarService(userID uint32) (*calendar.Service, 
 
 // CreateEventParams параметры для создания события
 type CreateEventParams struct {
-	userID      uint32   `json:"user_id,string"` // Поддерживаем JSON как string, но храним как uint32
+	UserID      uint32   `json:"user_id,string"` // Поддерживаем JSON как string, но храним как uint32
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
 	StartTime   string   `json:"start_time"` // RFC3339: "2026-02-04T10:00:00Z"
@@ -116,14 +116,14 @@ type CreateEventParams struct {
 
 // CreateEvent создает новое событие в календаре
 func (s *CalendarService) CreateEvent(params CreateEventParams) (string, error) {
-	calendarService, err := s.getCalendarService(params.userID)
+	calendarService, err := s.getCalendarService(params.UserID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
 	}
 
 	// Получаем часовой пояс пользователя из БД
-	userTimeZone, err := s.db.UserTimeZone(params.userID)
+	userTimeZone, err := s.db.UserTimeZone(params.UserID)
 	if err != nil {
 		// Если не удалось получить таймзону, используем UTC как fallback
 		//logger.Warn("Не удалось получить таймзону пользователя %d: %v, используется UTC", params.userID, err)
@@ -192,7 +192,7 @@ func (s *CalendarService) CreateEvent(params CreateEventParams) (string, error) 
 
 // ListEventsParams параметры для получения списка событий
 type ListEventsParams struct {
-	userID     uint32 `json:"user_id,string"`
+	UserID     uint32 `json:"user_id,string"`
 	TimeMin    string `json:"time_min"`    // RFC3339, опционально
 	TimeMax    string `json:"time_max"`    // RFC3339, опционально
 	MaxResults int64  `json:"max_results"` // По умолчанию 10
@@ -200,7 +200,7 @@ type ListEventsParams struct {
 
 // ListEvents получает список событий из календаря
 func (s *CalendarService) ListEvents(params ListEventsParams) (string, error) {
-	calendarService, err := s.getCalendarService(params.userID)
+	calendarService, err := s.getCalendarService(params.UserID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
@@ -274,13 +274,13 @@ func (s *CalendarService) ListEvents(params ListEventsParams) (string, error) {
 
 // DeleteEventParams параметры для удаления события
 type DeleteEventParams struct {
-	userID  uint32 `json:"user_id,string"`
+	UserID  uint32 `json:"user_id,string"`
 	EventID string `json:"event_id"`
 }
 
 // DeleteEvent удаляет событие из календаря
 func (s *CalendarService) DeleteEvent(params DeleteEventParams) (string, error) {
-	calendarService, err := s.getCalendarService(params.userID)
+	calendarService, err := s.getCalendarService(params.UserID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
@@ -306,13 +306,13 @@ func (s *CalendarService) DeleteEvent(params DeleteEventParams) (string, error) 
 
 // GetEventParams параметры для получения события
 type GetEventParams struct {
-	userID  uint32 `json:"user_id,string"`
+	UserID  uint32 `json:"user_id,string"`
 	EventID string `json:"event_id"`
 }
 
 // GetEvent получает детали события
 func (s *CalendarService) GetEvent(params GetEventParams) (string, error) {
-	calendarService, err := s.getCalendarService(params.userID)
+	calendarService, err := s.getCalendarService(params.UserID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil

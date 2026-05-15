@@ -16,7 +16,7 @@ type DB = comdb.Exterior
 // Inter интерфейс для работы с моделями Assistant
 type Inter interface {
 	NewMessage(operator Operator, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message
-	GetFileAsReaderData(url string) (io.Reader, error)
+	GetFileAsReader(userID uint32, url string) (io.Reader, error)
 	GetOrSetRespGPT(assist Assistant, dialogID, respId uint64, respName string) (*RespModel, error)
 	GetCh(respId uint64) (*Ch, error)
 	GetRespIdBydialogID(dialogID uint64) (uint64, error)
@@ -25,7 +25,7 @@ type Inter interface {
 	RequestStreaming(userID uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...FileUpload) error
 	CleanDialogData(dialogID uint64)
 	DeleteTempFile(fileID string) error
-	TranscribeAudioData(audioData []byte, fileName string) (string, error)
+	TranscribeAudio(userID uint32, audioData []byte, fileName string) (string, error)
 	CleanUp()
 	InvalidateUserAgentConfigCache(userID uint32)
 	Shutdown(shutCh chan<- com.LogMsg)
