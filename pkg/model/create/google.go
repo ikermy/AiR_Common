@@ -73,16 +73,16 @@ type GoogleAgentClient struct {
 	apiKey         string
 	url            string
 	ctx            context.Context
-	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealUserID
+	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealuserID
 	promptFetcher  GooglePromptHintFetcher
 	toolsFetcher   GoogleFunctionDeclarationsFetcher
 }
 
 // GooglePromptHintFetcher опционально получает prompt hint от внешнего MCP-источника.
-type GooglePromptHintFetcher func(ctx context.Context, userId uint32, provider ProviderType) (string, error)
+type GooglePromptHintFetcher func(ctx context.Context, userID uint32, provider ProviderType) (string, error)
 
 // GoogleFunctionDeclarationsFetcher опционально получает function declarations от внешнего MCP-источника.
-type GoogleFunctionDeclarationsFetcher func(ctx context.Context, userId uint32, provider ProviderType) ([]FunctionDeclaration, error)
+type GoogleFunctionDeclarationsFetcher func(ctx context.Context, userID uint32, provider ProviderType) ([]FunctionDeclaration, error)
 
 // ============================================================================
 // TYPED STRUCTURES FOR FUNCTION DECLARATIONS
@@ -132,7 +132,7 @@ func (m *GoogleAgentClient) SetMCPConfigFetchers(promptFetcher GooglePromptHintF
 	m.toolsFetcher = toolsFetcher
 }
 
-// SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID в create-time операциях.
+// SetUniversalModel устанавливает UniversalModel для доступа к GetRealuserID в create-time операциях.
 func (m *GoogleAgentClient) SetUniversalModel(um *UniversalModel) {
 	m.universalModel = um
 }
@@ -222,7 +222,7 @@ func executeGoogleAPIDeleteRequest(ctx context.Context, url string) error {
 }
 
 // createGoogleAgent создает нового Gemini агента с указанными параметрами
-func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, userId uint32, _ []Ids) (UMCR, error) {
+func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, userID uint32, _ []Ids) (UMCR, error) {
 	if modelData == nil {
 		return UMCR{}, fmt.Errorf("modelData не может быть nil")
 	}
@@ -236,7 +236,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	// Локальный legacy builder удалён (MCP_MIGRATION.md раздел 14).
 	enhancedPrompt := modelData.Prompt
 	if m.promptFetcher != nil {
-		if hint, fetchErr := m.promptFetcher(m.ctx, userId, ProviderGoogle); fetchErr == nil && hint != "" {
+		if hint, fetchErr := m.promptFetcher(m.ctx, userID, ProviderGoogle); fetchErr == nil && hint != "" {
 			enhancedPrompt = modelData.Prompt + "\n\n" + hint
 		}
 	}
@@ -273,7 +273,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	// При недоступности MCP инструменты не добавляются (MCP_MIGRATION.md раздел 14).
 	var allFunctions []FunctionDeclaration
 	if m.toolsFetcher != nil {
-		if fetched, fetchErr := m.toolsFetcher(m.ctx, userId, ProviderGoogle); fetchErr == nil {
+		if fetched, fetchErr := m.toolsFetcher(m.ctx, userID, ProviderGoogle); fetchErr == nil {
 			allFunctions = fetched
 		}
 	}
@@ -799,13 +799,13 @@ func GenerateGoogleEmbedding(ctx context.Context, apiKey, text string) ([]float3
 }
 
 // updateGoogleModelInPlace обновляет модель google
-func (m *UniversalModel) updateGoogleModelInPlace(userId uint32, existing, updated *UniversalModelData) error {
+func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updated *UniversalModelData) error {
 	if m.googleClient == nil {
 		return fmt.Errorf("google клиент не инициализирован")
 	}
 
 	// Получаем все модели пользователя и находим нужную (нужен ModelId для работы с эмбеддингами)
-	allModels, err := m.db.GetAllUserModels(userId)
+	allModels, err := m.db.GetAllUserModels(userID)
 	if err != nil {
 		return fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
@@ -936,7 +936,7 @@ func (m *UniversalModel) updateGoogleModelInPlace(userId uint32, existing, updat
 						CreatedAt: time.Now().Format(time.RFC3339),
 					}
 
-					if err := m.db.SaveEmbedding(userId, modelId, ProviderGoogle, docID, docName, content, embedding, metadata); err != nil {
+					if err := m.db.SaveEmbedding(userID, modelId, ProviderGoogle, docID, docName, content, embedding, metadata); err != nil {
 						//	logger.Warn("Не удалось сохранить эмбеддинг для файла %s: %v", docName, err)
 						//} else {
 						//	logger.Debug("Документ '%s' успешно добавлен в векторное хранилище БД для modelId=%d", docName, modelId)
@@ -987,7 +987,7 @@ func (m *UniversalModel) updateGoogleModelInPlace(userId uint32, existing, updat
 	}
 
 	// Сохраняем обновленные данные в БД
-	if err := m.SaveModel(userId, umcr, updated); err != nil {
+	if err := m.SaveModel(userID, umcr, updated); err != nil {
 		return fmt.Errorf("ошибка сохранения обновленной модели в БД: %w", err)
 	}
 
@@ -1010,7 +1010,7 @@ func (m *UniversalModel) deleteGoogleModel(_ uint32, modelData *UserModelRecord,
 // createGoogleModel создает модель Google — обёртка для парсинга JSON и делегирования клиенту
 // ПРИМЕЧАНИЕ: fileIDs игнорируются для Google моделей, так как Google API не хранит файлы.
 // Вместо этого документы загружаются как эмбеддинги в нашу БД через UploadDocumentWithEmbedding().
-func (m *UniversalModel) createGoogleModel(userId uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
+func (m *UniversalModel) createGoogleModel(userID uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
 	if m.googleClient == nil {
 		return UMCR{}, fmt.Errorf("google клиент не инициализирован")
 	}
@@ -1023,10 +1023,10 @@ func (m *UniversalModel) createGoogleModel(userId uint32, modelData *UniversalMo
 		return UMCR{}, fmt.Errorf("поле 'prompt' отсутствует или пустое")
 	}
 
-	//logger.Debug("Создание Google модели: name=%s (fileIDs игнорируются)", modelData.Name, userId)
+	//logger.Debug("Создание Google модели: name=%s (fileIDs игнорируются)", modelData.Name, userID)
 
 	// Делегируем создание клиенту
-	umcr, err := m.googleClient.createGoogleAgent(modelData, userId, fileIDs)
+	umcr, err := m.googleClient.createGoogleAgent(modelData, userID, fileIDs)
 	if err != nil {
 		return UMCR{}, err
 	}

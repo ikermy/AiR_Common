@@ -31,7 +31,7 @@ type Model struct {
 	UserModelTTl   time.Duration // Время жизни пользовательской модели в памяти
 	actionHandler  model.ActionHandler
 	shutdownOnce   sync.Once
-	router         model.RouterInterface  // Ссылка на router для GetRealUserID
+	router         model.RouterInterface  // Ссылка на router для GetRealuserID
 	universalModel *create.UniversalModel // Для доступа к DecompressModelData
 }
 
@@ -47,7 +47,7 @@ type RespModel struct {
 	Assist         model.Assistant
 	RespName       string
 	Services       Services
-	RealUserId     uint64 // Кэшированный реальный user_id
+	RealuserID     uint64 // Кэшированный реальный user_id
 	ConversationId string // ID conversation для Mistral Conversations API
 	Haunter        bool   // Модель используется для поиска лидов
 	ToolsSynced    bool   // true — агент уже синхронизирован с MCP tools в этой сессии
@@ -116,11 +116,11 @@ func NewAsRouterOption() model.RouterOption {
 		// Аналогично google/model.go: function declarations и prompt hint — только от MCP.
 		if mcpProvider, ok := model.ActionHandler(actionHandler).(model.MCPConfigProvider); ok {
 			universalModel.SetMistralMCPFetchers(
-				func(fetchCtx context.Context, userId uint32, provider create.ProviderType) (string, error) {
-					return mcpProvider.FetchSystemPrompt(fetchCtx, userId, provider)
+				func(fetchCtx context.Context, userID uint32, provider create.ProviderType) (string, error) {
+					return mcpProvider.FetchSystemPrompt(fetchCtx, userID, provider)
 				},
-				func(fetchCtx context.Context, userId uint32, provider create.ProviderType) ([]create.FunctionDeclaration, error) {
-					mcpTools, err := mcpProvider.FetchToolsList(fetchCtx, userId, provider)
+				func(fetchCtx context.Context, userID uint32, provider create.ProviderType) ([]create.FunctionDeclaration, error) {
+					mcpTools, err := mcpProvider.FetchToolsList(fetchCtx, userID, provider)
 					if err != nil {
 						return nil, err
 					}
@@ -161,8 +161,8 @@ func (m *Model) NewMessage(operator model.Operator, msgType string, content *mod
 	}
 }
 
-// GetFileAsReader загружает файл по URL (реализация model.UniversalModel)
-func (m *Model) GetFileAsReader(url string) (io.Reader, error) {
+// GetFileAsReaderData загружает файл по URL (реализация model.UniversalModel)
+func (m *Model) GetFileAsReaderData(url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
 	}
@@ -219,13 +219,13 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 	contextData, err := m.db.ReadContext(dialogID, create.ProviderMistral)
 	if err != nil {
 		if strings.Contains(err.Error(), "получены пустые данные") {
-			//logger.Debug("Инициализация нового диалога %d", dialogID, assist.UserID)
+			//logger.Debug("Инициализация нового диалога %d", dialogID, assist.userID)
 			// ConversationId будет создан при первом запросе
 			//} else {
 			//	logger.Error("Ошибка чтения контекста для dialogID %d: %v", dialogID, err)
 		}
 	} else if contextData != nil {
-		//logger.Debug("Контекст загружен для dialogID %d: %s", dialogID, string(contextData), assist.UserID)
+		//logger.Debug("Контекст загружен для dialogID %d: %s", dialogID, string(contextData), assist.userID)
 
 		var contextObj struct {
 			ConversationID string `json:"conversation_id"`
@@ -248,36 +248,36 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 
 		if contextObj.ConversationID != "" {
 			user.ConversationId = contextObj.ConversationID
-			//logger.Debug("Загружен conversation_id: %s", contextObj.ConversationID, assist.UserID)
+			//logger.Debug("Загружен conversation_id: %s", contextObj.ConversationID, assist.userID)
 		}
 	}
 
-	// Загружаем RealUserId ОДИН РАЗ при создании (избегаем повторных HTTP запросов)
-	if realUserId, err := m.GetRealUserID(assist.UserId); err == nil {
-		user.RealUserId = realUserId
+	// Загружаем RealuserID ОДИН РАЗ при создании (избегаем повторных HTTP запросов)
+	if realuserID, err := m.GetRealuserID(assist.UserID); err == nil {
+		user.RealuserID = realuserID
 	} else {
-		//logger.Warn("Не удалось загрузить RealUserId: %v", err, assist.UserId)
-		user.RealUserId = 0 // Будет пропущена генерация изображений
+		//logger.Warn("Не удалось загрузить RealuserID: %v", err, assist.userID)
+		user.RealuserID = 0 // Будет пропущена генерация изображений
 	}
 
 	// Загружаем параметры модели из БД (включая Haunter)
-	compressedData, _, err := m.db.ReadUserModelByProvider(assist.UserId, create.ProviderMistral)
+	compressedData, _, err := m.db.ReadUserModelByProvider(assist.UserID, create.ProviderMistral)
 	if err != nil {
-		//logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, assist.UserId)
+		//logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, assist.userID)
 	} else if compressedData != nil && m.universalModel != nil {
 		if modelData, decompErr := m.universalModel.DecompressModelData(compressedData, nil); decompErr == nil {
 			user.Haunter = modelData.Haunter
 			//} else {
-			//	logger.Warn("Ошибка распаковки параметров модели: %v", decompErr, assist.UserId)
+			//	logger.Warn("Ошибка распаковки параметров модели: %v", decompErr, assist.userID)
 		}
 	}
 
 	//// Загружаем LibraryId ОДИН РАЗ при создании (избегаем запросов к БД при каждом сообщении)
-	//if libraryID, err := m.loadLibraryIdFromDB(assist.UserID); err == nil {
+	//if libraryID, err := m.loadLibraryIdFromDB(assist.userID); err == nil {
 	//	user.LibraryId = libraryID
-	//	logger.Debug("LibraryId загружен для пользователя %d: %s", assist.UserID, libraryID, assist.UserID)
+	//	logger.Debug("LibraryId загружен для пользователя %d: %s", assist.userID, libraryID, assist.userID)
 	//} else {
-	//	logger.Debug("LibraryId не найден для пользователя %d (будет создан при загрузке файлов)", assist.UserID, assist.UserID)
+	//	logger.Debug("LibraryId не найден для пользователя %d (будет создан при загрузке файлов)", assist.userID, assist.userID)
 	//}
 
 	// Используем respId как ключ (один пользователь может иметь несколько диалогов)
@@ -403,8 +403,8 @@ func (m *Model) saveConversationId(dialogID uint64, conversationId string) {
 	}
 }
 
-// TranscribeAudio обёртка
-func (m *Model) TranscribeAudio(audioData []byte, fileName string) (string, error) {
+// TranscribeAudioData обёртка
+func (m *Model) TranscribeAudioData(audioData []byte, fileName string) (string, error) {
 	return m.transcribeAudioFile(audioData, fileName)
 }
 
@@ -637,27 +637,27 @@ func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
 }
 
-// GetRealUserID получает реальный userId через ModelRouter
+// GetRealuserID получает реальный userID через ModelRouter
 // Использует единый метод для всех провайдеров (OpenAI, Mistral)
-func (m *Model) GetRealUserID(userId uint32) (uint64, error) {
+func (m *Model) GetRealuserID(userID uint32) (uint64, error) {
 	if m.router == nil {
 		return 0, fmt.Errorf("router не инициализирован")
 	}
-	return m.router.GetRealUserID(userId)
+	return m.router.GetRealuserID(userID)
 }
 
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
-func (m *Model) InvalidateUserAgentConfigCache(userId uint32) {
+func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 	var invalidatedCount int
 	m.responders.Range(func(key, value interface{}) bool {
 		respModel := value.(*RespModel)
-		if respModel.Assist.UserId == userId {
+		if respModel.Assist.UserID == userID {
 			m.responders.Delete(key)
 			invalidatedCount++
 		}
 		return true
 	})
 	if invalidatedCount > 0 {
-		//logger.Debug("Инвалидирован кэш конфигурации модели для userId=%d (удалено %d респондентов)", userId, invalidatedCount)
+		//logger.Debug("Инвалидирован кэш конфигурации модели для userID=%d (удалено %d респондентов)", userID, invalidatedCount)
 	}
 }

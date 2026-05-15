@@ -54,7 +54,7 @@ func TestJSONSerialization(t *testing.T) {
 			},
 		},
 		Service: pb.TELEGRAM,
-		UserId:  42,
+		UserID:  42,
 	}
 
 	// Сериализуем в JSON
@@ -83,12 +83,12 @@ func TestJSONSerialization(t *testing.T) {
 		t.Errorf("Expected human[0].FirstName='John', got '%s'", deserialized.Humans[0].FirstName)
 	}
 
-	// Проверяем Service и UserId
+	// Проверяем Service и userID
 	if deserialized.Service != pb.TELEGRAM {
 		t.Errorf("Expected Service=TELEGRAM, got %d", deserialized.Service)
 	}
-	if deserialized.UserId != 42 {
-		t.Errorf("Expected UserId=42, got %d", deserialized.UserId)
+	if deserialized.UserID != 42 {
+		t.Errorf("Expected userID=42, got %d", deserialized.UserID)
 	}
 
 	// Проверяем Bots
@@ -182,7 +182,7 @@ func TestJSONDeserializationFromRawMessage(t *testing.T) {
 		t.Errorf("Expected Service=1, got %d", finalResult.Service)
 	}
 
-	if finalResult.UserId != 42 {
-		t.Errorf("Expected UserId=42, got %d", finalResult.UserId)
+	if finalResult.UserID != 42 {
+		t.Errorf("Expected userID=42, got %d", finalResult.UserID)
 	}
 }

@@ -39,6 +39,6 @@ func (m *Model) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32
 	return m.db.SearchSimilarEmbeddings(modelId, create.ProviderOpenAI, queryEmbedding, limit)
 }
 
-func (m *Model) saveEmbedding(userId uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
-	return m.db.SaveEmbedding(userId, modelId, create.ProviderOpenAI, docID, docName, content, embedding, metadata)
+func (m *Model) saveEmbedding(userID uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
+	return m.db.SaveEmbedding(userID, modelId, create.ProviderOpenAI, docID, docName, content, embedding, metadata)
 }

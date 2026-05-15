@@ -35,7 +35,7 @@ type Assistant struct {
 	AssistName string
 	Metas      Target
 	Events     Notifications
-	UserId     uint32
+	UserID     uint32
 	Limit      uint32
 	Provider   create.ProviderType
 	Espero     uint8
@@ -94,7 +94,7 @@ type AssistResponse struct {
 type Ch struct {
 	TxCh     chan Message
 	RxCh     chan Message
-	UserID   uint32
+	userID   uint32
 	DialogID uint64
 	RespName string
 	txClosed atomic.Bool
@@ -248,7 +248,7 @@ func CreateBaseResponder(parentCtx context.Context, ttl time.Duration,
 	ch := &Ch{
 		TxCh:     make(chan Message, create.TxChanBuffer),
 		RxCh:     make(chan Message, create.RxChanBuffer),
-		UserID:   assist.UserId,
+		userID:   assist.UserID,
 		DialogID: dialogID,
 		RespName: respName,
 	}
@@ -264,4 +264,3 @@ func NotifyWaitChannels(waitChannels *sync.Map, respId uint64) {
 		waitChannels.Delete(respId)
 	}
 }
-

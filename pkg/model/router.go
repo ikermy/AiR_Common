@@ -208,24 +208,24 @@ func (r *Router) NewMessage(operator Operator, msgType string, content *AssistRe
 }
 
 // GetFileAsReader делегирует к активному провайдеру пользователя
-func (r *Router) GetFileAsReader(userId uint32, url string) (io.Reader, error) {
-	manager, err := r.GetActiveUserManager(userId)
+func (r *Router) GetFileAsReader(userID uint32, url string) (io.Reader, error) {
+	manager, err := r.GetActiveUserManager(userID)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка получения активного менеджера для userId %d: %w", userId, err)
+		return nil, fmt.Errorf("ошибка получения активного менеджера для userID %d: %w", userID, err)
 	}
-	return manager.GetFileAsReader(url)
+	return manager.GetFileAsReaderData(url)
 }
 
 // GetOrSetRespGPT делегирует к модели на основе Provider из Assistant
 func (r *Router) GetOrSetRespGPT(assist Assistant, dialogID, respId uint64, respName string) (*RespModel, error) {
 	if assist.Provider == 0 {
-		return nil, fmt.Errorf("провайдер не установлен для userId=%d: у пользователя не создана модель ассистента. "+
-			"Создайте модель через API или панель управления", assist.UserId)
+		return nil, fmt.Errorf("провайдер не установлен для userID=%d: у пользователя не создана модель ассистента. "+
+			"Создайте модель через API или панель управления", assist.UserID)
 	}
 	m, err := r.getModel(assist.Provider)
 	if err != nil {
-		return nil, fmt.Errorf("не удалось получить модель для провайдера %s (userId=%d): %w",
-			assist.Provider, assist.UserId, err)
+		return nil, fmt.Errorf("не удалось получить модель для провайдера %s (userID=%d): %w",
+			assist.Provider, assist.UserID, err)
 	}
 	return m.GetOrSetRespGPT(assist, dialogID, respId, respName)
 }
@@ -262,13 +262,13 @@ func (r *Router) SaveAllContextDuringExit() {
 }
 
 // Request направляет запрос к провайдеру, которому принадлежит диалог
-func (r *Router) Request(userId uint32, dialogID uint64, text string, files ...FileUpload) (AssistResponse, error) {
+func (r *Router) Request(userID uint32, dialogID uint64, text string, files ...FileUpload) (AssistResponse, error) {
 	for _, p := range []Inter{r.openai, r.mistral, r.google} {
 		if p == nil {
 			continue
 		}
 		if _, err := p.GetRespIdBydialogID(dialogID); err == nil {
-			return p.Request(userId, dialogID, text, files...)
+			return p.Request(userID, dialogID, text, files...)
 		}
 	}
 	return AssistResponse{}, fmt.Errorf("модель не найдена для DialogID %d", dialogID)
@@ -276,7 +276,7 @@ func (r *Router) Request(userId uint32, dialogID uint64, text string, files ...F
 
 // tryProviderStreaming пытается выполнить streaming запрос к провайдеру.
 // Возвращает (true, err) если провайдер найден, (false, nil) если нет.
-func (r *Router) tryProviderStreaming(provider Inter, userId uint32, dialogID uint64, text string,
+func (r *Router) tryProviderStreaming(provider Inter, userID uint32, dialogID uint64, text string,
 	onDelta func(delta string, done bool) error, files ...FileUpload) (bool, error) {
 	if provider == nil {
 		return false, nil
@@ -285,13 +285,13 @@ func (r *Router) tryProviderStreaming(provider Inter, userId uint32, dialogID ui
 		return false, nil
 	}
 	if streamer, ok := provider.(interface {
-		RequestStreaming(userId uint32, dialogID uint64, text string,
+		RequestStreaming(userID uint32, dialogID uint64, text string,
 			onDelta func(delta string, done bool) error, files ...FileUpload) error
 	}); ok {
-		return true, streamer.RequestStreaming(userId, dialogID, text, onDelta, files...)
+		return true, streamer.RequestStreaming(userID, dialogID, text, onDelta, files...)
 	}
 	// Fallback: буферизуем через Request
-	response, err := provider.Request(userId, dialogID, text, files...)
+	response, err := provider.Request(userID, dialogID, text, files...)
 	if err != nil {
 		return true, err
 	}
@@ -305,10 +305,10 @@ func (r *Router) tryProviderStreaming(provider Inter, userId uint32, dialogID ui
 }
 
 // RequestStreaming направляет streaming запрос к провайдеру диалога
-func (r *Router) RequestStreaming(userId uint32, dialogID uint64, text string,
+func (r *Router) RequestStreaming(userID uint32, dialogID uint64, text string,
 	onDelta func(delta string, done bool) error, files ...FileUpload) error {
 	for _, p := range []Inter{r.openai, r.mistral, r.google} {
-		if found, err := r.tryProviderStreaming(p, userId, dialogID, text, onDelta, files...); found {
+		if found, err := r.tryProviderStreaming(p, userID, dialogID, text, onDelta, files...); found {
 			return err
 		}
 	}
@@ -321,19 +321,19 @@ func (r *Router) CleanDialogData(dialogID uint64) {
 }
 
 // GetActiveUserModel получает активную модель пользователя
-func (r *Router) GetActiveUserModel(userId uint32) (*create.UniversalModelData, error) {
+func (r *Router) GetActiveUserModel(userID uint32) (*create.UniversalModelData, error) {
 	if r.modelsManager == nil {
 		return nil, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.GetActiveUserModel(userId)
+	return r.modelsManager.GetActiveUserModel(userID)
 }
 
 // GetActiveUserManager возвращает менеджера активного провайдера пользователя.
 // Использует comma-ok form для безопасного type assertion.
-func (r *Router) GetActiveUserManager(userId uint32) (Inter, error) {
-	provider, err := r.db.GetActiveProvider(userId)
+func (r *Router) GetActiveUserManager(userID uint32) (Inter, error) {
+	provider, err := r.db.GetActiveProvider(userID)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка получения активного провайдера для userId %d: %w", userId, err)
+		return nil, fmt.Errorf("ошибка получения активного провайдера для userID %d: %w", userID, err)
 	}
 
 	switch provider {
@@ -373,20 +373,20 @@ func (r *Router) GetActiveUserManager(userId uint32) (Inter, error) {
 }
 
 // TranscribeAudio транскрибирует аудио через активный провайдер пользователя
-func (r *Router) TranscribeAudio(userId uint32, audioData []byte, fileName string) (string, error) {
-	manager, err := r.GetActiveUserManager(userId)
+func (r *Router) TranscribeAudio(userID uint32, audioData []byte, fileName string) (string, error) {
+	manager, err := r.GetActiveUserManager(userID)
 	if err != nil {
-		return "", fmt.Errorf("ошибка получения активного менеджера для userId %d: %w", userId, err)
+		return "", fmt.Errorf("ошибка получения активного менеджера для userID %d: %w", userID, err)
 	}
-	return manager.TranscribeAudio(audioData, fileName)
+	return manager.TranscribeAudioData(audioData, fileName)
 }
 
 // GetRealtimeProvider возвращает RealtimeProvider если активная модель поддерживает Realtime API
-func (r *Router) GetRealtimeProvider(userId uint32) (RealtimeProvider, bool) {
+func (r *Router) GetRealtimeProvider(userID uint32) (RealtimeProvider, bool) {
 	if r.openai == nil {
 		return nil, false
 	}
-	activeManager, err := r.GetActiveUserManager(userId)
+	activeManager, err := r.GetActiveUserManager(userID)
 	if err != nil {
 		return nil, false
 	}
@@ -445,18 +445,18 @@ func (r *Router) CleanUp() {
 // ============================================================================
 
 // CreateModel создаёт новую модель у указанного провайдера
-func (r *Router) CreateModel(userId uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error) {
+func (r *Router) CreateModel(userID uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error) {
 	if _, err := r.getModel(provider); err != nil {
 		return create.UMCR{}, err
 	}
 	if r.modelsManager == nil {
 		return create.UMCR{}, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.CreateModel(userId, provider, modelData, fileIDs)
+	return r.modelsManager.CreateModel(userID, provider, modelData, fileIDs)
 }
 
 // UploadFileToProvider загружает файл в указанный провайдер (только Mistral)
-func (r *Router) UploadFileToProvider(userId uint32, provider create.ProviderType, fileName string, fileData []byte) (string, error) {
+func (r *Router) UploadFileToProvider(userID uint32, provider create.ProviderType, fileName string, fileData []byte) (string, error) {
 	switch provider {
 	case create.ProviderOpenAI:
 		return "", fmt.Errorf("OpenAI провайдер не поддерживает загрузку файлов")
@@ -465,7 +465,7 @@ func (r *Router) UploadFileToProvider(userId uint32, provider create.ProviderTyp
 			return "", fmt.Errorf("Mistral провайдер не инициализирован")
 		}
 		if manager, ok := r.mistral.(MistralManager); ok {
-			return manager.UploadFileToProvider(userId, fileName, fileData)
+			return manager.UploadFileToProvider(userID, fileName, fileData)
 		}
 		return "", fmt.Errorf("Mistral провайдер не поддерживает загрузку файлов")
 	case create.ProviderGoogle:
@@ -488,7 +488,7 @@ func (r *Router) DeleteTempFile(fileID string) error {
 }
 
 // DeleteFileFromProvider удаляет файл из указанного провайдера (только Mistral)
-func (r *Router) DeleteFileFromProvider(userId uint32, provider create.ProviderType, fileID string) error {
+func (r *Router) DeleteFileFromProvider(userID uint32, provider create.ProviderType, fileID string) error {
 	switch provider {
 	case create.ProviderOpenAI:
 		return fmt.Errorf("OpenAI провайдер не поддерживает удаление файлов")
@@ -497,7 +497,7 @@ func (r *Router) DeleteFileFromProvider(userId uint32, provider create.ProviderT
 			return fmt.Errorf("Mistral провайдер не инициализирован")
 		}
 		if manager, ok := r.mistral.(MistralManager); ok {
-			return manager.DeleteDocumentFromLibrary(userId, fileID)
+			return manager.DeleteDocumentFromLibrary(userID, fileID)
 		}
 		return fmt.Errorf("Mistral провайдер не поддерживает удаление файлов")
 	case create.ProviderGoogle:
@@ -508,7 +508,7 @@ func (r *Router) DeleteFileFromProvider(userId uint32, provider create.ProviderT
 }
 
 // AddFileFromFromProvider добавляет файл в хранилище провайдера (только Mistral)
-func (r *Router) AddFileFromFromProvider(provider create.ProviderType, userId uint32, fileID, fileName string) error {
+func (r *Router) AddFileFromFromProvider(provider create.ProviderType, userID uint32, fileID, fileName string) error {
 	switch provider {
 	case create.ProviderOpenAI:
 		return fmt.Errorf("OpenAI провайдер не поддерживает добавление файлов")
@@ -517,7 +517,7 @@ func (r *Router) AddFileFromFromProvider(provider create.ProviderType, userId ui
 			return fmt.Errorf("Mistral провайдер не инициализирован")
 		}
 		if manager, ok := r.mistral.(MistralManager); ok {
-			return manager.AddFileToLibrary(userId, fileID, fileName)
+			return manager.AddFileToLibrary(userID, fileID, fileName)
 		}
 		return fmt.Errorf("Mistral провайдер не поддерживает добавление файлов")
 	case create.ProviderGoogle:
@@ -532,7 +532,7 @@ func (r *Router) AddFileFromFromProvider(provider create.ProviderType, userId ui
 // ============================================================================
 
 // UploadDocumentWithEmbedding загружает документ с генерацией эмбеддинга
-func (r *Router) UploadDocumentWithEmbedding(userId uint32, provider, docName, content string, metadata create.DocumentMetadata) (string, error) {
+func (r *Router) UploadDocumentWithEmbedding(userID uint32, provider, docName, content string, metadata create.DocumentMetadata) (string, error) {
 	providerType, err := create.FromString(provider)
 	if err != nil {
 		return "", fmt.Errorf("неверный provider: %w", err)
@@ -543,7 +543,7 @@ func (r *Router) UploadDocumentWithEmbedding(userId uint32, provider, docName, c
 			return "", fmt.Errorf("Google провайдер не инициализирован")
 		}
 		if manager, ok := r.google.(GoogleManager); ok {
-			return manager.UploadDocumentWithEmbedding(userId, docName, content, metadata)
+			return manager.UploadDocumentWithEmbedding(userID, docName, content, metadata)
 		}
 		return "", fmt.Errorf("Google провайдер не поддерживает загрузку документов с эмбеддингами")
 	case create.ProviderOpenAI:
@@ -551,7 +551,7 @@ func (r *Router) UploadDocumentWithEmbedding(userId uint32, provider, docName, c
 			return "", fmt.Errorf("OpenAI провайдер не инициализирован")
 		}
 		if manager, ok := r.openai.(OpenAIManager); ok {
-			return manager.UploadDocumentWithEmbedding(userId, docName, content, metadata)
+			return manager.UploadDocumentWithEmbedding(userID, docName, content, metadata)
 		}
 		return "", fmt.Errorf("OpenAI провайдер не поддерживает загрузку документов с эмбеддингами")
 	default:
@@ -560,7 +560,7 @@ func (r *Router) UploadDocumentWithEmbedding(userId uint32, provider, docName, c
 }
 
 // SearchSimilarDocuments ищет похожие документы в Vector Store
-func (r *Router) SearchSimilarDocuments(userId uint32, provider, query string, limit int) ([]create.VectorDocument, error) {
+func (r *Router) SearchSimilarDocuments(userID uint32, provider, query string, limit int) ([]create.VectorDocument, error) {
 	providerType, err := create.FromString(provider)
 	if err != nil {
 		return nil, fmt.Errorf("неверный provider: %w", err)
@@ -571,7 +571,7 @@ func (r *Router) SearchSimilarDocuments(userId uint32, provider, query string, l
 			return nil, fmt.Errorf("Google провайдер не инициализирован")
 		}
 		if manager, ok := r.google.(GoogleManager); ok {
-			return manager.SearchSimilarDocuments(userId, query, limit)
+			return manager.SearchSimilarDocuments(userID, query, limit)
 		}
 		return nil, fmt.Errorf("Google провайдер не поддерживает поиск документов")
 	case create.ProviderOpenAI:
@@ -579,7 +579,7 @@ func (r *Router) SearchSimilarDocuments(userId uint32, provider, query string, l
 			return nil, fmt.Errorf("OpenAI провайдер не инициализирован")
 		}
 		if manager, ok := r.openai.(OpenAIManager); ok {
-			return manager.SearchSimilarDocuments(userId, query, limit)
+			return manager.SearchSimilarDocuments(userID, query, limit)
 		}
 		return nil, fmt.Errorf("OpenAI провайдер не поддерживает поиск документов")
 	default:
@@ -588,7 +588,7 @@ func (r *Router) SearchSimilarDocuments(userId uint32, provider, query string, l
 }
 
 // DeleteDocument удаляет документ из Vector Store
-func (r *Router) DeleteDocument(userId uint32, provider, docID string) error {
+func (r *Router) DeleteDocument(userID uint32, provider, docID string) error {
 	providerType, err := create.FromString(provider)
 	if err != nil {
 		return fmt.Errorf("неверный provider: %w", err)
@@ -599,7 +599,7 @@ func (r *Router) DeleteDocument(userId uint32, provider, docID string) error {
 			return fmt.Errorf("Google провайдер не инициализирован")
 		}
 		if manager, ok := r.google.(GoogleManager); ok {
-			return manager.DeleteDocument(userId, docID)
+			return manager.DeleteDocument(userID, docID)
 		}
 		return fmt.Errorf("Google провайдер не поддерживает удаление документов")
 	case create.ProviderOpenAI:
@@ -607,7 +607,7 @@ func (r *Router) DeleteDocument(userId uint32, provider, docID string) error {
 			return fmt.Errorf("OpenAI провайдер не инициализирован")
 		}
 		if manager, ok := r.openai.(OpenAIManager); ok {
-			return manager.DeleteDocument(userId, docID)
+			return manager.DeleteDocument(userID, docID)
 		}
 		return fmt.Errorf("OpenAI провайдер не поддерживает удаление документов")
 	default:
@@ -617,19 +617,19 @@ func (r *Router) DeleteDocument(userId uint32, provider, docID string) error {
 
 // ListUserDocuments возвращает список документов пользователя.
 // Если provider пустой — агрегирует документы всех провайдеров.
-func (r *Router) ListUserDocuments(userId uint32, provider string) ([]create.VectorDocument, error) {
+func (r *Router) ListUserDocuments(userID uint32, provider string) ([]create.VectorDocument, error) {
 	if provider == "" {
 		var allDocs []create.VectorDocument
 		if r.google != nil {
 			if manager, ok := r.google.(GoogleManager); ok {
-				if docs, err := manager.ListUserDocuments(userId); err == nil && docs != nil {
+				if docs, err := manager.ListUserDocuments(userID); err == nil && docs != nil {
 					allDocs = append(allDocs, docs...)
 				}
 			}
 		}
 		if r.openai != nil {
 			if manager, ok := r.openai.(OpenAIManager); ok {
-				if docs, err := manager.ListUserDocuments(userId); err == nil && docs != nil {
+				if docs, err := manager.ListUserDocuments(userID); err == nil && docs != nil {
 					allDocs = append(allDocs, docs...)
 				}
 			}
@@ -647,7 +647,7 @@ func (r *Router) ListUserDocuments(userId uint32, provider string) ([]create.Vec
 			return nil, fmt.Errorf("Google провайдер не инициализирован")
 		}
 		if manager, ok := r.google.(GoogleManager); ok {
-			return manager.ListUserDocuments(userId)
+			return manager.ListUserDocuments(userID)
 		}
 		return nil, fmt.Errorf("Google провайдер не поддерживает список документов")
 	case create.ProviderOpenAI:
@@ -655,7 +655,7 @@ func (r *Router) ListUserDocuments(userId uint32, provider string) ([]create.Vec
 			return nil, fmt.Errorf("OpenAI провайдер не инициализирован")
 		}
 		if manager, ok := r.openai.(OpenAIManager); ok {
-			return manager.ListUserDocuments(userId)
+			return manager.ListUserDocuments(userID)
 		}
 		return nil, fmt.Errorf("OpenAI провайдер не поддерживает список документов")
 	default:
@@ -668,96 +668,95 @@ func (r *Router) ListUserDocuments(userId uint32, provider string) ([]create.Vec
 // ============================================================================
 
 // SaveModel сохраняет модель в БД
-func (r *Router) SaveModel(userId uint32, umcr create.UMCR, data *create.UniversalModelData) error {
+func (r *Router) SaveModel(userID uint32, umcr create.UMCR, data *create.UniversalModelData) error {
 	if r.modelsManager == nil {
 		return fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.SaveModel(userId, umcr, data)
+	return r.modelsManager.SaveModel(userID, umcr, data)
 }
 
 // ReadModel читает модель пользователя по провайдеру
-func (r *Router) ReadModel(userId uint32, provider *create.ProviderType) (*create.UniversalModelData, error) {
+func (r *Router) ReadModel(userID uint32, provider *create.ProviderType) (*create.UniversalModelData, error) {
 	if r.modelsManager == nil {
 		return nil, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.ReadModel(userId, provider)
+	return r.modelsManager.ReadModel(userID, provider)
 }
 
 // GetAllModelAsJSON получает все модели пользователя в виде JSON
-func (r *Router) GetAllModelAsJSON(userId uint32) ([]byte, error) {
+func (r *Router) GetAllModelAsJSON(userID uint32) ([]byte, error) {
 	if r.modelsManager == nil {
 		return nil, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.GetModelAsJSON(userId)
+	return r.modelsManager.GetModelAsJSON(userID)
 }
 
 // DeleteModel удаляет модель пользователя
-func (r *Router) DeleteModel(userId uint32, provider create.ProviderType, deleteFiles bool, progressCallback func(string)) error {
+func (r *Router) DeleteModel(userID uint32, provider create.ProviderType, deleteFiles bool, progressCallback func(string)) error {
 	if r.modelsManager == nil {
 		return fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.DeleteModel(userId, provider, deleteFiles, progressCallback)
+	return r.modelsManager.DeleteModel(userID, provider, deleteFiles, progressCallback)
 }
 
 // UpdateModelToDB обновляет модель в БД (без обновления у провайдера)
-func (r *Router) UpdateModelToDB(userId uint32, data *create.UniversalModelData) error {
+func (r *Router) UpdateModelToDB(userID uint32, data *create.UniversalModelData) error {
 	if r.modelsManager == nil {
 		return fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.UpdateModelToDB(userId, data)
+	return r.modelsManager.UpdateModelToDB(userID, data)
 }
 
 // UpdateModelEveryWhere обновляет модель в БД и у провайдера
-func (r *Router) UpdateModelEveryWhere(userId uint32, data *create.UniversalModelData) error {
+func (r *Router) UpdateModelEveryWhere(userID uint32, data *create.UniversalModelData) error {
 	if r.modelsManager == nil {
 		return fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.UpdateModelEveryWhere(userId, data)
+	return r.modelsManager.UpdateModelEveryWhere(userID, data)
 }
 
 // GetUserModels получает все модели пользователя
-func (r *Router) GetUserModels(userId uint32) ([]create.UniversalModelData, error) {
+func (r *Router) GetUserModels(userID uint32) ([]create.UniversalModelData, error) {
 	if r.modelsManager == nil {
 		return nil, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.GetUserModels(userId)
+	return r.modelsManager.GetUserModels(userID)
 }
 
 // GetUserModelsResponse получает все модели пользователя для API
-func (r *Router) GetUserModelsResponse(userId uint32) (*create.UserModelsResponse, error) {
+func (r *Router) GetUserModelsResponse(userID uint32) (*create.UserModelsResponse, error) {
 	if r.modelsManager == nil {
 		return nil, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.GetAllUserModelsResponse(userId)
+	return r.modelsManager.GetAllUserModelsResponse(userID)
 }
 
 // SetActiveUserModel переключает активную модель пользователя
-func (r *Router) SetActiveUserModel(userId uint32, provider create.ProviderType) error {
+func (r *Router) SetActiveUserModel(userID uint32, provider create.ProviderType) error {
 	if r.modelsManager == nil {
 		return fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.SetActiveModelByProvider(userId, provider)
+	return r.modelsManager.SetActiveModelByProvider(userID, provider)
 }
 
 // GetUserModelByProvider получает модель пользователя по провайдеру
-func (r *Router) GetUserModelByProvider(userId uint32, provider create.ProviderType) (*create.UniversalModelData, error) {
+func (r *Router) GetUserModelByProvider(userID uint32, provider create.ProviderType) (*create.UniversalModelData, error) {
 	if r.modelsManager == nil {
 		return nil, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.GetUserModelByProvider(userId, provider)
+	return r.modelsManager.GetUserModelByProvider(userID, provider)
 }
 
-// GetRealUserID получает реальный userId через modelsManager.
+// GetRealuserID получает реальный userID через modelsManager.
 // Дублирующий fallback с прямым HTTP-запросом удалён — modelsManager всегда инициализирован.
-func (r *Router) GetRealUserID(userId uint32) (uint64, error) {
+func (r *Router) GetRealuserID(userID uint32) (uint64, error) {
 	if r.modelsManager == nil {
 		return 0, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.GetRealUserID(userId)
+	return r.modelsManager.GetRealuserID(userID)
 }
 
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
-func (r *Router) InvalidateUserAgentConfigCache(userId uint32) {
-	r.forEachProvider(func(p Inter) { p.InvalidateUserAgentConfigCache(userId) })
+func (r *Router) InvalidateUserAgentConfigCache(userID uint32) {
+	r.forEachProvider(func(p Inter) { p.InvalidateUserAgentConfigCache(userID) })
 }
-

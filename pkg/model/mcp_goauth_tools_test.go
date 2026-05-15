@@ -164,11 +164,11 @@ func TestMCP_GOAuth_SystemPromptNoHardcodedCalendarSheets(t *testing.T) {
 }
 
 // ============================================================================
-// TestMCP_GOAuth_CalendarToolSchemaNoUserID
+// TestMCP_GOAuth_CalendarToolSchemaNouserID
 // Проверяет что calendar_* инструменты (от MCP) не содержат user_id в inputSchema.
 // ============================================================================
 
-func TestMCP_GOAuth_CalendarToolSchemaNoUserID(t *testing.T) {
+func TestMCP_GOAuth_CalendarToolSchemaNouserID(t *testing.T) {
 	// Mistral имеет calendar инструменты
 	resp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, "23:2")
 	require.Nil(t, resp["error"])
@@ -197,8 +197,8 @@ func TestMCP_GOAuth_CalendarToolSchemaNoUserID(t *testing.T) {
 			continue
 		}
 
-		_, hasUserID := props["user_id"]
-		assert.False(t, hasUserID,
+		_, hasuserID := props["user_id"]
+		assert.False(t, hasuserID,
 			"инструмент %q не должен содержать user_id в inputSchema — MCP берёт из X-Session-ID", name)
 
 		t.Logf("✅ %s: user_id отсутствует в inputSchema", name)
@@ -338,4 +338,3 @@ func TestMCP_GOAuth_ToolsPerProviderSummary(t *testing.T) {
 			"провайдер %s должен получать хотя бы один инструмент от MCP", s.provider)
 	}
 }
-

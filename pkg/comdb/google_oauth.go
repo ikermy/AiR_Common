@@ -26,23 +26,23 @@ type GoogleOAuthToken struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// getModelIDByProvider получает model_id по userId и provider
-func (d *DB) getModelIDByProvider(userId uint32, provider create.ProviderType) (uint32, error) {
+// getModelIDByProvider получает model_id по userID и provider
+func (d *DB) getModelIDByProvider(userID uint32, provider create.ProviderType) (uint32, error) {
 	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
 	defer cancel()
 
 	query := `
 		SELECT um.ModelId 
 		FROM user_models um
-		WHERE um.UserID = ? AND um.Provider = ?
+		WHERE um.userID = ? AND um.Provider = ?
 		LIMIT 1
 	`
 
 	var modelID uint32
-	err := d.Conn().QueryRowContext(ctx, query, userId, provider).Scan(&modelID)
+	err := d.Conn().QueryRowContext(ctx, query, userID, provider).Scan(&modelID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return 0, fmt.Errorf("модель провайдера %d не найдена для пользователя %d", provider, userId)
+			return 0, fmt.Errorf("модель провайдера %d не найдена для пользователя %d", provider, userID)
 		}
 		return 0, fmt.Errorf("ошибка получения model_id: %w", err)
 	}
@@ -51,9 +51,9 @@ func (d *DB) getModelIDByProvider(userId uint32, provider create.ProviderType) (
 }
 
 // SaveGoogleTokenByProvider сохраняет или обновляет Google OAuth токен для модели пользователя по провайдеру
-func (d *DB) SaveGoogleTokenByProvider(userId uint32, provider create.ProviderType, googleEmail string, token *oauth2.Token) error {
-	if userId == 0 {
-		return fmt.Errorf("получен некорректный userId")
+func (d *DB) SaveGoogleTokenByProvider(userID uint32, provider create.ProviderType, googleEmail string, token *oauth2.Token) error {
+	if userID == 0 {
+		return fmt.Errorf("получен некорректный userID")
 	}
 	if googleEmail == "" {
 		return fmt.Errorf("получен пустой google_email")
@@ -62,8 +62,8 @@ func (d *DB) SaveGoogleTokenByProvider(userId uint32, provider create.ProviderTy
 		return fmt.Errorf("получен пустой токен")
 	}
 
-	// Получаем model_id по userId и provider
-	modelID, err := d.getModelIDByProvider(userId, provider)
+	// Получаем model_id по userID и provider
+	modelID, err := d.getModelIDByProvider(userID, provider)
 	if err != nil {
 		return err
 	}
@@ -116,13 +116,13 @@ func (d *DB) SaveGoogleTokenByProvider(userId uint32, provider create.ProviderTy
 }
 
 // GetGoogleTokenByProvider получает Google OAuth токен для модели пользователя по провайдеру
-func (d *DB) GetGoogleTokenByProvider(userId uint32, provider create.ProviderType) (*oauth2.Token, string, error) {
-	if userId == 0 {
-		return nil, "", fmt.Errorf("получен некорректный userId")
+func (d *DB) GetGoogleTokenByProvider(userID uint32, provider create.ProviderType) (*oauth2.Token, string, error) {
+	if userID == 0 {
+		return nil, "", fmt.Errorf("получен некорректный userID")
 	}
 
-	// Получаем model_id по userId и provider
-	modelID, err := d.getModelIDByProvider(userId, provider)
+	// Получаем model_id по userID и provider
+	modelID, err := d.getModelIDByProvider(userID, provider)
 	if err != nil {
 		return nil, "", err
 	}
@@ -182,16 +182,16 @@ func (d *DB) GetGoogleTokenByProvider(userId uint32, provider create.ProviderTyp
 }
 
 // RefreshGoogleTokenIfNeededByProvider проверяет срок действия токена и обновляет его при необходимости
-func (d *DB) RefreshGoogleTokenIfNeededByProvider(userId uint32, provider create.ProviderType, oauthConfig *oauth2.Config) error {
-	if userId == 0 {
-		return fmt.Errorf("получен некорректный userId")
+func (d *DB) RefreshGoogleTokenIfNeededByProvider(userID uint32, provider create.ProviderType, oauthConfig *oauth2.Config) error {
+	if userID == 0 {
+		return fmt.Errorf("получен некорректный userID")
 	}
 	if oauthConfig == nil {
 		return fmt.Errorf("получен пустой oauth config")
 	}
 
 	// Получаем текущий токен
-	token, googleEmail, err := d.GetGoogleTokenByProvider(userId, provider)
+	token, googleEmail, err := d.GetGoogleTokenByProvider(userID, provider)
 	if err != nil {
 		return fmt.Errorf("ошибка получения токена для проверки: %w", err)
 	}
@@ -214,7 +214,7 @@ func (d *DB) RefreshGoogleTokenIfNeededByProvider(userId uint32, provider create
 	}
 
 	// Сохраняем обновленный токен
-	if err := d.SaveGoogleTokenByProvider(userId, provider, googleEmail, newToken); err != nil {
+	if err := d.SaveGoogleTokenByProvider(userID, provider, googleEmail, newToken); err != nil {
 		return fmt.Errorf("ошибка сохранения обновленного токена: %w", err)
 	}
 
@@ -222,13 +222,13 @@ func (d *DB) RefreshGoogleTokenIfNeededByProvider(userId uint32, provider create
 }
 
 // DeleteGoogleTokenByProvider удаляет Google OAuth токен для модели пользователя по провайдеру
-func (d *DB) DeleteGoogleTokenByProvider(userId uint32, provider create.ProviderType) error {
-	if userId == 0 {
-		return fmt.Errorf("получен некорректный userId")
+func (d *DB) DeleteGoogleTokenByProvider(userID uint32, provider create.ProviderType) error {
+	if userID == 0 {
+		return fmt.Errorf("получен некорректный userID")
 	}
 
-	// Получаем model_id по userId и provider
-	modelID, err := d.getModelIDByProvider(userId, provider)
+	// Получаем model_id по userID и provider
+	modelID, err := d.getModelIDByProvider(userID, provider)
 	if err != nil {
 		return err
 	}

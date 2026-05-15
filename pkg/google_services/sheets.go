@@ -43,9 +43,9 @@ func NewSheetsService(ctx context.Context, db comdb.Exterior, provider create.Pr
 
 // getSheetsService создает Google Sheets сервис с OAuth токеном пользователя
 // Автоматически обновляет токен если истёк срок действия
-func (s *SheetsService) getSheetsService(userId uint32) (*sheets.Service, error) {
+func (s *SheetsService) getSheetsService(userID uint32) (*sheets.Service, error) {
 	// Получаем токен из БД
-	token, googleEmail, err := s.db.GetGoogleTokenByProvider(userId, s.provider)
+	token, googleEmail, err := s.db.GetGoogleTokenByProvider(userID, s.provider)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения Google токена: %w", err)
 	}
@@ -85,7 +85,7 @@ func (s *SheetsService) getSheetsService(userId uint32) (*sheets.Service, error)
 
 		// Если токен был обновлён - сохраняем в БД
 		if freshToken.AccessToken != token.AccessToken {
-			err = s.db.SaveGoogleTokenByProvider(userId, s.provider, googleEmail, freshToken)
+			err = s.db.SaveGoogleTokenByProvider(userID, s.provider, googleEmail, freshToken)
 			if err != nil {
 				return nil, fmt.Errorf("не удалось сохранить обновлённый токен: %v", err)
 			}
@@ -110,14 +110,14 @@ func (s *SheetsService) getSheetsService(userId uint32) (*sheets.Service, error)
 
 // ReadRangeParams параметры для чтения диапазона ячеек
 type ReadRangeParams struct {
-	UserID        uint32 `json:"user_id,string"`
+	userID        uint32 `json:"user_id,string"`
 	SpreadsheetID string `json:"spreadsheet_id"` // ID таблицы из URL
 	Range         string `json:"range"`          // Например: "Sheet1!A1:D10"
 }
 
 // ReadRange читает данные из указанного диапазона
 func (s *SheetsService) ReadRange(params ReadRangeParams) (string, error) {
-	sheetsService, err := s.getSheetsService(params.UserID)
+	sheetsService, err := s.getSheetsService(params.userID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
@@ -143,13 +143,13 @@ func (s *SheetsService) ReadRange(params ReadRangeParams) (string, error) {
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	//logger.Debug("Sheets: прочитано %d строк из %s", len(resp.Values), params.Range, params.UserID)
+	//logger.Debug("Sheets: прочитано %d строк из %s", len(resp.Values), params.Range, params.userID)
 	return string(resultJSON), nil
 }
 
 // WriteRangeParams параметры для записи данных
 type WriteRangeParams struct {
-	UserID        uint32          `json:"user_id,string"`
+	userID        uint32          `json:"user_id,string"`
 	SpreadsheetID string          `json:"spreadsheet_id"`
 	Range         string          `json:"range"`  // Например: "Sheet1!A1"
 	Values        [][]interface{} `json:"values"` // Двумерный массив значений
@@ -157,7 +157,7 @@ type WriteRangeParams struct {
 
 // WriteRange записывает данные в указанный диапазон
 func (s *SheetsService) WriteRange(params WriteRangeParams) (string, error) {
-	sheetsService, err := s.getSheetsService(params.UserID)
+	sheetsService, err := s.getSheetsService(params.userID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
@@ -190,13 +190,13 @@ func (s *SheetsService) WriteRange(params WriteRangeParams) (string, error) {
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	//logger.Debug("Sheets: записано %d ячеек в %s", resp.UpdatedCells, params.Range, params.UserID)
+	//logger.Debug("Sheets: записано %d ячеек в %s", resp.UpdatedCells, params.Range, params.userID)
 	return string(resultJSON), nil
 }
 
 // AppendRangeParams параметры для добавления данных в конец таблицы
 type AppendRangeParams struct {
-	UserID        uint32          `json:"user_id,string"`
+	userID        uint32          `json:"user_id,string"`
 	SpreadsheetID string          `json:"spreadsheet_id"`
 	Range         string          `json:"range"` // Например: "Sheet1!A:D"
 	Values        [][]interface{} `json:"values"`
@@ -204,7 +204,7 @@ type AppendRangeParams struct {
 
 // AppendRange добавляет данные в конец таблицы
 func (s *SheetsService) AppendRange(params AppendRangeParams) (string, error) {
-	sheetsService, err := s.getSheetsService(params.UserID)
+	sheetsService, err := s.getSheetsService(params.userID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
@@ -237,20 +237,20 @@ func (s *SheetsService) AppendRange(params AppendRangeParams) (string, error) {
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	//logger.Debug("Sheets: добавлено %d строк в %s", resp.Updates.UpdatedRows, params.Range, params.UserID)
+	//logger.Debug("Sheets: добавлено %d строк в %s", resp.Updates.UpdatedRows, params.Range, params.userID)
 	return string(resultJSON), nil
 }
 
 // CreateSpreadsheetParams параметры для создания новой таблицы
 type CreateSpreadsheetParams struct {
-	UserID     uint32   `json:"user_id,string"`
+	userID     uint32   `json:"user_id,string"`
 	Title      string   `json:"title"`
 	SheetNames []string `json:"sheet_names"` // Названия листов, опционально
 }
 
 // CreateSpreadsheet создает новую Google Sheets таблицу
 func (s *SheetsService) CreateSpreadsheet(params CreateSpreadsheetParams) (string, error) {
-	sheetsService, err := s.getSheetsService(params.UserID)
+	sheetsService, err := s.getSheetsService(params.userID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil
@@ -292,19 +292,19 @@ func (s *SheetsService) CreateSpreadsheet(params CreateSpreadsheetParams) (strin
 	}
 
 	resultJSON, _ := json.Marshal(result)
-	//logger.Debug("Sheets: создана таблица '%s' (ID: %s)", params.Title, resp.SpreadsheetId, params.UserID)
+	//logger.Debug("Sheets: создана таблица '%s' (ID: %s)", params.Title, resp.SpreadsheetId, params.userID)
 	return string(resultJSON), nil
 }
 
 // GetSpreadsheetInfoParams параметры для получения информации о таблице
 type GetSpreadsheetInfoParams struct {
-	UserID        uint32 `json:"user_id,string"`
+	userID        uint32 `json:"user_id,string"`
 	SpreadsheetID string `json:"spreadsheet_id"`
 }
 
 // GetSpreadsheetInfo получает информацию о таблице (название, листы и т.д.)
 func (s *SheetsService) GetSpreadsheetInfo(params GetSpreadsheetInfoParams) (string, error) {
-	sheetsService, err := s.getSheetsService(params.UserID)
+	sheetsService, err := s.getSheetsService(params.userID)
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": err.Error()})
 		return string(result), nil

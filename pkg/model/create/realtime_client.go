@@ -16,7 +16,7 @@ type IntOrInf struct {
 	Value int // 0 означает "inf"
 }
 
-func (v IntOrInf) MarshalJSON() ([]byte, error) {
+func (v *IntOrInf) MarshalJSON() ([]byte, error) {
 	if v.Value == 0 {
 		return []byte(`"inf"`), nil
 	}

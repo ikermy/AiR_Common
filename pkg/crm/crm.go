@@ -107,7 +107,7 @@ type AmoCRMSettings struct {
 }
 
 type UserCRMConfig struct {
-	UserID       uint32
+	userID       uint32
 	Channels     ChannelsSettings
 	AltContactID int64 // ID канала для создания контактов без номера телефона
 }
@@ -308,7 +308,7 @@ func (c *CRM) Init(userID uint32) (*User, string, error) {
 	}
 
 	crmConfig := &UserCRMConfig{
-		UserID:   userID,
+		userID:   userID,
 		Channels: *setting,
 	}
 
@@ -395,17 +395,17 @@ func (c *CRM) Shutdown(shutCh chan<- com.LogMsg) {
 		select {
 		case <-done:
 			shutCh <- com.LogMsg{
-				Msg:  "Пользователь успешно завершил работу",
-				Mod:  "CRM",
-				Log:  3, // 3 - Debug
-				UID:  userID,
+				Msg: "Пользователь успешно завершил работу",
+				Mod: "CRM",
+				Log: 3, // 3 - Debug
+				UID: userID,
 			}
 		case <-time.After(10 * time.Second):
 			shutCh <- com.LogMsg{
-				Msg:  "Таймаут ожидания завершения пользователя",
-				Mod:  "CRM",
-				Log:  2, // 2 - Warn
-				UID:  userID,
+				Msg: "Таймаут ожидания завершения пользователя",
+				Mod: "CRM",
+				Log: 2, // 2 - Warn
+				UID: userID,
 			}
 		}
 
@@ -541,7 +541,7 @@ func (u *User) dispatcher() {
 // worker - это горутина, которая последовательно обрабатывает сообщения из своего канала
 func (u *User) worker(id uint8, messages <-chan *Message) {
 	for msg := range messages {
-		//logger.Debug("Воркер %d получил сообщение для %s", id, msg.Phone, u.conf.UserID)
+		//logger.Debug("Воркер %d получил сообщение для %s", id, msg.Phone, u.conf.userID)
 		u.processor(msg)
 	}
 }
@@ -594,12 +594,12 @@ func (u *User) processor(msg *Message) {
 					newContactData.CustomFields = []CustomField{{ID: u.conf.AltContactID}}
 				}
 
-				//logger.Debug("Создание нового контакта в AmoCRM для альтернативного контакта %s", msg.AltContact, u.conf.UserID)
+				//logger.Debug("Создание нового контакта в AmoCRM для альтернативного контакта %s", msg.AltContact, u.conf.userID)
 				contact, err = u.CreateContact(&newContactData)
 				if err != nil {
 					return
 				}
-				//logger.Debug("Новый контакт создан в AmoCRM: ID=%s, Name=%s, AltContact=%s", contact.ID, contact.Name, msg.AltContact, u.conf.UserID)
+				//logger.Debug("Новый контакт создан в AmoCRM: ID=%s, Name=%s, AltContact=%s", contact.ID, contact.Name, msg.AltContact, u.conf.userID)
 			}
 
 			// Сохраняем в кэш альтернативных контактов
@@ -620,7 +620,7 @@ func (u *User) processor(msg *Message) {
 			// Если контакт не найден, создаем новый
 			if contact.ID == "" {
 				if !u.conf.Channels.AmoCRM.CreateNewContact {
-					//logger.Debug("Создание новых контактов запрещено настройками для %s", msg.Phone, u.conf.UserID)
+					//logger.Debug("Создание новых контактов запрещено настройками для %s", msg.Phone, u.conf.userID)
 					return
 				}
 
@@ -630,12 +630,12 @@ func (u *User) processor(msg *Message) {
 					Tags:  u.conf.Channels.AmoCRM.Tags,
 				}
 
-				//logger.Debug("Создание нового контакта в AmoCRM для %s", msg.Phone, u.conf.UserID)
+				//logger.Debug("Создание нового контакта в AmoCRM для %s", msg.Phone, u.conf.userID)
 				contact, err = u.CreateContact(&newContactData)
 				if err != nil {
 					return
 				}
-				//logger.Debug("Новый контакт создан в AmoCRM: ID=%s, Name=%s, Phone=%s", contact.ID, contact.Name, msg.Phone, u.conf.UserID)
+				//logger.Debug("Новый контакт создан в AmoCRM: ID=%s, Name=%s, Phone=%s", contact.ID, contact.Name, msg.Phone, u.conf.userID)
 			}
 
 			// Сохраняем в кэш телефонов
@@ -653,7 +653,7 @@ func (u *User) processor(msg *Message) {
 		// Запрашиваем с сервера
 		leads, err := u.FindLeadByContactID(contactID)
 		if err != nil {
-			//logger.Debug("Ошибка поиска лидов для контакта %s: %v", contactID, err, u.conf.UserID)
+			//logger.Debug("Ошибка поиска лидов для контакта %s: %v", contactID, err, u.conf.userID)
 			return
 		}
 
@@ -662,15 +662,15 @@ func (u *User) processor(msg *Message) {
 			// Если лид найден и сообщение содержит метку "новый диалог", обновляем статус
 			if msg.New {
 				if err := u.UpdateLeadState(leadID); err != nil {
-					//	logger.Error("Ошибка обновления статуса лида %s: %v", leadID, err, u.conf.UserID)
+					//	logger.Error("Ошибка обновления статуса лида %s: %v", leadID, err, u.conf.userID)
 					//} else {
-					//	logger.Debug("Статус лида %s обновлен", leadID, u.conf.UserID)
+					//	logger.Debug("Статус лида %s обновлен", leadID, u.conf.userID)
 				}
 			}
 		} else {
 			// Создание нового лида
 			if !u.conf.Channels.AmoCRM.CreateNewLead {
-				//logger.Debug("Создание новых лидов запрещено настройками для контакта %s", contactID, u.conf.UserID)
+				//logger.Debug("Создание новых лидов запрещено настройками для контакта %s", contactID, u.conf.userID)
 				return
 			}
 			newLeadData := CreateLead{ContactID: contactID, LeadName: u.conf.Channels.AmoCRM.LeadName, Tags: u.conf.Channels.AmoCRM.Tags}
@@ -687,7 +687,7 @@ func (u *User) processor(msg *Message) {
 
 	// Шаг 3: Добавление заметки к лиду
 	if !u.conf.Channels.AmoCRM.ChatMessages {
-		//logger.Debug("Настройки запрещают добавлять сообщения в чат", u.conf.UserID)
+		//logger.Debug("Настройки запрещают добавлять сообщения в чат", u.conf.userID)
 		return
 	}
 

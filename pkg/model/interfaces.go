@@ -16,58 +16,58 @@ type DB = comdb.Exterior
 // Inter интерфейс для работы с моделями Assistant
 type Inter interface {
 	NewMessage(operator Operator, msgType string, content *AssistResponse, name *string, files ...FileUpload) Message
-	GetFileAsReader(url string) (io.Reader, error)
+	GetFileAsReaderData(url string) (io.Reader, error)
 	GetOrSetRespGPT(assist Assistant, dialogID, respId uint64, respName string) (*RespModel, error)
 	GetCh(respId uint64) (*Ch, error)
 	GetRespIdBydialogID(dialogID uint64) (uint64, error)
 	SaveAllContextDuringExit()
-	Request(userId uint32, dialogID uint64, text string, files ...FileUpload) (AssistResponse, error)
-	RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...FileUpload) error
+	Request(userID uint32, dialogID uint64, text string, files ...FileUpload) (AssistResponse, error)
+	RequestStreaming(userID uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...FileUpload) error
 	CleanDialogData(dialogID uint64)
 	DeleteTempFile(fileID string) error
-	TranscribeAudio(audioData []byte, fileName string) (string, error)
+	TranscribeAudioData(audioData []byte, fileName string) (string, error)
 	CleanUp()
-	InvalidateUserAgentConfigCache(userId uint32)
+	InvalidateUserAgentConfigCache(userID uint32)
 	Shutdown(shutCh chan<- com.LogMsg)
 }
 
 // RouterInterface минимальный интерфейс для доступа к методам роутера
 type RouterInterface interface {
-	GetRealUserID(userId uint32) (uint64, error)
+	GetRealuserID(userID uint32) (uint64, error)
 }
 
 // OpenAIManager расширяет Inter методами управления моделями OpenAI
 type OpenAIManager interface {
 	Inter
-	CreateModel(userId uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error)
-	UploadDocumentWithEmbedding(userId uint32, docName, content string, metadata create.DocumentMetadata) (string, error)
-	SearchSimilarDocuments(userId uint32, query string, limit int) ([]create.VectorDocument, error)
-	DeleteDocument(userId uint32, docID string) error
-	ListUserDocuments(userId uint32) ([]create.VectorDocument, error)
+	CreateModel(userID uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error)
+	UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata create.DocumentMetadata) (string, error)
+	SearchSimilarDocuments(userID uint32, query string, limit int) ([]create.VectorDocument, error)
+	DeleteDocument(userID uint32, docID string) error
+	ListUserDocuments(userID uint32) ([]create.VectorDocument, error)
 }
 
 // MistralManager расширяет Inter для Mistral-специфичных методов работы с библиотеками
 type MistralManager interface {
 	Inter
-	CreateModel(userId uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error)
-	UploadFileToProvider(userId uint32, fileName string, fileData []byte) (string, error)
-	DeleteDocumentFromLibrary(userId uint32, documentID string) error
-	AddFileToLibrary(userId uint32, fileID, fileName string) error
+	CreateModel(userID uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error)
+	UploadFileToProvider(userID uint32, fileName string, fileData []byte) (string, error)
+	DeleteDocumentFromLibrary(userID uint32, documentID string) error
+	AddFileToLibrary(userID uint32, fileID, fileName string) error
 }
 
 // GoogleManager расширяет Inter для Google-специфичных методов
 type GoogleManager interface {
 	Inter
-	CreateModel(userId uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error)
-	UploadDocumentWithEmbedding(userId uint32, docName, content string, metadata create.DocumentMetadata) (string, error)
-	SearchSimilarDocuments(userId uint32, query string, limit int) ([]create.VectorDocument, error)
-	DeleteDocument(userId uint32, docID string) error
-	ListUserDocuments(userId uint32) ([]create.VectorDocument, error)
+	CreateModel(userID uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error)
+	UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata create.DocumentMetadata) (string, error)
+	SearchSimilarDocuments(userID uint32, query string, limit int) ([]create.VectorDocument, error)
+	DeleteDocument(userID uint32, docID string) error
+	ListUserDocuments(userID uint32) ([]create.VectorDocument, error)
 }
 
 // ActionHandler интерфейс для обработки функций ассистента
 type ActionHandler interface {
-	RunAction(ctx context.Context, functionName, arguments string, provider create.ProviderType, userId uint32) string
+	RunAction(ctx context.Context, functionName, arguments string, provider create.ProviderType, userID uint32) string
 }
 
 // MCPToolDefinition описание инструмента от MCP сервера (tools/list).
@@ -82,8 +82,8 @@ type MCPToolDefinition struct {
 // Реализуется UniversalActionHandler (pkg/model/action_handler.go).
 type MCPConfigProvider interface {
 	ActionHandler
-	FetchToolsList(ctx context.Context, userId uint32, provider create.ProviderType) ([]MCPToolDefinition, error)
-	FetchSystemPrompt(ctx context.Context, userId uint32, provider create.ProviderType) (string, error)
+	FetchToolsList(ctx context.Context, userID uint32, provider create.ProviderType) ([]MCPToolDefinition, error)
+	FetchSystemPrompt(ctx context.Context, userID uint32, provider create.ProviderType) (string, error)
 }
 
 // RealtimeEvent — событие голосовой сессии OpenAI Realtime API.
@@ -101,7 +101,7 @@ type RealtimeEvent struct {
 // RealtimeProvider опциональный интерфейс для голосовых сессий реального времени.
 // Реализуется только OpenAIModel.
 type RealtimeProvider interface {
-	StartRealtimeSession(userId uint32, dialogID, respId uint64) error
+	StartRealtimeSession(userID uint32, dialogID, respId uint64) error
 	CloseRealtimeSession(respId uint64)
 	SendRealtimeAudio(respId uint64, pcm16 []byte) error
 	SubscribeEvents(respId uint64) (<-chan RealtimeEvent, error)
@@ -111,4 +111,3 @@ type RealtimeProvider interface {
 	GetRealtimeGenerating(respId uint64) *atomic.Bool
 	SetRealtimeDisconnectCallback(respId uint64, callback func(respId uint64)) error
 }
-

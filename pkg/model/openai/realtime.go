@@ -26,7 +26,7 @@ type RealtimeSession struct {
 	ctx         context.Context // Контекст сессии — отменяется при CloseRealtimeSession
 	cancel      context.CancelFunc
 	agentConfig *AgentConfig // Ссылка на конфиг агента (не копируется)
-	userId      uint32
+	userID      uint32
 	dialogID    uint64 // treadId из TestSession — для сохранения транскрипции в БД
 	respId      uint64
 
@@ -161,9 +161,9 @@ func (m *Model) GetRealtimeGenerating(respId uint64) *atomic.Bool {
 
 // StartRealtimeSession создаёт WSS-соединение к OpenAI Realtime API и запускает pump-горутины.
 // Вызывается после GetOrSetRespGPT — RespModel уже должен существовать в m.responders.
-func (m *Model) StartRealtimeSession(userId uint32, dialogID, respId uint64) error {
+func (m *Model) StartRealtimeSession(userID uint32, dialogID, respId uint64) error {
 	if existing := m.GetRealtimeSession(respId); existing != nil {
-		//logger.Debug("StartRealtimeSession: сессия уже существует для respId=%d", respId, userId)
+		//logger.Debug("StartRealtimeSession: сессия уже существует для respId=%d", respId, userID)
 		return nil
 	}
 
@@ -177,7 +177,7 @@ func (m *Model) StartRealtimeSession(userId uint32, dialogID, respId uint64) err
 	}
 
 	if !rm.AgentConfig.RealtimeEnabled {
-		return fmt.Errorf("StartRealtimeSession: Realtime не включён для userId=%d (установите флаг Realtime в настройках модели)", userId)
+		return fmt.Errorf("StartRealtimeSession: Realtime не включён для userID=%d (установите флаг Realtime в настройках модели)", userID)
 	}
 
 	conn, err := create.DialRealtimeSession(m.client.GetAPIKey(), rm.AgentConfig.RealtimeModel)
@@ -192,7 +192,7 @@ func (m *Model) StartRealtimeSession(userId uint32, dialogID, respId uint64) err
 		ctx:           ctx,
 		cancel:        cancel,
 		agentConfig:   rm.AgentConfig,
-		userId:        userId,
+		userID:        userID,
 		dialogID:      dialogID,
 		respId:        respId,
 		AudioIn:       make(chan []byte, 256),
@@ -208,13 +208,13 @@ func (m *Model) StartRealtimeSession(userId uint32, dialogID, respId uint64) err
 
 	// Инжектируем историю диалога — realtime-агент знает контекст предыдущих разговоров.
 	if err := m.injectDialogHistory(rs, dialogID); err != nil {
-		//logger.Warn("StartRealtimeSession: не удалось инжектировать историю диалога: %v respId=%d", err, respId, userId)
+		//logger.Warn("StartRealtimeSession: не удалось инжектировать историю диалога: %v respId=%d", err, respId, userID)
 		// Не критично — продолжаем без истории
 	}
 
 	m.realtimeSessions.Store(respId, rs)
 	//logger.Info("StartRealtimeSession: голосовая сессия запущена respId=%d model=%s",
-	//	respId, rm.AgentConfig.RealtimeModel, userId)
+	//	respId, rm.AgentConfig.RealtimeModel, userID)
 
 	// Горутина-сторож: закрывает WS при отмене контекста → разблокирует ReadMessage()
 	go func() {
@@ -240,7 +240,7 @@ func (m *Model) injectDialogHistory(rs *RealtimeSession, dialogID uint64) error 
 		// Кэш пуст — синхронно загружаем из БД
 		dbHistory, err := m.ConvertDialogToOpenAIFormat(dialogID)
 		if err != nil || len(dbHistory) == 0 {
-			//logger.Debug("injectDialogHistory: история пуста или не найдена для dialogID=%d", dialogID, rs.userId)
+			//logger.Debug("injectDialogHistory: история пуста или не найдена для dialogID=%d", dialogID, rs.userID)
 			return nil
 		}
 		if len(dbHistory) > int(create.DialogHistoryLimit) {
@@ -261,7 +261,7 @@ func (m *Model) injectDialogHistory(rs *RealtimeSession, dialogID uint64) error 
 	}
 
 	//logger.Info("injectDialogHistory: инжектируем %d сообщений dialogID=%d respId=%d",
-	//	len(history), dialogID, rs.respId, rs.userId)
+	//	len(history), dialogID, rs.respId, rs.userID)
 
 	for _, msg := range history {
 		if msg.Content == "" {
@@ -291,7 +291,7 @@ func (m *Model) injectDialogHistory(rs *RealtimeSession, dialogID uint64) error 
 		}
 	}
 
-	//logger.Debug("injectDialogHistory: завершено %d сообщений dialogID=%d", len(history), dialogID, rs.userId)
+	//logger.Debug("injectDialogHistory: завершено %d сообщений dialogID=%d", len(history), dialogID, rs.userID)
 	return nil
 }
 
@@ -339,7 +339,7 @@ func (m *Model) CloseRealtimeSession(respId uint64) {
 
 	rs.cancel()
 	_ = rs.openaiConn.Close()
-	//logger.Info("CloseRealtimeSession: сессия закрыта respId=%d", respId, rs.userId)
+	//logger.Info("CloseRealtimeSession: сессия закрыта respId=%d", respId, rs.userID)
 }
 
 // SendRealtimeAudio ставит PCM16-чанк от клиента в очередь pumpToOpenAI.
@@ -355,7 +355,7 @@ func (m *Model) SendRealtimeAudio(respId uint64, pcm16 []byte) error {
 		return fmt.Errorf("SendRealtimeAudio: сессия завершена для respId=%d", respId)
 	default:
 		//logger.Warn("SendRealtimeAudio: буфер AudioIn переполнен respId=%d, дроп %d байт",
-		//	respId, len(pcm16), rs.userId)
+		//	respId, len(pcm16), rs.userID)
 		return nil
 	}
 }
@@ -380,9 +380,9 @@ func (m *Model) sendSessionUpdate(rs *RealtimeSession) error {
 	// Промпт строится на лету из SystemPrompt
 	instructions := buildRealtimeSystemPrompt(rs.agentConfig)
 
-	//logger.Debug("sendSessionUpdate: agentConfig.Tools raw count=%d respId=%d", len(rs.agentConfig.Tools), rs.respId, rs.userId)
+	//logger.Debug("sendSessionUpdate: agentConfig.Tools raw count=%d respId=%d", len(rs.agentConfig.Tools), rs.respId, rs.userID)
 	tools := buildRealtimeTools(rs.agentConfig.Tools)
-	//logger.Warn("sendSessionUpdate: Tools after convert count=%d list=%v respId=%d", len(tools), tools, rs.respId, rs.userId)
+	//logger.Warn("sendSessionUpdate: Tools after convert count=%d list=%v respId=%d", len(tools), tools, rs.respId, rs.userID)
 	// Собираем turn_detection из RealtimeVAD или используем дефолты
 	vad := rs.agentConfig.RealtimeVAD
 	threshold := 0.5
@@ -468,7 +468,7 @@ func (m *Model) sendSessionUpdate(rs *RealtimeSession) error {
 	}
 
 	//logger.Info("sendSessionUpdate: отправлено respId=%d voice=%s tools=%d instructionsLen=%d threshold=%.2f silence=%dms",
-	//	rs.respId, voice, len(tools), len(instructions), threshold, silenceDurationMs, rs.userId)
+	//	rs.respId, voice, len(tools), len(instructions), threshold, silenceDurationMs, rs.userID)
 	return nil
 }
 
@@ -606,7 +606,7 @@ func (m *Model) sendInitialGreeting(rs *RealtimeSession) {
 	// Проверяем параметр InitialGreeting из конфига
 	if rs.agentConfig != nil && rs.agentConfig.RealtimeVAD != nil {
 		if rs.agentConfig.RealtimeVAD.InitialGreeting != nil && !*rs.agentConfig.RealtimeVAD.InitialGreeting {
-			//logger.Debug("sendInitialGreeting: приветствие отключено в конфиге respId=%d", rs.respId, rs.userId)
+			//logger.Debug("sendInitialGreeting: приветствие отключено в конфиге respId=%d", rs.respId, rs.userID)
 			return
 		}
 	}
@@ -620,7 +620,7 @@ func (m *Model) sendInitialGreeting(rs *RealtimeSession) {
 
 	if hasExplicitGreeting {
 		greetingText := *rs.agentConfig.RealtimeVAD.Greeting
-		//logger.Debug("sendInitialGreeting: явная фраза %q respId=%d", greetingText, rs.respId, rs.userId)
+		//logger.Debug("sendInitialGreeting: явная фраза %q respId=%d", greetingText, rs.respId, rs.userID)
 		// Передаём фразу как instructions — модель произносит её как свою первую реплику.
 		// НЕ используем input с командой "Say EXACTLY..." — иначе модель комментирует задание.
 		event = map[string]interface{}{
@@ -644,9 +644,9 @@ func (m *Model) sendInitialGreeting(rs *RealtimeSession) {
 	}
 
 	if err := rs.writeJSON(event); err != nil {
-		//logger.Warn("sendInitialGreeting: ошибка отправки: %v respId=%d", err, rs.respId, rs.userId)
+		//logger.Warn("sendInitialGreeting: ошибка отправки: %v respId=%d", err, rs.respId, rs.userID)
 		rs.greetingSent.Store(false)
 		//} else {
-		//	logger.Info("sendInitialGreeting: приветствие отправлено respId=%d", rs.respId, rs.userId)
+		//	logger.Info("sendInitialGreeting: приветствие отправлено respId=%d", rs.respId, rs.userID)
 	}
 }

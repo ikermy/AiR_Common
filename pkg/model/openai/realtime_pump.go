@@ -65,31 +65,31 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 		watchdogTimer = time.AfterFunc(after, func() {
 			defer func() {
 				if r := recover(); r != nil {
-					//logger.Warn("pumpFromOpenAI: watchdog panic: %v respId=%d", r, rs.respId, rs.userId)
+					//logger.Warn("pumpFromOpenAI: watchdog panic: %v respId=%d", r, rs.respId, rs.userID)
 				}
 			}()
 			// Если контекст уже отменён (звонок завершён вручную) — не действуем
 			if rs.ctx.Err() != nil {
 				return
 			}
-			//logger.Warn("pumpFromOpenAI: watchdog level 1 — %s, отправляем response.cancel respId=%d", reason, rs.respId, rs.userId)
+			//logger.Warn("pumpFromOpenAI: watchdog level 1 — %s, отправляем response.cancel respId=%d", reason, rs.respId, rs.userID)
 			rs.IsGenerating.Store(false)
 			if err := rs.writeJSON(map[string]interface{}{"type": "response.cancel"}); err != nil {
-				//logger.Warn("pumpFromOpenAI: watchdog response.cancel error: %v respId=%d", err, rs.respId, rs.userId)
+				//logger.Warn("pumpFromOpenAI: watchdog response.cancel error: %v respId=%d", err, rs.respId, rs.userID)
 			}
 
 			// Запускаем второй уровень таймаута: если response.cancel не сработал за 2s → завершаем сессию
 			watchdogPanicTimer = time.AfterFunc(2*time.Second, func() {
 				defer func() {
 					if r := recover(); r != nil {
-						//logger.Warn("pumpFromOpenAI: watchdog panic timer panic: %v respId=%d", r, rs.respId, rs.userId)
+						//logger.Warn("pumpFromOpenAI: watchdog panic timer panic: %v respId=%d", r, rs.respId, rs.userID)
 					}
 				}()
 				// Если контекст уже отменён (звонок завершён вручную) — не действуем
 				if rs.ctx.Err() != nil {
 					return
 				}
-				//logger.Error("pumpFromOpenAI: watchdog level 2 CRITICAL — модель не отвечает после response.cancel, завершаем сессию respId=%d", rs.respId, rs.userId)
+				//logger.Error("pumpFromOpenAI: watchdog level 2 CRITICAL — модель не отвечает после response.cancel, завершаем сессию respId=%d", rs.respId, rs.userID)
 
 				// Вызываем OnDisconnect callback для завершения звонка (Telegram) или отключения клиента (API)
 				// Защита от двойного вызова через флаг onDisconnectCalled
@@ -108,7 +108,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 		stopWatchdogPanic()
 	}()
 
-	//logger.Info("pumpFromOpenAI: горутина запущена respId=%d dialogID=%d", rs.respId, rs.dialogID, rs.userId)
+	//logger.Info("pumpFromOpenAI: горутина запущена respId=%d dialogID=%d", rs.respId, rs.dialogID, rs.userID)
 
 	for {
 		select {
@@ -121,7 +121,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 		if err != nil {
 			if !strings.Contains(err.Error(), "use of closed network connection") &&
 				!strings.Contains(err.Error(), "websocket: close") {
-				//logger.Error("pumpFromOpenAI: ошибка чтения WS respId=%d: %v", rs.respId, err, rs.userId)
+				//logger.Error("pumpFromOpenAI: ошибка чтения WS respId=%d: %v", rs.respId, err, rs.userID)
 				rs.publishEvent(RealtimeEvent{Type: "error", Text: err.Error(), Err: err})
 			}
 			return
@@ -129,7 +129,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 
 		var event map[string]interface{}
 		if err := json.Unmarshal(msg, &event); err != nil {
-			//logger.Warn("pumpFromOpenAI: ошибка парсинга события: %v raw=%s", err, string(msg), rs.userId)
+			//logger.Warn("pumpFromOpenAI: ошибка парсинга события: %v raw=%s", err, string(msg), rs.userID)
 			continue
 		}
 
@@ -145,13 +145,13 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			}
 			pcm16, err := base64.StdEncoding.DecodeString(delta)
 			if err != nil {
-				//logger.Warn("pumpFromOpenAI: ошибка декодирования audio delta: %v", err, rs.userId)
+				//logger.Warn("pumpFromOpenAI: ошибка декодирования audio delta: %v", err, rs.userID)
 				continue
 			}
 			audioDeltaCount++
 			//if audioDeltaCount == 1 {
 			//	stopWatchdog()
-			//	logger.Debug("pumpFromOpenAI: первая audio.delta respId=%d", rs.respId, rs.userId)
+			//	logger.Debug("pumpFromOpenAI: первая audio.delta respId=%d", rs.respId, rs.userID)
 			//}
 			select {
 			case rs.AudioOut <- pcm16:
@@ -159,7 +159,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 				return
 			default:
 				//logger.Warn("pumpFromOpenAI: AudioOut переполнен — дроп delta #%d len=%d respId=%d",
-				//	audioDeltaCount, len(pcm16), rs.respId, rs.userId)
+				//	audioDeltaCount, len(pcm16), rs.respId, rs.userID)
 			}
 
 		// ── Транскрипция ответа ассистента (дельта) ──────────────────────────
@@ -190,7 +190,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 		// ── Транскрипция пользователя: ошибка ────────────────────────────────
 		//case "conversation.item.input_audio_transcription.failed":
 		//	errObj, _ := event["error"].(map[string]interface{})
-		//	logger.Warn("pumpFromOpenAI: user transcription failed respId=%d err=%v", rs.respId, errObj, rs.userId)
+		//	logger.Warn("pumpFromOpenAI: user transcription failed respId=%d err=%v", rs.respId, errObj, rs.userID)
 
 		// ── VAD: речь обнаружена ──────────────────────────────────────────────
 		case "input_audio_buffer.speech_started":
@@ -198,11 +198,11 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			case rs.DrainPlayback <- struct{}{}:
 			default:
 			}
-			//logger.Debug("pumpFromOpenAI: VAD speech_started respId=%d", rs.respId, rs.userId)
+			//logger.Debug("pumpFromOpenAI: VAD speech_started respId=%d", rs.respId, rs.userID)
 
 		// ── VAD: речь остановлена ─────────────────────────────────────────────
 		case "input_audio_buffer.speech_stopped":
-			//logger.Debug("pumpFromOpenAI: VAD speech_stopped respId=%d", rs.respId, rs.userId)
+			//logger.Debug("pumpFromOpenAI: VAD speech_stopped respId=%d", rs.respId, rs.userID)
 
 		case "input_audio_buffer.committed",
 			"conversation.item.created",
@@ -214,13 +214,13 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 		case "response.created":
 			rs.IsGenerating.Store(true)
 			fireWatchdog(3*time.Second, "нет audio.delta 3s после response.created")
-			//logger.Debug("pumpFromOpenAI: response.created respId=%d", rs.respId, rs.userId)
+			//logger.Debug("pumpFromOpenAI: response.created respId=%d", rs.respId, rs.userID)
 
 		// ── Output item добавлен ─────────────────────────────────────────────
 		//case "response.output_item.added":
 		//	item, _ := event["item"].(map[string]interface{})
 		//	itemType, _ := item["type"].(string)
-		//	logger.Debug("pumpFromOpenAI: output_item.added type=%s respId=%d", itemType, rs.respId, rs.userId)
+		//	logger.Debug("pumpFromOpenAI: output_item.added type=%s respId=%d", itemType, rs.respId, rs.userID)
 
 		// ── Ответ ассистента завершён ─────────────────────────────────────────
 		case "response.done":
@@ -232,7 +232,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 				//statusDetails, _ := resp["status_details"].(map[string]interface{})
 				//reason, _ := statusDetails["reason"].(string)
 				//logger.Debug("pumpFromOpenAI: response.done status=%s reason=%s audioDelta=%d respId=%d",
-				//	status, reason, audioDeltaCount, rs.respId, rs.userId)
+				//	status, reason, audioDeltaCount, rs.respId, rs.userID)
 				audioDeltaCount = 0
 				pendingFuncResults = pendingFuncResults[:0]
 				rs.IsGenerating.Store(false)
@@ -242,7 +242,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			}
 
 			//logger.Debug("pumpFromOpenAI: response.done status=completed audioDelta=%d respId=%d",
-			//	audioDeltaCount, rs.respId, rs.userId)
+			//	audioDeltaCount, rs.respId, rs.userID)
 			audioDeltaCount = 0
 			stopWatchdog()
 
@@ -257,11 +257,11 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 						},
 					}); err != nil {
 						//logger.Warn("response.done: ошибка отправки function_call_output callId=%s: %v",
-						//	fr.callID, err, rs.userId)
+						//	fr.callID, err, rs.userID)
 					}
 				}
 				//logger.Debug("response.done: отправлено func results=%d → response.create respId=%d",
-				//	len(pendingFuncResults), rs.respId, rs.userId)
+				//	len(pendingFuncResults), rs.respId, rs.userID)
 				pendingFuncResults = pendingFuncResults[:0]
 
 				// ВАЖНО: Realtime API не принимает temperature, max_output_tokens,
@@ -273,14 +273,14 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 						"modalities": []string{"text", "audio"},
 					},
 				}); err != nil {
-					//logger.Warn("response.done: ошибка отправки response.create: %v", err, rs.userId)
+					//logger.Warn("response.done: ошибка отправки response.create: %v", err, rs.userID)
 				}
 			}
 
 			var assistItemId string
 			if output, ok := resp["output"].([]interface{}); ok {
 				if len(output) == 0 {
-					//logger.Warn("pumpFromOpenAI: response.done completed с пустым output respId=%d", rs.respId, rs.userId)
+					//logger.Warn("pumpFromOpenAI: response.done completed с пустым output respId=%d", rs.respId, rs.userID)
 				}
 				for _, outRaw := range output {
 					out, ok := outRaw.(map[string]interface{})
@@ -314,7 +314,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			files := pendingFiles
 			pendingFiles = nil
 			if len(files) > 0 {
-				//logger.Info("pumpFromOpenAI: response_done с файлами count=%d respId=%d", len(files), rs.respId, rs.userId)
+				//logger.Info("pumpFromOpenAI: response_done с файлами count=%d respId=%d", len(files), rs.respId, rs.userID)
 			}
 			rs.IsGenerating.Store(false)
 			rs.publishEvent(RealtimeEvent{Type: "response_done", Files: files})
@@ -365,7 +365,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 						FileName: params.FileName,
 					})
 					localResult = fmt.Sprintf(`{"status":"ok","file_name":%q,"type":%q}`, params.FileName, fileType)
-					//logger.Info("send_file_to_user: добавлен файл %s respId=%d", params.FileName, rs.respId, rs.userId)
+					//logger.Info("send_file_to_user: добавлен файл %s respId=%d", params.FileName, rs.respId, rs.userID)
 				} else {
 					localResult = `{"status":"error","message":"invalid parameters"}`
 				}
@@ -378,7 +378,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 				continue
 			}
 
-			rawResult := m.actionHandler.RunAction(rs.ctx, name, args, 1, rs.userId)
+			rawResult := m.actionHandler.RunAction(rs.ctx, name, args, 1, rs.userID)
 
 			// Пытаемся извлечь файлы из результата любого инструмента по структуре JSON.
 			// Нет привязки к именам функций — работает для любых MCP-инструментов,
@@ -414,7 +414,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 		//case "session.created":
 		//	sess, _ := event["session"].(map[string]interface{})
 		//	modelName, _ := sess["model"].(string)
-		//	logger.Info("pumpFromOpenAI: сессия создана model=%s respId=%d", modelName, rs.respId, rs.userId)
+		//	logger.Info("pumpFromOpenAI: сессия создана model=%s respId=%d", modelName, rs.respId, rs.userID)
 
 		case "session.updated":
 			//sess, _ := event["session"].(map[string]interface{})
@@ -422,7 +422,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			//voice, _ := sess["voice"].(string)
 			//outFmt, _ := sess["output_audio_format"].(string)
 			//logger.Debug("pumpFromOpenAI: session.updated modalities=%v voice=%s outFmt=%s respId=%d",
-			//	modalities, voice, outFmt, rs.respId, rs.userId)
+			//	modalities, voice, outFmt, rs.respId, rs.userID)
 			// Отправляем приветствие сразу после того как сессия настроена
 			m.sendInitialGreeting(rs)
 
@@ -441,7 +441,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 		//			resetSec, _ := rm["reset_seconds"].(float64)
 		//			if remaining < 100 || resetSec > 5 {
 		//				logger.Warn("pumpFromOpenAI: rate_limit low name=%s remaining=%.0f reset=%.1fs respId=%d",
-		//					name, remaining, resetSec, rs.respId, rs.userId)
+		//					name, remaining, resetSec, rs.respId, rs.userID)
 		//			}
 		//		}
 		//	}
@@ -466,20 +466,20 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			}
 			if recoverableCodes[errCode] {
 				//logger.Warn("pumpFromOpenAI: recoverable error respId=%d code=%s msg=%s",
-				//	rs.respId, errCode, errMsg, rs.userId)
+				//	rs.respId, errCode, errMsg, rs.userID)
 				continue
 			}
 			//logger.Error("pumpFromOpenAI: fatal error respId=%d code=%s param=%s msg=%s",
-			//	rs.respId, errCode, errParam, errMsg, rs.userId)
+			//	rs.respId, errCode, errParam, errMsg, rs.userID)
 			rs.publishEvent(RealtimeEvent{Type: "error", Text: errMsg, Err: fmt.Errorf("%s", errMsg)})
 			return
 
 		default:
 			if watchdogTimer != nil && audioDeltaCount == 0 {
 				//logger.Warn("pumpFromOpenAI: [STALLED] unknown event type=%s respId=%d raw=%s",
-				//	eventType, rs.respId, string(msg), rs.userId)
+				//	eventType, rs.respId, string(msg), rs.userID)
 				//} else {
-				//	logger.Debug("pumpFromOpenAI: unknown event type=%s respId=%d", eventType, rs.respId, rs.userId)
+				//	logger.Debug("pumpFromOpenAI: unknown event type=%s respId=%d", eventType, rs.respId, rs.userID)
 			}
 		}
 	}
@@ -508,7 +508,7 @@ func (m *Model) pumpToOpenAI(rs *RealtimeSession) {
 		}); err != nil {
 			if !strings.Contains(err.Error(), "use of closed network connection") {
 				//logger.Error("pumpToOpenAI: ошибка отправки audio append respId=%d: %v",
-				//	rs.respId, err, rs.userId)
+				//	rs.respId, err, rs.userID)
 			}
 		}
 	}
@@ -517,7 +517,7 @@ func (m *Model) pumpToOpenAI(rs *RealtimeSession) {
 		select {
 		case <-rs.ctx.Done():
 			flush()
-			//logger.Debug("pumpToOpenAI: завершён sentChunks=%d respId=%d", sentChunks, rs.respId, rs.userId)
+			//logger.Debug("pumpToOpenAI: завершён sentChunks=%d respId=%d", sentChunks, rs.respId, rs.userID)
 			return
 		case pcm16, ok := <-rs.AudioIn:
 			if !ok {
@@ -541,16 +541,16 @@ func (m *Model) pumpToOpenAI(rs *RealtimeSession) {
 
 func (m *Model) saveRealtimeTranscript(rs *RealtimeSession, userText, assistText string) {
 	dialogID := rs.dialogID
-	//userId := rs.userId
+	//userID := rs.userID
 	now := time.Now()
 
 	if userText != "" {
 		m.addMessageToCache(dialogID, ChatMessage{Role: "user", Content: userText})
 		msg := realtimeDialogJSON(comdb.SpeechRealTimeUser, userText, now)
 		if err := m.db.SaveDialog(dialogID, msg); err != nil {
-			//logger.Warn("saveRealtimeTranscript: ошибка сохранения реплики пользователя: %v", err, userId)
+			//logger.Warn("saveRealtimeTranscript: ошибка сохранения реплики пользователя: %v", err, userID)
 		}
-		//logger.Debug("saveRealtimeTranscript: user len=%d dialogID=%d", len(userText), dialogID, userId)
+		//logger.Debug("saveRealtimeTranscript: user len=%d dialogID=%d", len(userText), dialogID, userID)
 	}
 
 	if assistText != "" {
@@ -558,9 +558,9 @@ func (m *Model) saveRealtimeTranscript(rs *RealtimeSession, userText, assistText
 
 		msg := realtimeDialogJSON(comdb.SpeechRealTimeAI, assistText, now)
 		if err := m.db.SaveDialog(dialogID, msg); err != nil {
-			//logger.Warn("saveRealtimeTranscript: ошибка сохранения ответа ассистента: %v", err, userId)
+			//logger.Warn("saveRealtimeTranscript: ошибка сохранения ответа ассистента: %v", err, userID)
 		}
-		//logger.Debug("saveRealtimeTranscript: assistant len=%d dialogID=%d", len(assistText), dialogID, userId)
+		//logger.Debug("saveRealtimeTranscript: assistant len=%d dialogID=%d", len(assistText), dialogID, userID)
 	}
 }
 

@@ -54,7 +54,7 @@ func mcpRequest(t *testing.T, method string, params interface{}, withSession boo
 
 	resp, err := mcpClient().Do(req)
 	require.NoError(t, err, "MCP сервер недоступен на %s", mcpURL)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
@@ -83,7 +83,7 @@ func mcpNotification(t *testing.T, method string) {
 
 	resp, err := mcpClient().Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	t.Logf("→ %s  ← HTTP %d", method, resp.StatusCode)
 	assert.Equal(t, http.StatusAccepted, resp.StatusCode,
@@ -423,7 +423,7 @@ func TestMCP_ErrorCodes(t *testing.T) {
 
 			resp, err := mcpClient().Do(req)
 			require.NoError(t, err, "сервер должен быть доступен")
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			data, _ := io.ReadAll(resp.Body)
 			t.Logf("%s → HTTP %d: %s", tc.desc, resp.StatusCode, string(data))
@@ -467,11 +467,6 @@ func BenchmarkMCP_GetCurrentTime(b *testing.B) {
 			b.Fatal(err)
 		}
 		_, _ = io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 }
-
-
-
-
-

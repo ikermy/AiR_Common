@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -167,14 +168,18 @@ func (m *MistralAgentClient) UploadDocumentToLibrary(libraryID, fileName string,
 
 	// Создаём multipart форму
 	body := &bytes.Buffer{}
-	boundary := "----MistralBoundary"
+	mw := multipart.NewWriter(body)
 
-	// Записываем файл
-	fmt.Fprintf(body, "--%s\r\n", boundary)
-	fmt.Fprintf(body, "Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n", fileName)
-	fmt.Fprintf(body, "Content-Type: application/octet-stream\r\n\r\n")
-	body.Write(fileData)
-	fmt.Fprintf(body, "\r\n--%s--\r\n", boundary)
+	part, err := mw.CreateFormFile("file", fileName)
+	if err != nil {
+		return "", fmt.Errorf("ошибка создания multipart поля: %v", err)
+	}
+	if _, err = part.Write(fileData); err != nil {
+		return "", fmt.Errorf("ошибка записи файла в multipart: %v", err)
+	}
+	if err = mw.Close(); err != nil {
+		return "", fmt.Errorf("ошибка закрытия multipart writer: %v", err)
+	}
 
 	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, url, body)
 	if err != nil {
@@ -182,7 +187,7 @@ func (m *MistralAgentClient) UploadDocumentToLibrary(libraryID, fileName string,
 	}
 
 	req.Header.Set("Authorization", "Bearer "+m.apiKey)
-	req.Header.Set("Content-Type", fmt.Sprintf("multipart/form-data; boundary=%s", boundary))
+	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -359,18 +364,20 @@ func (m *MistralAgentClient) StartConversation(agentID string, inputs interface{
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	responseBody := new(bytes.Buffer)
-	responseBody.ReadFrom(resp.Body)
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ConversationResponse{}, fmt.Errorf("ошибка чтения тела ответа: %v", err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
-		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, responseBody.String())
+		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
 	}
 
 	// RAW ответ для отладки
-	//logger.Debug("StartConversation: сырой ответ от API: %s", responseBody.String())
+	//logger.Debug("StartConversation: сырой ответ от API: %s", string(responseBody))
 
 	var result ConversationResponse
-	if err := json.Unmarshal(responseBody.Bytes(), &result); err != nil {
+	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return ConversationResponse{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
@@ -406,18 +413,20 @@ func (m *MistralAgentClient) ContinueConversation(conversationID string, inputs 
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	responseBody := new(bytes.Buffer)
-	responseBody.ReadFrom(resp.Body)
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ConversationResponse{}, fmt.Errorf("ошибка чтения тела ответа: %v", err)
+	}
 
 	if resp.StatusCode != http.StatusOK {
-		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, responseBody.String())
+		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
 	}
 
 	// RAW ответ для отладки
-	//logger.Debug("ContinueConversation: сырой ответ от API: %s", responseBody.String())
+	//logger.Debug("ContinueConversation: сырой ответ от API: %s", string(responseBody))
 
 	var result ConversationResponse
-	if err := json.Unmarshal(responseBody.Bytes(), &result); err != nil {
+	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return ConversationResponse{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
@@ -464,17 +473,19 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	responseBody := new(bytes.Buffer)
-	responseBody.ReadFrom(resp.Body)
-
-	if resp.StatusCode != http.StatusOK {
-		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, responseBody.String())
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ConversationResponse{}, fmt.Errorf("ошибка чтения тела ответа: %v", err)
 	}
 
-	//logger.Debug("SendFunctionResult: сырой ответ от API: %s", responseBody.String())
+	if resp.StatusCode != http.StatusOK {
+		return ConversationResponse{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
+	}
+
+	//logger.Debug("SendFunctionResult: сырой ответ от API: %s", string(responseBody))
 
 	var result ConversationResponse
-	if err := json.Unmarshal(responseBody.Bytes(), &result); err != nil {
+	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return ConversationResponse{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 

@@ -14,7 +14,7 @@
 | Блок `/action` удалён | ✅ **Готово** | Из `routes.go` полностью убран |
 | `GET /s3/:id/:filename` перенесён | ✅ **Готово** | Публичный маршрут вне `/action` |
 | `user_id` убран из аргументов инструментов | ✅ **Готово** | Схемы инструментов и промпты очищены |
-| `RunAction` принимает `userId uint32` явно | ✅ **Готово** | Сигнатура и все провайдеры обновлены |
+| `RunAction` принимает `userID uint32` явно | ✅ **Готово** | Сигнатура и все провайдеры обновлены |
 | `AiR_Common` переключён на `/mcp` | ✅ **Готово** | `action_handler.go` — `callMCP` + `RunAction` → всё через MCP |
 | Промпт-билдеры обновлены | ✅ **Готово** | `user_id` убран из инструкций по вызову инструментов |
 | Хардкод tools удалён — Google | ✅ **Готово** | `google/model.go` — только MCP `tools/list` |
@@ -56,14 +56,14 @@
 [AiR_Common / action_handler.go]  ← НУЖНО ОБНОВИТЬ (см. раздел 13)
   UniversalActionHandler.RunAction()
     → HTTP POST http://localhost:{port}/mcp
-      Headers: X-Session-ID: "{realUserId}:{providerType}"
+      Headers: X-Session-ID: "{realuserID}:{providerType}"
       Body: {"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"get_s3_files","arguments":{}}}
 
 [AiR_Landing / internal/app/mcp/]  ← УЖЕ РЕАЛИЗОВАНО
   POST /mcp → Handler.ServeHTTP()
     → initialize               → хендшейк, возврат capabilities
     → notifications/initialized → уведомление, HTTP 202
-    → tools/list               → buildToolsList(userId, provider) по флагам модели из БД
+    → tools/list               → buildToolsList(userID, provider) по флагам модели из БД
     → tools/call               → прямой вызов сервисов без HTTP round-trip
 ```
 
@@ -162,31 +162,31 @@
 
 | Заголовок | Назначение | Кто устанавливает |
 |-----------|------------|------------------|
-| `X-Session-ID: "42:1"` | **Идентификация пользователя** (userId:providerType) — наш custom header | `AiR_Common` при каждом запросе |
+| `X-Session-ID: "42:1"` | **Идентификация пользователя** (userID:providerType) — наш custom header | `AiR_Common` при каждом запросе |
 | `Mcp-Session-Id: <uuid>` | **MCP сессия** — стандартный заголовок, сервер выдаёт после `initialize` | MCP сервер (AiR_Landing) |
 
 Для первого этапа (stateless сервер) — `Mcp-Session-Id` не используется.
 
 ### Заголовок `X-Session-ID`
 
-Формат: `"userId:providerType"`, например `"42:1"` (userId=42, provider=OpenAI)
+Формат: `"userID:providerType"`, например `"42:1"` (userID=42, provider=OpenAI)
 
-- `userId` — **реальный** (не кодированный) userId `uint32`
+- `userID` — **реальный** (не кодированный) userID `uint32`
 - `providerType` — числовое значение `create.ProviderType` (1=OpenAI, 2=Mistral, 3=Google)
 
-> ⚠️ **Важное отличие от старого `/action`:** старые gin-хендлеры принимали **закодированный** `user_id` через `crypto.EncodeUint32()` и сами декодировали через `crypto.DecodeUint32()`. MCP-хендлер получает **реальный** userId напрямую из `X-Session-ID` — кодирование не нужно.
+> ⚠️ **Важное отличие от старого `/action`:** старые gin-хендлеры принимали **закодированный** `user_id` через `crypto.EncodeUint32()` и сами декодировали через `crypto.DecodeUint32()`. MCP-хендлер получает **реальный** userID напрямую из `X-Session-ID` — кодирование не нужно.
 
-> ✅ userId из `X-Session-ID` используется MCP сервером напрямую. **Инструменты не принимают `user_id` как параметр** — сервер подставляет его автоматически.
+> ✅ userID из `X-Session-ID` используется MCP сервером напрямую. **Инструменты не принимают `user_id` как параметр** — сервер подставляет его автоматически.
 
 ### S3 URL и кодирование
 
 Маршрут `GET /s3/:id/:filename` (обработчик `ServeS3File`) ожидает **закодированный** id в URL.  
-MCP-сервер при генерации S3 URL применяет `crypto.EncodeUint32(userId)`:
+MCP-сервер при генерации S3 URL применяет `crypto.EncodeUint32(userID)`:
 
 ```go
 // internal/app/mcp/tools.go
-func (h *Handler) s3BaseURL(userId uint32) (baseURL string, encodedId uint64) {
-    encodedId = crypto.EncodeUint32(userId)
+func (h *Handler) s3BaseURL(userID uint32) (baseURL string, encodedId uint64) {
+    encodedId = crypto.EncodeUint32(userID)
     baseURL = fmt.Sprintf("https://%s/s3", h.conf.WEB.RealUrl)
     return
 }
@@ -209,12 +209,12 @@ internal/app/mcp/
 // DB — минимальный интерфейс к БД (web.DB удовлетворяет этому интерфейсу)
 type DB interface {
     comdb.Exterior                            // для google_services
-    UserTimeZone(userId uint32) (string, error) // для get_current_time
+    UserTimeZone(userID uint32) (string, error) // для get_current_time
 }
 
 // ModelStore — интерфейс к хранилищу моделей
 type ModelStore interface {
-    GetUserModels(userId uint32) ([]create.UniversalModelData, error)
+    GetUserModels(userID uint32) ([]create.UniversalModelData, error)
 }
 ```
 
@@ -229,10 +229,10 @@ mcpHandler: mcp.New(ctx, d, conf, m),
 
 | Инструмент | Старый путь (`/action`) | Новый путь (MCP) |
 |-----------|------------------------|-----------------|
-| `get_s3_files` | `GET /action/gets3?id={encoded}` | `os.ReadDir("/var/www/s3/{userId}")` |
+| `get_s3_files` | `GET /action/gets3?id={encoded}` | `os.ReadDir("/var/www/s3/{userID}")` |
 | `create_file` | `POST /action/savefilein3` | `os.Create(...)` + `WriteString(...)` |
 | `save_image` | `POST /action/saveImageInS3` | `base64.Decode` + `os.WriteFile(...)` |
-| `get_current_time` | `GET /action/time/current?id={encoded}` | `db.UserTimeZone(userId)` + `time.Now().In(loc)` |
+| `get_current_time` | `GET /action/time/current?id={encoded}` | `db.UserTimeZone(userID)` + `time.Now().In(loc)` |
 | `calendar_create` | `POST /action/calendar/create` | `google_services.NewCalendarService(...).CreateEvent(...)` |
 | `calendar_list` | `GET /action/calendar/list` | `google_services.NewCalendarService(...).ListEvents(...)` |
 | `calendar_delete` | `DELETE /action/calendar/delete` | `google_services.NewCalendarService(...).DeleteEvent(...)` |
@@ -413,7 +413,7 @@ w.Gin.GET("/s3/:id/:filename", w.ServeS3File) // раздача S3-файлов 
 
 ## 8. Флаги модели → доступные инструменты
 
-Метод: `mod.GetUserModels(userId)` → поиск по `Provider == providerType`
+Метод: `mod.GetUserModels(userID)` → поиск по `Provider == providerType`
 
 | Флаг модели | Инструменты |
 |------------|------------|
@@ -518,7 +518,7 @@ curl -k -X POST https://localhost:8443/mcp \
 // UniversalActionHandler — единый MCP-клиент
 func (h *UniversalActionHandler) RunAction(ctx context.Context,
     functionName, arguments string,
-    provider create.ProviderType, userId uint32) string {
+    provider create.ProviderType, userID uint32) string {
 
     switch functionName {
     case "lead_target":
@@ -527,20 +527,20 @@ func (h *UniversalActionHandler) RunAction(ctx context.Context,
         ...
     default:
         // ВСЕ остальные инструменты → единый POST /mcp
-        return h.callMCP(ctx, functionName, arguments, provider, userId)
+        return h.callMCP(ctx, functionName, arguments, provider, userID)
     }
 }
 
 func (h *UniversalActionHandler) callMCP(ctx context.Context,
     toolName, arguments string,
-    provider create.ProviderType, userId uint32) string {
+    provider create.ProviderType, userID uint32) string {
 
     // JSON-RPC запрос
     reqBody := {"jsonrpc":"2.0","id":"1","method":"tools/call",
                  "params":{"name":toolName,"arguments":args}}
 
-    req.Header.Set("X-Session-ID", fmt.Sprintf("%d:%d", userId, provider))
-    // userId — реальный uint32, без кодирования
+    req.Header.Set("X-Session-ID", fmt.Sprintf("%d:%d", userID, provider))
+    // userID — реальный uint32, без кодирования
 
     // Парсинг ответа: rpcResp.Result.Content[0].Text
 }
@@ -551,7 +551,7 @@ func (h *UniversalActionHandler) callMCP(ctx context.Context,
 | Параметр | Старый подход | Новый (`/mcp`) |
 |----------|--------------|----------------|
 | `user_id` в теле/query | Передавался в каждом запросе | **Не передаётся** в аргументах |
-| Идентификация пользователя | В теле/query каждого запроса | Заголовок `X-Session-ID: "userId:providerType"` |
+| Идентификация пользователя | В теле/query каждого запроса | Заголовок `X-Session-ID: "userID:providerType"` |
 | `provider` | Query-параметр `?provider=N` | В `X-Session-ID` (вторая часть) |
 | URL | Уникальный для каждого инструмента | Всегда `POST /mcp` |
 | HTTP-метод | GET / POST / DELETE | Всегда `POST` |
@@ -639,7 +639,7 @@ func (h *UniversalActionHandler) callMCP(ctx context.Context,
 
 ### 15.3 Содержание промпта (логика в `AiR_Landing/internal/app/mcp/tools.go`)
 
-Метод `buildSystemPromptHint(userId uint32, provider create.ProviderType) string` формирует **чистые инструкции по использованию инструментов** на основе флагов модели.
+Метод `buildSystemPromptHint(userID uint32, provider create.ProviderType) string` формирует **чистые инструкции по использованию инструментов** на основе флагов модели.
 
 > ⚠️ **Требования к формату:**
 > - **Без** артефактов text-mode: никаких `JSON: target=false`, `send_files=[]`, `Return: valid JSON`, `UID=...`, `operator=false (op=true if ask)` — это специфика text-режима, в который hint добавляется как дополнение к `modelData.Prompt`
@@ -648,8 +648,8 @@ func (h *UniversalActionHandler) callMCP(ctx context.Context,
 
 ```go
 // Пример реализации в AiR_Landing/internal/app/mcp/tools.go
-func (h *Handler) buildSystemPromptHint(userId uint32, provider create.ProviderType) string {
-    model := h.getUserModel(userId, provider) // из mod.GetUserModels(userId)
+func (h *Handler) buildSystemPromptHint(userID uint32, provider create.ProviderType) string {
+    model := h.getUserModel(userID, provider) // из mod.GetUserModels(userID)
 
     var parts []string
 
@@ -704,7 +704,7 @@ func (h *Handler) buildSystemPromptHint(userId uint32, provider create.ProviderT
 case "prompts/list":
     return h.handlePromptsList(w, req)
 case "prompts/get":
-    return h.handlePromptsGet(w, req, userId, provider)
+    return h.handlePromptsGet(w, req, userID, provider)
 ```
 
 ### 15.5 Пример curl для тестирования `prompts/get`
@@ -735,9 +735,9 @@ type MCPToolDefinition struct {
 type MCPConfigProvider interface {
     ActionHandler
     // FetchToolsList получает список function-инструментов от MCP сервера (tools/list)
-    FetchToolsList(ctx context.Context, userId uint32, provider create.ProviderType) ([]MCPToolDefinition, error)
+    FetchToolsList(ctx context.Context, userID uint32, provider create.ProviderType) ([]MCPToolDefinition, error)
     // FetchSystemPrompt получает system prompt hint от MCP сервера (prompts/get?name=system)
-    FetchSystemPrompt(ctx context.Context, userId uint32, provider create.ProviderType) (string, error)
+    FetchSystemPrompt(ctx context.Context, userID uint32, provider create.ProviderType) (string, error)
 }
 ```
 
@@ -746,7 +746,7 @@ type MCPConfigProvider interface {
 `FetchToolsList` вызывает `tools/list`:
 ```
 POST /mcp
-X-Session-ID: "userId:provider"
+X-Session-ID: "userID:provider"
 {"jsonrpc":"2.0","id":"1","method":"tools/list","params":{}}
 ```
 → парсит `result.tools[]` → возвращает `[]MCPToolDefinition`
@@ -754,7 +754,7 @@ X-Session-ID: "userId:provider"
 `FetchSystemPrompt` вызывает `prompts/get`:
 ```
 POST /mcp
-X-Session-ID: "userId:provider"
+X-Session-ID: "userID:provider"
 {"jsonrpc":"2.0","id":"1","method":"prompts/get","params":{"name":"system"}}
 ```
 → парсит `result.messages[0].content.text` → возвращает `string`
@@ -764,14 +764,14 @@ X-Session-ID: "userId:provider"
 > ✅ **Реализовано 2026-05-13.** Локальный fallback-билдер удалён.
 
 ```go
-func (m *OpenAIModel) buildAgentConfiguration(userId uint32, config *OpenAIAgentConfig, compressedData []byte) error {
+func (m *OpenAIModel) buildAgentConfiguration(userID uint32, config *OpenAIAgentConfig, compressedData []byte) error {
     // ...распаковка modelData...
 
     // MCP — единственный источник system prompt и function tools.
     // Если MCP недоступен: только modelData.Prompt, только нативные tools.
     mcpAvailable := false
     if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
-        if hint, err := mcpProvider.FetchSystemPrompt(m.ctx, userId, create.ProviderOpenAI); err == nil {
+        if hint, err := mcpProvider.FetchSystemPrompt(m.ctx, userID, create.ProviderOpenAI); err == nil {
             config.SystemPrompt = modelData.Prompt + "\n\n" + hint
             mcpAvailable = true
         }
@@ -788,7 +788,7 @@ func (m *OpenAIModel) buildAgentConfiguration(userId uint32, config *OpenAIAgent
     // Function tools — только от MCP; если сервер недоступен — не добавляем
     if mcpAvailable {
         if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
-            if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, userId, create.ProviderOpenAI); err == nil {
+            if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, userID, create.ProviderOpenAI); err == nil {
                 for _, t := range mcpTools {
                     tools = append(tools, map[string]interface{}{
                         "type": "function", "name": t.Name,
@@ -820,7 +820,7 @@ func (m *OpenAIModel) buildAgentConfiguration(userId uint32, config *OpenAIAgent
 
 ### 16.5 Порядок внедрения в AiR_Landing
 
-1. В `internal/app/mcp/tools.go`: добавить `buildSystemPromptHint(userId, provider)` → формирует компактный prompt hint по флагам модели (раздел 15.3)
+1. В `internal/app/mcp/tools.go`: добавить `buildSystemPromptHint(userID, provider)` → формирует компактный prompt hint по флагам модели (раздел 15.3)
 2. В `internal/app/mcp/handler.go`: добавить диспетчер для `prompts/list` и `prompts/get` (раздел 15.4)
 3. Убедиться что `tools/list` возвращает инструменты **без** поля `user_id` в `inputSchema`
 4. Протестировать curl (разделы 11 + 15.5)
@@ -897,13 +897,13 @@ case "lead_target":
 # tools/list — убедиться что lead_target появляется для пользователя с MetaAction
 curl -sk -X POST https://localhost:8081/mcp \
   -H "Content-Type: application/json" \
-  -H "X-Session-ID: {userId}:{providerType}" \
+  -H "X-Session-ID: {userID}:{providerType}" \
   -d '{"jsonrpc":"2.0","id":"1","method":"tools/list","params":{}}' | jq '.result.tools[].name'
 
 # tools/call — прямой вызов
 curl -sk -X POST https://localhost:8081/mcp \
   -H "Content-Type: application/json" \
-  -H "X-Session-ID: {userId}:{providerType}" \
+  -H "X-Session-ID: {userID}:{providerType}" \
   -d '{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"lead_target","arguments":{"resp_id":123}}}' | jq '.'
 ```
 

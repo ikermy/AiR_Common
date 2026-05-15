@@ -15,7 +15,7 @@ import (
 // SaveEmbedding сохраняет эмбеддинг документа в MariaDB с привязкой к модели
 // Поддерживает динамические размерности: 512 (OpenAI small), 768 (Google), 1536 (OpenAI medium), 3072 (OpenAI large)
 // Использует нативный тип VECTOR(3072) с padding нулями для эффективного хранения
-func (d *DB) SaveEmbedding(userId uint32, modelId uint64, provider create.ProviderType, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
+func (d *DB) SaveEmbedding(userID uint32, modelId uint64, provider create.ProviderType, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
 	ctx, cancel := context.WithTimeout(d.MainCTX(), time.Duration(sqlTimeToCancel)*time.Second)
 	defer cancel()
 
@@ -49,7 +49,7 @@ func (d *DB) SaveEmbedding(userId uint32, modelId uint64, provider create.Provid
                  embedding_dim = VALUES(embedding_dim),
                  metadata = VALUES(metadata)`
 
-	_, err = d.Conn().ExecContext(ctx, query, userId, modelId, provider.String(), docID, docName, content, embeddingStr, embeddingDim, metadataJSON)
+	_, err = d.Conn().ExecContext(ctx, query, userID, modelId, provider.String(), docID, docName, content, embeddingStr, embeddingDim, metadataJSON)
 	if err != nil {
 		return fmt.Errorf("SaveEmbedding: ошибка сохранения эмбеддинга для modelId=%d, docID=%s: %v", modelId, docID, err)
 	}
@@ -161,7 +161,7 @@ func (d *DB) ListModelEmbeddings(modelId uint64, provider create.ProviderType) (
 		var provider sql.NullString
 		var embeddingDim int
 
-		err := rows.Scan(&doc.UserID, &provider, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &embeddingDim, &metadataJSON, &doc.CreatedAt)
+		err := rows.Scan(&doc.userID, &provider, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &embeddingDim, &metadataJSON, &doc.CreatedAt)
 		if err != nil {
 			continue
 		}
@@ -251,7 +251,7 @@ func (d *DB) SearchSimilarEmbeddings(modelId uint64, provider create.ProviderTyp
 		var embeddingDim int
 		var distance float32 // Не используется в результате, но нужен для Scan
 
-		err := rows.Scan(&doc.UserID, &provider, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &embeddingDim, &metadataJSON, &doc.CreatedAt, &distance)
+		err := rows.Scan(&doc.userID, &provider, &doc.ID, &doc.Name, &doc.Content, &embeddingStr, &embeddingDim, &metadataJSON, &doc.CreatedAt, &distance)
 		if err != nil {
 			continue
 		}

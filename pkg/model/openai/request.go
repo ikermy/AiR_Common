@@ -19,25 +19,25 @@ import (
 // Результат отправляется в канал ch. Канал закрывается в конце горутины.
 // При критической ошибке (не найден respModel) — поле err заполнено.
 // При некритических ошибках (эмбеддинг/поиск) — продолжаем без RAG.
-func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- openaiRagResp) {
+func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- openaiRagResp) {
 	defer close(ch)
 
 	//totalStart := time.Now()
 	result := openaiRagResp{}
 
 	// === 1. Получаем real_user_id ===
-	var realUserID uint64
+	var realuserID uint64
 	if m.universalModel != nil {
 		var err error
-		realUserID, err = m.universalModel.GetRealUserID(userId)
+		realuserID, err = m.universalModel.GetRealuserID(userID)
 		if err != nil {
-			//logger.Warn("applyRAG: не удалось получить real_user_id: %v, используем userId", err, userId)
-			realUserID = uint64(userId)
+			//logger.Warn("applyRAG: не удалось получить real_user_id: %v, используем userID", err, userID)
+			realuserID = uint64(userID)
 		}
 	} else {
-		realUserID = uint64(userId)
+		realuserID = uint64(userID)
 	}
-	result.realUserID = realUserID
+	result.realuserID = realuserID
 
 	// === 2 + 3. Параллельно: загрузка истории и поиск respModel ===
 	// Используем два канала и WaitGroup для параллельного выполнения обеих операций.
@@ -60,15 +60,15 @@ func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- 
 
 		if cachedHistory, found := m.getDialogHistoryFromCache(dialogID); found {
 			history = cachedHistory
-			//logger.Debug("applyRAG: история загружена из кэша (%d сообщений)", len(history), userId)
+			//logger.Debug("applyRAG: история загружена из кэша (%d сообщений)", len(history), userID)
 		} else {
 			dbHistory, err := m.ConvertDialogToOpenAIFormat(dialogID)
 			if err != nil {
-				//logger.Warn("applyRAG: не удалось загрузить историю диалога %d из БД: %v, используем пустую историю", dialogID, err, userId)
+				//logger.Warn("applyRAG: не удалось загрузить историю диалога %d из БД: %v, используем пустую историю", dialogID, err, userID)
 				history = []ChatMessage{}
 			} else {
 				history = dbHistory
-				//logger.Debug("applyRAG: история загружена из БД (%d сообщений)", len(history), userId)
+				//logger.Debug("applyRAG: история загружена из БД (%d сообщений)", len(history), userID)
 			}
 
 			// Ограничиваем историю
@@ -131,7 +131,7 @@ func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- 
 
 	// === 5. Проверяем нужен ли RAG ===
 	if !resp.AgentConfig.Search || text == "" {
-		//logger.Debug("applyRAG: RAG не требуется (Search=%v, text=%q)", resp.AgentConfig.Search, text != "", userId)
+		//logger.Debug("applyRAG: RAG не требуется (Search=%v, text=%q)", resp.AgentConfig.Search, text != "", userID)
 		select {
 		case <-m.ctx.Done():
 		case ch <- result:
@@ -145,7 +145,7 @@ func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- 
 	result.embeddingDuration = time.Since(embeddingStart)
 
 	if err != nil {
-		//logger.Warn("applyRAG: ошибка генерации эмбеддинга: %v, продолжаем без RAG", err, userId)
+		//logger.Warn("applyRAG: ошибка генерации эмбеддинга: %v, продолжаем без RAG", err, userID)
 		select {
 		case <-m.ctx.Done():
 		case ch <- result:
@@ -159,7 +159,7 @@ func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- 
 	result.searchDuration = time.Since(searchStart)
 
 	if err != nil {
-		//logger.Warn("applyRAG: ошибка поиска похожих эмбеддингов: %v, продолжаем без RAG", err, userId)
+		//logger.Warn("applyRAG: ошибка поиска похожих эмбеддингов: %v, продолжаем без RAG", err, userID)
 		select {
 		case <-m.ctx.Done():
 		case ch <- result:
@@ -180,10 +180,10 @@ func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- 
 
 		//totalDuration := time.Since(totalStart)
 		//logger.Info("[USER:%d] ⚡ applyRAG завершён за %v | История: %v | Респондент: %v | Эмбеддинг: %v | Поиск: %v | Найдено документов: %d (%d символов)",
-		//	userId, totalDuration, result.historyLoadDuration, result.responderLoadDuration,
+		//	userID, totalDuration, result.historyLoadDuration, result.responderLoadDuration,
 		//	result.embeddingDuration, result.searchDuration, len(relevantDocs), len(contextText))
 		//} else {
-		//	logger.Debug("applyRAG: похожие документы не найдены", userId)
+		//	logger.Debug("applyRAG: похожие документы не найдены", userID)
 	}
 
 	select {
@@ -193,15 +193,15 @@ func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- 
 }
 
 // Request выполняет синхронный запрос к модели (с буферизацией streaming ответов)
-func (m *Model) Request(userId uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (m *Model) Request(userID uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
 	return model.StreamingToSync(text, files, func(onDelta func(string, bool) error, files ...model.FileUpload) error {
-		return m.RequestStreaming(userId, dialogID, text, onDelta, files...)
+		return m.RequestStreaming(userID, dialogID, text, onDelta, files...)
 	})
 }
 
 // RequestStreaming выполняет запрос с потоковой передачей delta-событий
 // Использует Responses API (новый подход OpenAI с поддержкой file_search, code_interpreter, web_search)
-func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
+func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
 	if text == "" && len(files) == 0 {
 		return fmt.Errorf("пустое сообщение и нет файлов")
 	}
@@ -211,9 +211,9 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 	// всех тяжёлых операций (загрузка истории, поиск respModel, эмбеддинги, поиск в БД)
 	// ============================================================================
 	ragCh := make(chan openaiRagResp, 1)
-	go m.applyRAG(userId, dialogID, text, ragCh)
+	go m.applyRAG(userID, dialogID, text, ragCh)
 
-	// Ждём результат из горутины — содержит history, respModel, realUserID, contextText и метрики
+	// Ждём результат из горутины — содержит history, respModel, realuserID, contextText и метрики
 	var ragResult openaiRagResp
 	select {
 	case <-m.ctx.Done():
@@ -237,13 +237,13 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 	enhancedText := text
 	if ragResult.contextText != "" {
 		enhancedText = ragResult.contextText
-		//logger.Debug("[USER:%d] RAG: добавлен контекст (%d символов)", userId, len(ragResult.contextText))
+		//logger.Debug("[USER:%d] RAG: добавлен контекст (%d символов)", userID, len(ragResult.contextText))
 	}
 
 	// Создаем сообщение пользователя с поддержкой файлов
 	// ВАЖНО: В историю сохраняем ОРИГИНАЛЬНЫЙ text (без RAG контекста)
 	// RAG контекст (enhancedText) используется только в input для текущего запроса
-	userMessage := m.createUserMessageWithFiles(text, files, userId)
+	userMessage := m.createUserMessageWithFiles(text, files, userID)
 	history = append(history, userMessage)
 	m.addMessageToCache(dialogID, userMessage)
 
@@ -302,7 +302,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 
 	// Создаём обработчик вызовов функций
 	onToolCall := func(toolCalls []interface{}) ([]interface{}, error) {
-		//logger.Debug("🔧 [onToolCall] ВЫЗВАН! Количество tool calls: %d", len(toolCalls), userId)
+		//logger.Debug("🔧 [onToolCall] ВЫЗВАН! Количество tool calls: %d", len(toolCalls), userID)
 
 		var toolOutputs []interface{}
 
@@ -310,7 +310,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 			toolCallMap, ok := toolCall.(map[string]interface{})
 			if !ok {
 				//logger.Warn("[onToolCall] Некорректный формат tool call #%d (ожидается map[string]interface{}): тип=%T, значение=%+v",
-				//	i, toolCall, toolCall, userId)
+				//	i, toolCall, toolCall, userID)
 				continue
 			}
 
@@ -321,28 +321,28 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 			// Проверяем наличие обязательных полей
 			if !hasCallID || !hasFunctionName {
 				//logger.Warn("[onToolCall] Tool call #%d пропущен: отсутствуют обязательные поля (call_id=%v, name=%v, map=%+v)",
-				//	i, hasCallID, hasFunctionName, toolCallMap, userId)
+				//	i, hasCallID, hasFunctionName, toolCallMap, userID)
 				continue
 			}
 
 			if !hasArguments {
-				//logger.Debug("[onToolCall] Tool call #%d: аргументы отсутствуют, используем пустую строку", i, userId)
+				//logger.Debug("[onToolCall] Tool call #%d: аргументы отсутствуют, используем пустую строку", i, userID)
 				arguments = ""
 			}
 
 			//logger.Debug("🔧 [onToolCall] Tool call #%d: function=%s, call_id=%s, args_length=%d",
-			//	i, functionName, callID, len(arguments), userId)
+			//	i, functionName, callID, len(arguments), userID)
 
 			// Выполняем функцию через action handler
 			var result string
 			if m.actionHandler != nil {
-				//logger.Debug("[onToolCall] Вызываю action handler для функции '%s'...", functionName, userId)
-				result = m.actionHandler.RunAction(m.ctx, functionName, arguments, create.ProviderOpenAI, userId)
+				//logger.Debug("[onToolCall] Вызываю action handler для функции '%s'...", functionName, userID)
+				result = m.actionHandler.RunAction(m.ctx, functionName, arguments, create.ProviderOpenAI, userID)
 				//logger.Debug("✅ [onToolCall] Получен результат от action handler для '%s': %s",
-				//	functionName, result, userId)
+				//	functionName, result, userID)
 			} else {
 				result = `{"error": "action handler not initialized"}`
-				//logger.Error("[RequestStreaming] Action handler не инициализирован", userId)
+				//logger.Error("[RequestStreaming] Action handler не инициализирован", userID)
 			}
 
 			// Формируем tool output
@@ -355,7 +355,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 			toolOutputs = append(toolOutputs, toolOutput)
 		}
 
-		//logger.Debug("🔧 [onToolCall] ЗАВЕРШЁН! Возвращаю %d результатов", len(toolOutputs), userId)
+		//logger.Debug("🔧 [onToolCall] ЗАВЕРШЁН! Возвращаю %d результатов", len(toolOutputs), userID)
 		return toolOutputs, nil
 	}
 
@@ -366,7 +366,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 		respModel.AgentConfig,
 		wrappedOnDelta,
 		onToolCall,
-		userId,
+		userID,
 	)
 
 	// Восстанавливаем оригинальный SystemPrompt
@@ -377,7 +377,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 	}
 
 	// Логируем полученный текст для отладки
-	//logger.Debug("CreateResponse вернул fullText (длина=%d): '%s'", len(fullText), fullText, userId)
+	//logger.Debug("CreateResponse вернул fullText (длина=%d): '%s'", len(fullText), fullText, userID)
 
 	// Responses API с response_format возвращает JSON как текст
 	// Парсим JSON чтобы извлечь реальную структуру AssistResponse
@@ -385,7 +385,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 	if err := json.Unmarshal([]byte(fullText), &assistResponse); err != nil {
 		// Если парсинг не удался - возможно модель вернула просто текст
 		//logger.Warn("Не удалось распарсить JSON ответ (длина=%d, ошибка=%v), fullText='%s'",
-		//	len(fullText), err, fullText, userId)
+		//	len(fullText), err, fullText, userID)
 		assistResponse = model.AssistResponse{
 			Message: fullText,
 			Action: model.Action{
@@ -417,7 +417,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 	// Вызываем callback с done=true и полным JSON
 	if onDelta != nil {
 		if err := onDelta(string(responseJSON), true); err != nil {
-			//logger.Warn("Ошибка в onDelta callback: %v", err, userId)
+			//logger.Warn("Ошибка в onDelta callback: %v", err, userID)
 		}
 	}
 
@@ -456,11 +456,11 @@ func (m *Model) createUserMessageWithFiles(text string, files []model.FileUpload
 					"url": file.URL,
 				},
 			})
-			//logger.Debug("Добавлено изображение по URL: %s", file.URL, userId)
+			//logger.Debug("Добавлено изображение по URL: %s", file.URL, userID)
 		} else if file.Content != nil {
 			// Для code_interpreter - загружаем файл
 			// TODO: Загрузка файлов для code_interpreter
-			//logger.Warn("Файл %s требует загрузки для code_interpreter (не реализовано)", file.Name, userId)
+			//logger.Warn("Файл %s требует загрузки для code_interpreter (не реализовано)", file.Name, userID)
 		}
 	}
 

@@ -76,7 +76,7 @@ type MistralAgentClient struct {
 	apiKey         string
 	url            string
 	ctx            context.Context
-	universalModel *UniversalModel // Ссылка на UniversalModel для доступа к GetRealUserID
+	universalModel *UniversalModel // Ссылка на UniversalModel для доступа к GetRealuserID
 	promptFetcher  GooglePromptHintFetcher
 	toolsFetcher   GoogleFunctionDeclarationsFetcher
 }
@@ -89,7 +89,7 @@ func (m *MistralAgentClient) SetMCPConfigFetchers(promptFetcher GooglePromptHint
 }
 
 // deleteMistralModel удаляет Mistral Agent (с поддержкой WS сообщений)
-func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelRecord, deleteFiles bool, progressCallback func(string)) error {
+func (m *UniversalModel) deleteMistralModel(userID uint32, modelData *UserModelRecord, deleteFiles bool, progressCallback func(string)) error {
 	if progressCallback != nil {
 		progressCallback("🔄 Удаление Mistral агента...")
 	}
@@ -97,7 +97,7 @@ func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelR
 	// Удаляем агента через API
 	if m.mistralClient != nil {
 		if err := m.mistralClient.deleteAgent(modelData.AssistId); err != nil {
-			//logger.Error("ошибка удаления Mistral агента %s: %v", modelData.AssistId, err, userId)
+			//logger.Error("ошибка удаления Mistral агента %s: %v", modelData.AssistId, err, userID)
 			// Продолжаем удаление из БД даже если не удалось удалить из API
 			if progressCallback != nil {
 				progressCallback(fmt.Sprintf("⚠️ Не удалось удалить агент из Mistral API: %v", err))
@@ -116,16 +116,16 @@ func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelR
 
 			// Получаем library_id из БД
 			provider := ProviderMistral
-			modelJSON, err := m.ReadModel(userId, &provider)
+			modelJSON, err := m.ReadModel(userID, &provider)
 			if err != nil {
-				//logger.Error("Ошибка получения данных модели для удаления файлов: %v", err, userId)
+				//logger.Error("Ошибка получения данных модели для удаления файлов: %v", err, userID)
 			} else if modelJSON != nil && len(modelJSON.VecIds.VectorId) > 0 {
 				libraryID := modelJSON.VecIds.VectorId[0]
 
 				// Удаляем каждый документ из библиотеки
 				for i, file := range modelData.FileIds {
 					if err := m.mistralClient.DeleteDocumentFromLibrary(libraryID, file.ID); err != nil {
-						//logger.Error("Ошибка удаления документа %s из библиотеки: %v", file.ID, err, userId)
+						//logger.Error("Ошибка удаления документа %s из библиотеки: %v", file.ID, err, userID)
 					}
 
 					// Отправляем прогресс каждые 5 файлов
@@ -140,7 +140,7 @@ func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelR
 				}
 
 				if err := m.mistralClient.DeleteLibrary(libraryID); err != nil {
-					//logger.Error("Ошибка удаления библиотеки %s: %v", libraryID, err, userId)
+					//logger.Error("Ошибка удаления библиотеки %s: %v", libraryID, err, userID)
 					if progressCallback != nil {
 						progressCallback(fmt.Sprintf("⚠️ Не удалось удалить библиотеку: %v", err))
 					}
@@ -152,7 +152,7 @@ func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelR
 			}
 		}
 	} else {
-		//logger.Warn("Mistral клиент не инициализирован, пропускаем удаление из API", userId)
+		//logger.Warn("Mistral клиент не инициализирован, пропускаем удаление из API", userID)
 		if progressCallback != nil {
 			progressCallback("⚠️ Mistral клиент не инициализирован, удаляем только из БД")
 		}
@@ -162,7 +162,7 @@ func (m *UniversalModel) deleteMistralModel(userId uint32, modelData *UserModelR
 		progressCallback("✅ Mistral агент и файлы удалены из API")
 	}
 
-	//logger.Debug("Mistral модель успешно удалена из API", userId)
+	//logger.Debug("Mistral модель успешно удалена из API", userID)
 	return nil
 }
 
@@ -176,7 +176,7 @@ func (m *MistralAgentClient) deleteAgent(agentID string) error {
 }
 
 // updateMistralModelInPlace обновляет Mistral Agent
-func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, updated *UniversalModelData) error {
+func (m *UniversalModel) updateMistralModelInPlace(userID uint32, existing, updated *UniversalModelData) error {
 	if m.mistralClient == nil {
 		return fmt.Errorf("Mistral клиент не инициализирован")
 	}
@@ -185,7 +185,7 @@ func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, upda
 	// (Mistral API может не поддерживать PATCH/UPDATE агентов)
 
 	// Получаем все модели пользователя и находим нужную
-	allModels, err := m.db.GetAllUserModels(userId)
+	allModels, err := m.db.GetAllUserModels(userID)
 	if err != nil {
 		return fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
@@ -208,7 +208,7 @@ func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, upda
 		return a.ID == b.ID && a.Name == b.Name
 	}) {
 		// Файлы изменились - библиотека уже обновлена, используем новые данные
-		//logger.Debug("Файлы изменились, используем обновленные данные библиотеки", userId)
+		//logger.Debug("Файлы изменились, используем обновленные данные библиотеки", userID)
 	} else {
 		// Файлы не изменились - используем существующие VectorId и FileIds
 		updated.VecIds.VectorId = existing.VecIds.VectorId
@@ -217,26 +217,26 @@ func (m *UniversalModel) updateMistralModelInPlace(userId uint32, existing, upda
 
 	// Удаляем старого агента
 	if err := m.mistralClient.deleteAgent(existingModelData.AssistId); err != nil {
-		//logger.Warn("Не удалось удалить старого Mistral агента %s: %v", existingModelData.AssistId, err, userId)
+		//logger.Warn("Не удалось удалить старого Mistral агента %s: %v", existingModelData.AssistId, err, userID)
 	}
 
 	// Создаем нового агента с обновленными данными
-	umcr, err := m.mistralClient.createMistralAgent(updated, userId, updated.FileIds)
+	umcr, err := m.mistralClient.createMistralAgent(updated, userID, updated.FileIds)
 	if err != nil {
 		return fmt.Errorf("ошибка создания нового Mistral агента: %w", err)
 	}
 
 	// Сохраняем в БД
-	if err := m.SaveModel(userId, umcr, updated); err != nil {
+	if err := m.SaveModel(userID, umcr, updated); err != nil {
 		return fmt.Errorf("ошибка сохранения обновленной модели в БД: %w", err)
 	}
 
-	//logger.Debug("Mistral Agent успешно обновлен (новый ID: %s)", umcr.AssistID, userId)
+	//logger.Debug("Mistral Agent успешно обновлен (новый ID: %s)", umcr.AssistID, userID)
 	return nil
 }
 
 // createMistralModel создаёт Mistral Agent (внутренний метод)
-func (m *UniversalModel) createMistralModel(userId uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
+func (m *UniversalModel) createMistralModel(userID uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
 	if m.mistralClient == nil {
 		return UMCR{}, fmt.Errorf("mistral клиент не инициализирован")
 	}
@@ -250,7 +250,7 @@ func (m *UniversalModel) createMistralModel(userId uint32, modelData *UniversalM
 	}
 
 	// Создаём агента через Mistral API с поддержкой всех возможностей
-	umcr, err := m.mistralClient.createMistralAgent(modelData, userId, fileIDs)
+	umcr, err := m.mistralClient.createMistralAgent(modelData, userID, fileIDs)
 	if err != nil {
 		return UMCR{}, fmt.Errorf("ошибка создания Mistral агента: %w", err)
 	}
@@ -259,7 +259,7 @@ func (m *UniversalModel) createMistralModel(userId uint32, modelData *UniversalM
 }
 
 // createMistralAgent создает нового агента с указанными параметрами
-func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, userId uint32, fileIDs []Ids) (UMCR, error) {
+func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, userID uint32, fileIDs []Ids) (UMCR, error) {
 	if modelData == nil {
 		return UMCR{}, fmt.Errorf("modelData не может быть nil")
 	}
@@ -267,7 +267,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	// Убираем /completions из URL для endpoint создания агента
 	baseURL := strings.Replace(m.url, "/completions", "", 1)
 
-	description := fmt.Sprintf("Agent for user %d", userId)
+	description := fmt.Sprintf("Agent for user %d", userID)
 
 	// ============================================================================
 	// SYSTEM PROMPT — базовый prompt + hint от MCP.
@@ -277,7 +277,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	enhancedPrompt := modelData.Prompt + "\n\n"
 
 	if m.promptFetcher != nil {
-		if hint, fetchErr := m.promptFetcher(m.ctx, userId, ProviderMistral); fetchErr == nil && hint != "" {
+		if hint, fetchErr := m.promptFetcher(m.ctx, userID, ProviderMistral); fetchErr == nil && hint != "" {
 			enhancedPrompt += hint + "\n\n"
 		}
 	}
@@ -330,7 +330,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	var tools []map[string]interface{}
 
 	if m.toolsFetcher != nil {
-		if mcpFunctions, fetchErr := m.toolsFetcher(m.ctx, userId, ProviderMistral); fetchErr == nil {
+		if mcpFunctions, fetchErr := m.toolsFetcher(m.ctx, userID, ProviderMistral); fetchErr == nil {
 			for _, f := range mcpFunctions {
 				tools = append(tools, map[string]interface{}{
 					"type": "function",
@@ -343,7 +343,6 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 			}
 		}
 	}
-
 
 	// ============================================================================
 	// BUILT-IN MISTRAL TOOLS — нативные возможности API, не MCP-функции.

@@ -16,7 +16,7 @@ import (
 )
 
 //type CallBack interface {
-//	DisableOperatorMode(userId uint32, DialogID uint64) error
+//	DisableOperatorMode(userID uint32, DialogID uint64) error
 //}
 
 // Inter - интерфейс для отправки сообщений от и для операторов
@@ -35,7 +35,7 @@ type OperatorCh struct {
 	TxCh       chan model.Message
 	RxCh       chan model.Message
 	DialogID   uint64
-	UserID     uint32
+	userID     uint32
 }
 
 type Operator struct {
@@ -117,7 +117,7 @@ func (o *Operator) getOrCreateSession(userID uint32, dialogID uint64) (*session,
 	ch := OperatorCh{
 		TxCh:     make(chan model.Message, 1),
 		RxCh:     make(chan model.Message, 1),
-		UserID:   userID,
+		userID:   userID,
 		DialogID: dialogID,
 	}
 
@@ -220,10 +220,10 @@ func (o *Operator) cleanup(key opKey, s *session) {
 
 // listenerSession — основной слушатель с учётом простоя
 func (o *Operator) listenerSession(key opKey, s *session) {
-	//logger.Debug("Starting listener session (user=%d, dialog=%d)", s.ch.UserID, s.ch.DialogID)
+	//logger.Debug("Starting listener session (user=%d, dialog=%d)", s.ch.userID, s.ch.DialogID)
 
 	base := fmt.Sprintf("http://localhost:%s/op", o.port)
-	sseURL := fmt.Sprintf("%s?user_id=%d&dialog_id=%d", base, s.ch.UserID, s.ch.DialogID)
+	sseURL := fmt.Sprintf("%s?user_id=%d&dialog_id=%d", base, s.ch.userID, s.ch.DialogID)
 	client := sse.NewClient(sseURL)
 
 	client.Connection.Transport = &http.Transport{
@@ -242,7 +242,7 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 
 	//defer func() {
 	//	// И в любом случае выключаю операторский режим
-	//	if err := o.cb.DisableOperatorMode(s.Ch.UserID, s.ch.DialogID); err != nil {
+	//	if err := o.cb.DisableOperatorMode(s.Ch.userID, s.ch.DialogID); err != nil {
 	//		logger.Error("Failed to disable operator mode: %v", err)
 	//	}
 	//}()
@@ -261,7 +261,7 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 		select {
 		case msg, ok := <-s.ch.TxCh:
 			if !ok {
-				//logger.Info("TxCh channel closed (user=%d, dialog=%d)", s.ch.UserID, s.ch.DialogID)
+				//logger.Info("TxCh channel closed (user=%d, dialog=%d)", s.ch.userID, s.ch.DialogID)
 				o.cleanup(key, s)
 				return
 			}
@@ -282,14 +282,14 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 		//case httpErr := <-s.httpErrorCh:
 		case <-s.httpErrorCh:
 			// Обработка ошибок HTTP POST - если сервер недоступен, закрываем сессию
-			//logger.Warn("HTTP POST error detected, closing session (user=%d, dialog=%d): %v", s.ch.UserID, s.ch.DialogID, httpErr)
+			//logger.Warn("HTTP POST error detected, closing session (user=%d, dialog=%d): %v", s.ch.userID, s.ch.DialogID, httpErr)
 			o.cleanup(key, s)
 			return
 
 		case event, ok := <-events:
 			// Корректно завершаем при закрытии канала событий SSE
 			if !ok {
-				//logger.Warn("SSE events channel closed by server (user=%d, dialog=%d)", s.ch.UserID, s.ch.DialogID)
+				//logger.Warn("SSE events channel closed by server (user=%d, dialog=%d)", s.ch.userID, s.ch.DialogID)
 				o.cleanup(key, s)
 				return
 			}
@@ -344,12 +344,12 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 			}
 
 		case <-s.idleTimer.C:
-			//logger.Info("Operator session idle timeout (30m). Closing (user=%d, dialog=%d)", s.ch.UserID, s.ch.DialogID)
+			//logger.Info("Operator session idle timeout (30m). Closing (user=%d, dialog=%d)", s.ch.userID, s.ch.DialogID)
 			//s.cancel()
 			return
 
 		case <-s.ctx.Done():
-			//logger.Debug("Listener session context done (user=%d, dialog=%d)", s.ch.UserID, s.ch.DialogID)
+			//logger.Debug("Listener session context done (user=%d, dialog=%d)", s.ch.userID, s.ch.DialogID)
 			return
 		}
 	}
@@ -395,7 +395,7 @@ func (o *Operator) sendMessage(baseURL string, s *session, msg model.Message) er
 		Msg      *model.Message `json:"msg,omitempty"`
 	}
 	env := envelope{
-		UserID:   s.ch.UserID,
+		UserID:   s.ch.userID,
 		DialogID: s.ch.DialogID,
 		SID:      sid,
 		Msg:      &msg,

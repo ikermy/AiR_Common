@@ -42,9 +42,9 @@ func (dm *DialogMessage) GetCreator() string {
 // google не хранит модели на своей стороне, поэтому modelId игнорируется
 // ОПТИМИЗАЦИЯ: История диалога кэшируется локально в памяти с LiveTTL для избежания постоянных обращений к БД
 // Использует RequestStreaming с буферизацией для получения финального ответа
-func (m *Model) Request(userId uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (m *Model) Request(userID uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
 	return model.StreamingToSync(text, files, func(onDelta func(string, bool) error, files ...model.FileUpload) error {
-		return m.RequestStreaming(userId, dialogID, text, onDelta, files...)
+		return m.RequestStreaming(userID, dialogID, text, onDelta, files...)
 	})
 }
 
@@ -295,7 +295,7 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 				}
 
 				//logger.Warn("Квота Google API превышена (429), retry через %v (попытка %d/%d)",
-				//	retryDelay, attempt+1, maxRetries, userId)
+				//	retryDelay, attempt+1, maxRetries, userID)
 
 				time.Sleep(retryDelay)
 				continue
@@ -351,7 +351,7 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 				}
 
 				if err := json.Unmarshal([]byte(data), &sseEvent); err != nil {
-					//logger.Warn("[SSE] Ошибка парсинга SSE события: %v, data: %s", err, data, userId)
+					//logger.Warn("[SSE] Ошибка парсинга SSE события: %v, data: %s", err, data, userID)
 					continue
 				}
 
@@ -365,7 +365,7 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 							// Клиент сам будет накапливать и парсить финальный JSON
 							if onDelta != nil {
 								if err := onDelta(part.Text); err != nil {
-									//logger.Warn("[SSE] Ошибка в onDelta callback: %v", err, userId)
+									//logger.Warn("[SSE] Ошибка в onDelta callback: %v", err, userID)
 									return "", nil, nil, err
 								}
 							}
@@ -375,7 +375,7 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 						// ВАЖНО: Gemini присылает functionCall целиком в одном чанке
 						// В отличие от OpenAI, аргументы НЕ стримятся по кусочкам
 						if part.FunctionCall != nil {
-							//logger.Debug("[SSE] Получен function call: %+v", part.FunctionCall, userId)
+							//logger.Debug("[SSE] Получен function call: %+v", part.FunctionCall, userID)
 
 							// Сохраняем function call для возврата (для multi-turn conversation)
 							functionCalls = append(functionCalls, part.FunctionCall)
@@ -408,11 +408,11 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 							// Отправляем как JSON строку клиенту (точно так же, как в OpenAI)
 							if onDelta != nil {
 								if err := onDelta(functionCallEvent); err != nil {
-									//logger.Warn("[SSE] Ошибка при отправке function_call: %v", err, userId)
+									//logger.Warn("[SSE] Ошибка при отправке function_call: %v", err, userID)
 									return "", nil, nil, err
 								}
 								//logger.Debug("📨 [SSE] Function call отправлен клиенту: name=%s, args_len=%d",
-								//	functionName, len(argsJSON), userId)
+								//	functionName, len(argsJSON), userID)
 							}
 						}
 					}
@@ -443,7 +443,7 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 // parseGeminiResponseWithFunctionHandling парсит ответ и обрабатывает function calls через multi-turn conversation
 // Если модель вызывает функцию без текста, отправляем результат обратно модели для продолжения
 func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, history []GoogleContent,
-	payload map[string]interface{}, modelName string, provider create.ProviderType, userId uint32) (model.AssistResponse, error) {
+	payload map[string]interface{}, modelName string, provider create.ProviderType, userID uint32) (model.AssistResponse, error) {
 
 	var emptyResponse model.AssistResponse
 
@@ -498,7 +498,7 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 
 		// Обрабатываем все функции и собираем результаты
 		for _, fc := range functionCalls {
-			result, err := m.handleFunctionCall(fc, provider, userId)
+			result, err := m.handleFunctionCall(fc, provider, userID)
 			if err != nil {
 				//logger.Warn("Ошибка обработки function call: %v", err)
 				continue
@@ -527,15 +527,15 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 		}
 
 		// Рекурсивно парсим ответ (модель должна вернуть текст)
-		return m.parseGeminiResponseWithFunctionHandling(response, history, payload, modelName, provider, userId)
+		return m.parseGeminiResponseWithFunctionHandling(response, history, payload, modelName, provider, userID)
 	}
 
 	// Если есть function calls И текст - обрабатываем функции (но текст используем как ответ)
 	if len(functionCalls) > 0 && len(textParts) > 0 {
 		//logger.Debug("Модель вернула текст и вызвала функции")
 		for _, fc := range functionCalls {
-			//result, err := m.handleFunctionCall(fc, provider, userId)
-			_, err := m.handleFunctionCall(fc, provider, userId)
+			//result, err := m.handleFunctionCall(fc, provider, userID)
+			_, err := m.handleFunctionCall(fc, provider, userID)
 			if err != nil {
 				//logger.Warn("Ошибка обработки function call: %v", err)
 				continue
@@ -638,7 +638,7 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 }
 
 // handleFunctionCall обрабатывает вызов функции от модели
-func (m *Model) handleFunctionCall(functionCall map[string]interface{}, provider create.ProviderType, userId uint32) (map[string]interface{}, error) {
+func (m *Model) handleFunctionCall(functionCall map[string]interface{}, provider create.ProviderType, userID uint32) (map[string]interface{}, error) {
 	functionName, ok := functionCall["name"].(string)
 	if !ok {
 		return nil, fmt.Errorf("function call не содержит имени")
@@ -656,7 +656,7 @@ func (m *Model) handleFunctionCall(functionCall map[string]interface{}, provider
 
 	// Все функции обрабатываются через action handler
 	if m.actionHandler != nil {
-		result := m.actionHandler.RunAction(m.ctx, functionName, string(argsJSON), provider, userId)
+		result := m.actionHandler.RunAction(m.ctx, functionName, string(argsJSON), provider, userID)
 
 		var resultMap map[string]interface{}
 		if err := json.Unmarshal([]byte(result), &resultMap); err != nil {
@@ -675,7 +675,7 @@ func (m *Model) handleFunctionCall(functionCall map[string]interface{}, provider
 
 // processVideoGeneration автоматически генерирует видео если модель вызвала generate_video
 // или если в промпте агента включен флаг Video и обнаружены ключевые слова
-func (m *Model) processVideoGeneration(userId uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
+func (m *Model) processVideoGeneration(userID uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
 	// Проверяем включена ли генерация видео в конфигурации
 	if !m.isVideoEnabled(agentConfig) {
 		return response, nil
@@ -697,7 +697,7 @@ func (m *Model) processVideoGeneration(userId uint32, userText string, response 
 		return response, nil
 	}
 
-	//logger.Debug("processVideoGeneration: начинаем генерацию видео", userId)
+	//logger.Debug("processVideoGeneration: начинаем генерацию видео", userID)
 
 	// Извлекаем параметры для генерации
 	prompt := m.extractVideoPrompt(userText, response.Message)
@@ -732,7 +732,7 @@ func (m *Model) processVideoGeneration(userId uint32, userText string, response 
 
 	// Сохраняем видео через save_image_data (используем тот же механизм)
 	// TODO: Можно создать отдельный save_video_data endpoint
-	fileName := fmt.Sprintf("video_%d_%d.mp4", userId, time.Now().Unix())
+	fileName := fmt.Sprintf("video_%d_%d.mp4", userID, time.Now().Unix())
 
 	// Кодируем в base64 для передачи
 	videoBase64 := base64.StdEncoding.EncodeToString(videoData)
@@ -740,7 +740,7 @@ func (m *Model) processVideoGeneration(userId uint32, userText string, response 
 	args := fmt.Sprintf(`{"image_data":"%s","file_name":"%s"}`,
 		videoBase64, fileName)
 
-	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, userId)
+	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, userID)
 
 	// Парсим результат сохранения
 	var saveResult struct {
@@ -844,7 +844,7 @@ func getStringField(m map[string]interface{}, key string) string {
 
 // processImageGeneration автоматически генерирует изображение если модель включила Image
 // и обнаружены ключевые слова в запросе пользователя
-func (m *Model) processImageGeneration(userId uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
+func (m *Model) processImageGeneration(userID uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
 	// Проверяем включена ли генерация изображений в конфигурации
 	if !agentConfig.Image {
 		return response, nil
@@ -870,7 +870,7 @@ func (m *Model) processImageGeneration(userId uint32, userText string, response 
 		return response, nil
 	}
 
-	//logger.Debug("processImageGeneration: начинаем генерацию изображения", userId)
+	//logger.Debug("processImageGeneration: начинаем генерацию изображения", userID)
 
 	// Извлекаем промпт для генерации (из запроса пользователя или ответа модели)
 	prompt := m.extractImagePrompt(userText, response.Message)
@@ -901,7 +901,7 @@ func (m *Model) processImageGeneration(userId uint32, userText string, response 
 		ext = "jpg"
 	}
 
-	fileName := fmt.Sprintf("image_%d_%d.%s", userId, time.Now().Unix(), ext)
+	fileName := fmt.Sprintf("image_%d_%d.%s", userID, time.Now().Unix(), ext)
 
 	// Кодируем в base64 для передачи в save_image_data
 	imageBase64 := base64.StdEncoding.EncodeToString(imageData)
@@ -910,7 +910,7 @@ func (m *Model) processImageGeneration(userId uint32, userText string, response 
 	args := fmt.Sprintf(`{"image_data":"%s","file_name":"%s"}`,
 		imageBase64, fileName)
 
-	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, userId)
+	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, userID)
 
 	// Парсим результат сохранения
 	var saveResult struct {
@@ -1040,7 +1040,7 @@ type ragResp struct {
 	err         error
 	history     []GoogleContent
 	resp        *GoogleRespModel
-	realUserID  uint64
+	realuserID  uint64
 	// Метрики производительности
 	embeddingDuration     time.Duration
 	searchDuration        time.Duration
@@ -1049,31 +1049,31 @@ type ragResp struct {
 	cacheHit              bool
 }
 
-func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- ragResp) {
+func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- ragResp) {
 	defer close(ch)
 
 	result := ragResp{}
 
 	// === 1. Получаем real_user_id ===
-	var realUserID uint64
+	var realuserID uint64
 	if m.universalModel != nil {
 		var err error
-		realUserID, err = m.universalModel.GetRealUserID(userId)
+		realuserID, err = m.universalModel.GetRealuserID(userID)
 		if err != nil {
-			//logger.Warn("applyRAG: не удалось получить real_user_id: %v, используем userId", err, userId)
-			realUserID = uint64(userId)
+			//logger.Warn("applyRAG: не удалось получить real_user_id: %v, используем userID", err, userID)
+			realuserID = uint64(userID)
 		}
 	} else {
-		realUserID = uint64(userId)
+		realuserID = uint64(userID)
 	}
-	result.realUserID = realUserID
+	result.realuserID = realuserID
 
 	// === 2. Загружаем историю диалога (параллельно с эмбеддингами) ===
 	historyStart := time.Now()
 	var history []GoogleContent
 	if cachedHistory, found := m.getDialogHistoryFromCache(dialogID); found {
 		history = cachedHistory
-		//logger.Debug("applyRAG: история загружена из кэша (%d сообщений)", len(history), userId)
+		//logger.Debug("applyRAG: история загружена из кэша (%d сообщений)", len(history), userID)
 	} else {
 		// Получаем respId для загрузки истории из БД
 		respId, err := m.GetRespIdBydialogID(dialogID)
@@ -1098,11 +1098,11 @@ func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- 
 		// Загружаем историю из БД
 		dbHistory, err := m.ConvertDialogToGoogleFormat(dialogID)
 		if err != nil {
-			//logger.Warn("applyRAG: не удалось загрузить историю диалога %d из БД: %v, используем пустую историю", dialogID, err, userId)
+			//logger.Warn("applyRAG: не удалось загрузить историю диалога %d из БД: %v, используем пустую историю", dialogID, err, userID)
 			history = []GoogleContent{}
 		} else {
 			history = dbHistory
-			//logger.Debug("applyRAG: история загружена из БД (%d сообщений)", len(history), userId)
+			//logger.Debug("applyRAG: история загружена из БД (%d сообщений)", len(history), userID)
 		}
 
 		// Ограничиваем историю
@@ -1152,7 +1152,7 @@ func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- 
 	// === 4. Проверяем нужен ли RAG ===
 	if !resp.AgentConfig.HasVector || len(resp.AgentConfig.VectorIds) == 0 || text == "" {
 		//logger.Debug("applyRAG: RAG не требуется (HasVector=%v, VectorIds=%d, text=%q)",
-		//	resp.AgentConfig.HasVector, len(resp.AgentConfig.VectorIds), text != "", userId)
+		//	resp.AgentConfig.HasVector, len(resp.AgentConfig.VectorIds), text != "", userID)
 		// Отправляем результат без RAG контекста
 		select {
 		case <-m.ctx.Done():
@@ -1167,7 +1167,7 @@ func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- 
 	result.embeddingDuration = time.Since(embeddingStart)
 
 	if err != nil {
-		//logger.Warn("applyRAG: ошибка генерации эмбеддинга: %v, продолжаем без RAG", err, userId)
+		//logger.Warn("applyRAG: ошибка генерации эмбеддинга: %v, продолжаем без RAG", err, userID)
 		result.err = fmt.Errorf("ошибка генерации эмбеддинга для RAG: %v", err)
 		select {
 		case <-m.ctx.Done():
@@ -1185,7 +1185,7 @@ func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- 
 	result.searchDuration = time.Since(searchStart)
 
 	if err != nil {
-		//logger.Warn("applyRAG: ошибка поиска похожих эмбеддингов: %v, продолжаем без RAG", err, userId)
+		//logger.Warn("applyRAG: ошибка поиска похожих эмбеддингов: %v, продолжаем без RAG", err, userID)
 		result.err = fmt.Errorf("ошибка поиска похожих эмбеддингов для RAG: %v", err)
 		select {
 		case <-m.ctx.Done():
@@ -1211,10 +1211,10 @@ User query: %s`, contextText, text)
 
 		//totalDuration := time.Since(totalStart)
 		//logger.Debug("[USER:%d] ⚡ applyRAG завершён за %v | История: %v | Респондент: %v | Эмбеддинг: %v | Поиск: %v | Найдено документов: %d (%d символов)",
-		//	userId, totalDuration, result.historyLoadDuration, result.responderLoadDuration,
+		//	userID, totalDuration, result.historyLoadDuration, result.responderLoadDuration,
 		//	result.embeddingDuration, result.searchDuration, len(relevantDocs), len(contextText))
 		//} else {
-		//	logger.Debug("applyRAG: похожие документы не найдены", userId)
+		//	logger.Debug("applyRAG: похожие документы не найдены", userID)
 	}
 
 	// Отправляем результат
@@ -1227,7 +1227,7 @@ User query: %s`, contextText, text)
 // RequestStreaming выполняет запрос с потоковой передачей через SSE (Server-Sent Events)
 // Использует Google Gemini streamGenerateContent API для получения ответов в реальном времени
 // onDelta вызывается для каждого delta-события, в финальной дельте передаются данные о токенах
-func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
+func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
 	if text == "" && len(files) == 0 {
 		return fmt.Errorf("пустое сообщение и нет файлов")
 	}
@@ -1237,10 +1237,10 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 	// всех тяжёлых операций (загрузка истории, получение респондента, эмбеддинги)
 	// ============================================================================
 	ragCh := make(chan ragResp, 1)
-	go m.applyRAG(userId, dialogID, text, ragCh)
+	go m.applyRAG(userID, dialogID, text, ragCh)
 
 	// Ждём результат RAG из горутины
-	// Он содержит: history, resp, realUserID, contextText и метрики производительности
+	// Он содержит: history, resp, realuserID, contextText и метрики производительности
 	var ragResult ragResp
 	select {
 	case <-m.ctx.Done():
@@ -1260,9 +1260,9 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 
 	// Создаём callback для выполнения функций через MCP action handler.
 	// ВАЖНО: определяем ПОСЛЕ получения resp из applyRAG, чтобы иметь доступ к
-	// resp.Assist.Provider и userId для вызова RunAction.
+	// resp.Assist.Provider и userID для вызова RunAction.
 	onToolCall := func(toolCalls []interface{}) ([]interface{}, error) {
-		//logger.Debug("🔧 [RequestStreaming/Google] ВЫЗВАН onToolCall! Количество tool calls: %d", len(toolCalls), userId)
+		//logger.Debug("🔧 [RequestStreaming/Google] ВЫЗВАН onToolCall! Количество tool calls: %d", len(toolCalls), userID)
 		var toolOutputs []interface{}
 		for _, toolCall := range toolCalls {
 			toolCallMap, ok := toolCall.(map[string]interface{})
@@ -1277,17 +1277,17 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 			if m.actionHandler == nil {
 				result = `{"error": "action handler not initialized"}`
 			} else {
-				result = m.actionHandler.RunAction(m.ctx, functionName, arguments, resp.Assist.Provider, userId)
+				result = m.actionHandler.RunAction(m.ctx, functionName, arguments, resp.Assist.Provider, userID)
 			}
 
-			//logger.Debug("🔧 [Google] Выполнена функция %s → %s", functionName, result, userId)
+			//logger.Debug("🔧 [Google] Выполнена функция %s → %s", functionName, result, userID)
 			toolOutputs = append(toolOutputs, map[string]interface{}{
 				"call_id": callID,
 				"name":    functionName,
 				"content": result,
 			})
 		}
-		//logger.Debug("🔧 [RequestStreaming/Google] ЗАВЕРШЁН! Возвращаю %d результатов", len(toolOutputs), userId)
+		//logger.Debug("🔧 [RequestStreaming/Google] ЗАВЕРШЁН! Возвращаю %d результатов", len(toolOutputs), userID)
 		return toolOutputs, nil
 	}
 
@@ -1300,7 +1300,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 	// Если RAG нашёл контекст - используем его
 	if ragResult.contextText != "" {
 		enhancedText = ragResult.contextText
-		//logger.Info("[USER:%d] RAG: добавлено контекста (%d символов)", userId, len(ragResult.contextText))
+		//logger.Info("[USER:%d] RAG: добавлено контекста (%d символов)", userID, len(ragResult.contextText))
 	}
 
 	// Ждём результат RAG из горутины (он может прийти раньше, позже или вообще не прийти если что-то пошло по дуге)
@@ -1309,9 +1309,9 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 	case <-m.ctx.Done():
 	case ragRes := <-ragCh:
 		if ragRes.err != nil {
-			//logger.Warn("RAG error: %v, продолжаем без RAG", ragRes.err, userId)
+			//logger.Warn("RAG error: %v, продолжаем без RAG", ragRes.err, userID)
 		} else if ragRes.contextText != "" {
-			//logger.Debug("RAG результат получен, добавлено контекста: %d символов", len(ragRes.contextText), userId)
+			//logger.Debug("RAG результат получен, добавлено контекста: %d символов", len(ragRes.contextText), userID)
 			ragContent = ragRes.contextText
 		}
 	case <-time.After(10 * time.Second): // Таймаут на RAG, чтобы не ждать слишком долго
@@ -1401,7 +1401,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 			return onDelta(delta, false) // done=false для промежуточных дельт
 		}
 		return nil
-	}, userId)
+	}, userID)
 
 	if err != nil {
 		return fmt.Errorf("ошибка запроса к Gemini API: %w", err)
@@ -1409,7 +1409,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 
 	// MULTI-TURN CONVERSATION: Если есть function calls БЕЗ текста - выполнить функции и повторить запрос
 	if len(functionCalls) > 0 && strings.TrimSpace(fullText) == "" {
-		//logger.Debug("Обнаружен вызов функций без текста, начинаем multi-turn conversation", userId)
+		//logger.Debug("Обнаружен вызов функций без текста, начинаем multi-turn conversation", userID)
 
 		// Добавляем model response в историю со ВСЕМИ функциями
 		modelResponseParts := make([]map[string]interface{}, len(functionCalls))
@@ -1424,7 +1424,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 
 		// CALLBACK-АРХИТЕКТУРА: Если указан onToolCall - используем его для выполнения функций
 		if onToolCall != nil {
-			//logger.Debug("🔧 [RequestStreaming] Обнаружено %d function calls, вызываю onToolCall...", len(functionCalls), userId)
+			//logger.Debug("🔧 [RequestStreaming] Обнаружено %d function calls, вызываю onToolCall...", len(functionCalls), userID)
 
 			// Преобразуем functionCalls в формат совместимый с OpenAI (для единообразия)
 			var toolCalls []interface{}
@@ -1447,7 +1447,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 			if err != nil {
 				return fmt.Errorf("ошибка выполнения функций: %w", err)
 			}
-			//logger.Debug("✅ [RequestStreaming] onToolCall вернул %d результатов", len(toolOutputs), userId)
+			//logger.Debug("✅ [RequestStreaming] onToolCall вернул %d результатов", len(toolOutputs), userID)
 
 			// Отправляем результаты функций клиенту через streaming
 			if onDelta != nil {
@@ -1469,9 +1469,9 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 						if err == nil {
 							// Отправляем результат клиенту через streaming
 							if streamErr := onDelta(string(resultJSON), false); streamErr != nil {
-								//logger.Error("[RequestStreaming] Ошибка при отправке результата функции клиенту: %v", streamErr, userId)
+								//logger.Error("[RequestStreaming] Ошибка при отправке результата функции клиенту: %v", streamErr, userID)
 								//} else {
-								//	logger.Debug("[RequestStreaming] Результат функции отправлен клиенту: call_id=%s", callID, userId)
+								//	logger.Debug("[RequestStreaming] Результат функции отправлен клиенту: call_id=%s", callID, userID)
 							}
 						}
 					}
@@ -1513,17 +1513,17 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 						})
 					}
 
-					//logger.Debug("Функция %s выполнена и добавлена в историю", userId, functionCalls[i]["name"])
+					//logger.Debug("Функция %s выполнена и добавлена в историю", userID, functionCalls[i]["name"])
 				}
 			}
 		} else {
 			// СТАРАЯ СИНХРОННАЯ АРХИТЕКТУРА: Если callback не указан - используем handleFunctionCall напрямую
-			//logger.Debug("onToolCall не указан, используем синхронную обработку функций", userId)
+			//logger.Debug("onToolCall не указан, используем синхронную обработку функций", userID)
 
 			for _, fc := range functionCalls {
-				result, err := m.handleFunctionCall(fc, resp.Assist.Provider, resp.Assist.UserId)
+				result, err := m.handleFunctionCall(fc, resp.Assist.Provider, resp.Assist.UserID)
 				if err != nil {
-					//logger.Warn("Ошибка обработки function call: %v", userId, err)
+					//logger.Warn("Ошибка обработки function call: %v", userID, err)
 					continue
 				}
 
@@ -1540,7 +1540,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 					},
 				})
 
-				//logger.Debug("Функция %s выполнена и добавлена в историю", userId, fc["name"])
+				//logger.Debug("Функция %s выполнена и добавлена в историю", userID, fc["name"])
 			}
 		}
 
@@ -1548,19 +1548,19 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 		payload["contents"] = history
 
 		// Повторяем запрос к Gemini (модель должна вернуть текст с результатами)
-		//logger.Debug("Отправляем повторный запрос к Gemini с результатами функций", userId)
+		//logger.Debug("Отправляем повторный запрос к Gemini с результатами функций", userID)
 		fullText, usageMetadata, _, err = m.sendToGeminiAPIStreaming(resp.AgentConfig.ModelName, payload, func(delta string) error {
 			if onDelta != nil {
 				return onDelta(delta, false)
 			}
 			return nil
-		}, userId)
+		}, userID)
 
 		if err != nil {
 			return fmt.Errorf("ошибка повторного запроса к Gemini API: %w", err)
 		}
 
-		//logger.Debug("Получен финальный ответ после выполнения функций: len=%d", userId, len(fullText))
+		//logger.Debug("Получен финальный ответ после выполнения функций: len=%d", userID, len(fullText))
 	}
 
 	// Очищаем fullText от markdown-обёрток (Google иногда добавляет ```json ... ```)
@@ -1589,7 +1589,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 		// Пытаемся распарсить как JSON
 		if err := json.Unmarshal([]byte(cleanedText), &assistResponse); err != nil {
 			//logger.Warn("Не удалось распарсить JSON ответ (длина=%d, ошибка=%v), используем как текст",
-			//	len(cleanedText), err, userId)
+			//	len(cleanedText), err, userID)
 			// JSON невалидный - используем как обычный текст
 			assistResponse = model.AssistResponse{
 				Message: cleanedText,
@@ -1617,13 +1617,13 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 	}
 
 	// Обработка автоматической генерации видео и изображений (если включены)
-	if userId > 0 && text != "" {
-		assistResponse, err = m.processVideoGeneration(userId, text, assistResponse, resp.AgentConfig, resp.Assist.Provider)
+	if userID > 0 && text != "" {
+		assistResponse, err = m.processVideoGeneration(userID, text, assistResponse, resp.AgentConfig, resp.Assist.Provider)
 		if err != nil {
 			//logger.Warn("Ошибка обработки генерации видео: %v", err)
 		}
 
-		assistResponse, err = m.processImageGeneration(userId, text, assistResponse, resp.AgentConfig, resp.Assist.Provider)
+		assistResponse, err = m.processImageGeneration(userID, text, assistResponse, resp.AgentConfig, resp.Assist.Provider)
 		if err != nil {
 			//logger.Warn("Ошибка обработки генерации изображения: %v", err)
 		}
@@ -1667,10 +1667,10 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 		// Логируем использование токенов
 		//if cachedContentTokenCount > 0 {
 		//	logger.Info("[TOKEN USAGE] Prompt: %d | Cached: %d (💰 экономия!) | Output: %d | Total: %d",
-		//		promptTokenCount, cachedContentTokenCount, candidatesTokenCount, totalTokenCount, userId)
+		//		promptTokenCount, cachedContentTokenCount, candidatesTokenCount, totalTokenCount, userID)
 		//} else {
 		//	logger.Info("[TOKEN USAGE] Prompt: %d | Output: %d | Total: %d",
-		//		promptTokenCount, candidatesTokenCount, totalTokenCount, userId)
+		//		promptTokenCount, candidatesTokenCount, totalTokenCount, userID)
 		//}
 
 		// Преобразуем в OpenAI-совместимый формат для клиента
@@ -1703,7 +1703,7 @@ func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, on
 
 		if usageJSON, err := json.Marshal(tokenUsage); err == nil {
 			if streamErr := onDelta(string(usageJSON), false); streamErr != nil {
-				//logger.Warn("[RequestStreaming] Ошибка при отправке token_usage: %v", streamErr, userId)
+				//logger.Warn("[RequestStreaming] Ошибка при отправке token_usage: %v", streamErr, userID)
 			}
 		}
 	}

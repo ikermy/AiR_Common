@@ -113,38 +113,38 @@ type DB interface {
 	// SaveUserModel сохраняет модель в user_gpt и создает связь в user_models (всё в одной транзакции)
 	// Автоматически определяет IsActive (первая модель пользователя становится активной)
 	// provider - тип провайдера (1=OpenAI, 2=Mistral)
-	SaveUserModel(userId uint32, provider ProviderType, name, assistantId string, data []byte, model uint8, ids json.RawMessage, operator bool) error
+	SaveUserModel(userID uint32, provider ProviderType, name, assistantId string, data []byte, model uint8, ids json.RawMessage, operator bool) error
 
 	// ReadUserModelByProvider получает сжатые данные модели по провайдеру
 	// Возвращает: compressedData, vecIds, error
-	ReadUserModelByProvider(userId uint32, provider ProviderType) ([]byte, *VecIds, error)
+	ReadUserModelByProvider(userID uint32, provider ProviderType) ([]byte, *VecIds, error)
 
 	// GetUserVectorStorage получает ID векторного хранилища (deprecated: используйте ReadUserModelByProvider)
-	GetUserVectorStorage(userId uint32) (string, error)
+	GetUserVectorStorage(userID uint32) (string, error)
 
 	// GetOrSetUserStorageLimit получает или устанавливает лимит хранилища
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
 
 	// GetAllUserModels GetUserModels получает все модели пользователя из user_models
-	GetAllUserModels(userId uint32) ([]UserModelRecord, error)
+	GetAllUserModels(userID uint32) ([]UserModelRecord, error)
 
 	// GetActiveModel получает активную модель пользователя
-	GetActiveModel(userId uint32) (*UserModelRecord, error)
+	GetActiveModel(userID uint32) (*UserModelRecord, error)
 
 	// GetModelByProvider получает АКТИВНУЮ модель пользователя по провайдеру
-	GetModelByProvider(userId uint32, provider ProviderType) (*UserModelRecord, error)
+	GetModelByProvider(userID uint32, provider ProviderType) (*UserModelRecord, error)
 
 	// GetModelByProviderAnyStatus получает модель пользователя по провайдеру независимо от статуса активности
-	GetModelByProviderAnyStatus(userId uint32, provider ProviderType) (*UserModelRecord, error)
+	GetModelByProviderAnyStatus(userID uint32, provider ProviderType) (*UserModelRecord, error)
 
 	// SetActiveModel переключает активную модель (в транзакции)
-	SetActiveModel(userId uint32, modelId uint64) error
+	SetActiveModel(userID uint32, modelId uint64) error
 
 	// SetActiveModelByProvider устанавливает активную модель по провайдеру
-	SetActiveModelByProvider(userId uint32, provider ProviderType) error
+	SetActiveModelByProvider(userID uint32, provider ProviderType) error
 
 	// RemoveModelFromUser удаляет связь модель-пользователь
-	RemoveModelFromUser(userId uint32, modelId uint64) error
+	RemoveModelFromUser(userID uint32, modelId uint64) error
 
 	// ============================================================================
 	// VECTOR EMBEDDINGS - Методы работы с векторными эмбеддингами в MariaDB
@@ -152,7 +152,7 @@ type DB interface {
 	// ============================================================================
 
 	// SaveEmbedding сохраняет векторный эмбеддинг документа в БД с привязкой к модели
-	SaveEmbedding(userId uint32, modelId uint64, provider ProviderType, docID, docName, content string, embedding []float32, metadata DocumentMetadata) error
+	SaveEmbedding(userID uint32, modelId uint64, provider ProviderType, docID, docName, content string, embedding []float32, metadata DocumentMetadata) error
 
 	// ListModelEmbeddings возвращает список всех документов конкретной модели и провайдера с эмбеддингами
 	ListModelEmbeddings(modelId uint64, provider ProviderType) ([]VectorDocument, error)
@@ -167,7 +167,7 @@ type DB interface {
 	SearchSimilarEmbeddings(modelId uint64, provider ProviderType, queryEmbedding []float32, limit int) ([]VectorDocument, error)
 
 	// GetUserTimeZone получает часовой пояс пользователя из БД
-	UserTimeZone(userId uint32) (string, error)
+	UserTimeZone(userID uint32) (string, error)
 }
 
 // DocumentMetadata представляет метаданные документа с эмбеддингом
@@ -247,7 +247,7 @@ func New(ctx context.Context, db DB, conf *conf.Conf) *UniversalModel {
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
-		universalModel: m, // Передаем ссылку на universalModel для доступа к GetRealUserID
+		universalModel: m, // Передаем ссылку на universalModel для доступа к GetRealuserID
 	}
 
 	// Инициализируем Mistral клиент, если ключ предоставлен
@@ -349,7 +349,6 @@ type RealtimeVAD struct {
 	Voice *string `json:"voice,omitempty"` // имя голоса для генерации речи (дефолт verse)
 }
 
-
 // EsperoConfig представляет настройки ожидания из ModelDataRequest
 type EsperoConfig struct {
 	Limit  uint16 `json:"limit"`  // Лимит символов
@@ -365,7 +364,7 @@ type UserModelsResponse struct {
 
 // CreateModel создаёт новую модель (универсальный метод)
 // Работает для любого провайдера (OpenAI, Mistral...)
-func (m *UniversalModel) CreateModel(userId uint32, provider ProviderType, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
+func (m *UniversalModel) CreateModel(userID uint32, provider ProviderType, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
 
 	if modelData == nil {
 		return UMCR{}, fmt.Errorf("modelData не может быть nil")
@@ -377,11 +376,11 @@ func (m *UniversalModel) CreateModel(userId uint32, provider ProviderType, model
 
 	switch provider {
 	case ProviderOpenAI:
-		return m.createModel(userId, modelData, fileIDs)
+		return m.createModel(userID, modelData, fileIDs)
 	case ProviderMistral:
-		return m.createMistralModel(userId, modelData, fileIDs)
+		return m.createMistralModel(userID, modelData, fileIDs)
 	case ProviderGoogle:
-		return m.createGoogleModel(userId, modelData, fileIDs)
+		return m.createGoogleModel(userID, modelData, fileIDs)
 	default:
 		return UMCR{}, fmt.Errorf("неизвестный провайдер: %s", provider)
 	}
@@ -390,7 +389,7 @@ func (m *UniversalModel) CreateModel(userId uint32, provider ProviderType, model
 // SaveModel сохраняет модель в БД в универсальном формате
 // Работает для любого провайдера (OpenAI, Mistral..)
 // Автоматически устанавливает модель как активную если это первая модель пользователя
-func (m *UniversalModel) SaveModel(userId uint32, umcr UMCR, data *UniversalModelData) error {
+func (m *UniversalModel) SaveModel(userID uint32, umcr UMCR, data *UniversalModelData) error {
 	// Сериализуем данные модели в JSON
 	modelJSON, err := json.Marshal(data)
 	if err != nil {
@@ -408,7 +407,7 @@ func (m *UniversalModel) SaveModel(userId uint32, umcr UMCR, data *UniversalMode
 	}
 
 	err = m.db.SaveUserModel(
-		userId,
+		userID,
 		umcr.Provider,
 		data.Name,
 		umcr.AssistID,
@@ -428,35 +427,35 @@ func (m *UniversalModel) SaveModel(userId uint32, umcr UMCR, data *UniversalMode
 // Если provider != nil - получает модель конкретного провайдера
 // Если provider == nil - получает активную модель пользователя
 // Работает для любого провайдера (OpenAI, Mistral...)
-func (m *UniversalModel) ReadModel(userId uint32, provider *ProviderType) (*UniversalModelData, error) {
+func (m *UniversalModel) ReadModel(userID uint32, provider *ProviderType) (*UniversalModelData, error) {
 	var record *UserModelRecord
 	var err error
 
 	// Если провайдер не указан - получаем активную модель
 	if provider == nil {
-		record, err = m.db.GetActiveModel(userId)
+		record, err = m.db.GetActiveModel(userID)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка получения активной модели: %w", err)
 		}
 		if record == nil {
-			//logger.Debug("Активная модель не найдена", userId)
+			//logger.Debug("Активная модель не найдена", userID)
 			return nil, nil
 		}
-		//logger.Debug("Получение активной модели (Provider: %s)", record.Provider, userId)
+		//logger.Debug("Получение активной модели (Provider: %s)", record.Provider, userID)
 	} else {
 		// Получаем модель конкретного провайдера
-		record, err = m.db.GetModelByProvider(userId, *provider)
+		record, err = m.db.GetModelByProvider(userID, *provider)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка получения модели провайдера %s: %w", *provider, err)
 		}
 		if record == nil {
-			//logger.Debug("Модель провайдера %s не найдена", *provider, userId)
+			//logger.Debug("Модель провайдера %s не найдена", *provider, userID)
 			return nil, nil
 		}
 	}
 
 	// Получаем данные из БД по провайдеру
-	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
+	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userID, record.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения модели из БД: %w", err)
 	}
@@ -475,7 +474,7 @@ func (m *UniversalModel) ReadModel(userId uint32, provider *ProviderType) (*Univ
 	modelData.Provider = record.Provider
 
 	//logger.Debug("Модель успешно загружена (Provider: %s, Name: %s, IsActive: %v)",
-	//	modelData.Provider, modelData.Name, record.IsActive, userId)
+	//	modelData.Provider, modelData.Name, record.IsActive, userID)
 
 	return modelData, nil
 }
@@ -483,9 +482,9 @@ func (m *UniversalModel) ReadModel(userId uint32, provider *ProviderType) (*Univ
 // GetModelAsJSON получает ВСЕ модели пользователя и возвращает их как JSON
 // Предназначен для HTTP API endpoints - возвращает готовый JSON для отправки клиенту.
 // Возвращает объект с моделями по провайдерам и информацией об активной модели:
-func (m *UniversalModel) GetModelAsJSON(userId uint32) (json.RawMessage, error) {
+func (m *UniversalModel) GetModelAsJSON(userID uint32) (json.RawMessage, error) {
 	// Получаем все модели пользователя
-	response, err := m.GetAllUserModelsResponse(userId)
+	response, err := m.GetAllUserModelsResponse(userID)
 	if err != nil {
 		return nil, err
 	}
@@ -506,13 +505,13 @@ func (m *UniversalModel) GetModelAsJSON(userId uint32) (json.RawMessage, error) 
 // работает для любого провайдера (OpenAI, Mistral)
 // Если удаляется активная модель и есть другие модели - автоматически переключает активную
 // progressCallback - функция для отправки статуса через WebSocket (с эмодзи)
-func (m *UniversalModel) DeleteModel(userId uint32, provider ProviderType, deleteFiles bool, progressCallback func(string)) error {
+func (m *UniversalModel) DeleteModel(userID uint32, provider ProviderType, deleteFiles bool, progressCallback func(string)) error {
 	if progressCallback != nil {
 		progressCallback("🔄 Получение информации о модели пользователя...")
 	}
 
 	// Получаем все модели пользователя
-	allModels, err := m.db.GetAllUserModels(userId)
+	allModels, err := m.db.GetAllUserModels(userID)
 	if err != nil {
 		return fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
@@ -533,19 +532,19 @@ func (m *UniversalModel) DeleteModel(userId uint32, provider ProviderType, delet
 	// В зависимости от провайдера удаляем модель
 	switch modelRecord.Provider {
 	case ProviderOpenAI:
-		err = m.deleteModel(userId, modelRecord, deleteFiles, progressCallback)
+		err = m.deleteModel(userID, modelRecord, deleteFiles, progressCallback)
 		if err != nil {
 			return err
 		}
 
 	case ProviderMistral:
-		err = m.deleteMistralModel(userId, modelRecord, deleteFiles, progressCallback)
+		err = m.deleteMistralModel(userID, modelRecord, deleteFiles, progressCallback)
 		if err != nil {
 			return err
 		}
 
 	case ProviderGoogle:
-		err = m.deleteGoogleModel(userId, modelRecord, deleteFiles, progressCallback)
+		err = m.deleteGoogleModel(userID, modelRecord, deleteFiles, progressCallback)
 		if err != nil {
 			return err
 		}
@@ -559,25 +558,25 @@ func (m *UniversalModel) DeleteModel(userId uint32, provider ProviderType, delet
 		progressCallback("🔄 Удаление связи пользователь-модель...")
 	}
 
-	err = m.db.RemoveModelFromUser(userId, modelRecord.ModelId)
+	err = m.db.RemoveModelFromUser(userID, modelRecord.ModelId)
 	if err != nil {
 		return fmt.Errorf("ошибка удаления связи из user_models: %w", err)
 	}
 
 	// Если удалённая модель была активной - переключаем на оставшуюся
 	if modelRecord.IsActive {
-		remainingModels, err := m.db.GetAllUserModels(userId)
+		remainingModels, err := m.db.GetAllUserModels(userID)
 		if err != nil {
-			//logger.Warn("Ошибка получения оставшихся моделей: %v", err, userId)
+			//logger.Warn("Ошибка получения оставшихся моделей: %v", err, userID)
 		} else if len(remainingModels) > 0 {
 			// Переключаем на первую оставшуюся модель по провайдеру
 			newActiveProvider := remainingModels[0].Provider
-			err = m.db.SetActiveModelByProvider(userId, newActiveProvider)
+			err = m.db.SetActiveModelByProvider(userID, newActiveProvider)
 			if err != nil {
-				//logger.Error("Ошибка автоматического переключения активной модели: %v", err, userId)
+				//logger.Error("Ошибка автоматического переключения активной модели: %v", err, userID)
 			} else {
 				//logger.Debug("Активная модель автоматически переключена на провайдер %s после удаления",
-				//	newActiveProvider.String(), userId)
+				//	newActiveProvider.String(), userID)
 				if progressCallback != nil {
 					progressCallback(fmt.Sprintf("✅ Активная модель переключена на %s", newActiveProvider.String()))
 				}
@@ -594,20 +593,20 @@ func (m *UniversalModel) DeleteModel(userId uint32, provider ProviderType, delet
 
 // UpdateModelToDB обновляет существующую модель (только БД, без обновления в API провайдера)
 // Используйте UpdateModelEveryWhere для полного обновления
-func (m *UniversalModel) UpdateModelToDB(userId uint32, data *UniversalModelData) error {
+func (m *UniversalModel) UpdateModelToDB(userID uint32, data *UniversalModelData) error {
 	// Проверяем существование модели
 	provider := data.Provider
-	existing, err := m.ReadModel(userId, &provider)
+	existing, err := m.ReadModel(userID, &provider)
 	if err != nil {
 		return fmt.Errorf("ошибка проверки существующей модели: %w", err)
 	}
 
 	if existing == nil {
-		return fmt.Errorf("модель провайдера %s не найдена для пользователя %d", provider, userId)
+		return fmt.Errorf("модель провайдера %s не найдена для пользователя %d", provider, userID)
 	}
 
 	// Получаем все модели пользователя и находим нужную
-	allModels, err := m.db.GetAllUserModels(userId)
+	allModels, err := m.db.GetAllUserModels(userID)
 	if err != nil {
 		return fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
@@ -621,7 +620,7 @@ func (m *UniversalModel) UpdateModelToDB(userId uint32, data *UniversalModelData
 	}
 
 	if existingModelData == nil {
-		return fmt.Errorf("запись модели провайдера %s не найдена для пользователя %d", provider, userId)
+		return fmt.Errorf("запись модели провайдера %s не найдена для пользователя %d", provider, userID)
 	}
 
 	// Сериализуем vecIds в JSON
@@ -631,7 +630,7 @@ func (m *UniversalModel) UpdateModelToDB(userId uint32, data *UniversalModelData
 	}
 
 	// Сохраняем обновленные данные
-	return m.SaveModel(userId, UMCR{
+	return m.SaveModel(userID, UMCR{
 		AssistID: existingModelData.AssistId,
 		AllIds:   vecIdsJSON,
 		Provider: data.Provider,
@@ -643,26 +642,26 @@ func (m *UniversalModel) UpdateModelToDB(userId uint32, data *UniversalModelData
 // - Обновляет модель в API провайдера (OpenAI Assistant или Mistral Agent)
 // - Управляет файлами и векторными хранилищами
 // - Сохраняет изменения в БД
-func (m *UniversalModel) UpdateModelEveryWhere(userId uint32, data *UniversalModelData) error {
+func (m *UniversalModel) UpdateModelEveryWhere(userID uint32, data *UniversalModelData) error {
 	// Получаем текущую модель (любого статуса активности)
 	provider := data.Provider
-	record, err := m.db.GetModelByProviderAnyStatus(userId, provider)
+	record, err := m.db.GetModelByProviderAnyStatus(userID, provider)
 	if err != nil {
 		return fmt.Errorf("ошибка получения текущей модели: %w", err)
 	}
 
 	if record == nil {
-		return fmt.Errorf("модель провайдера %s не найдена для пользователя %d", provider, userId)
+		return fmt.Errorf("модель провайдера %s не найдена для пользователя %d", provider, userID)
 	}
 
 	// Распаковываем существующую модель из БД
-	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, provider)
+	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userID, provider)
 	if err != nil {
 		return fmt.Errorf("ошибка получения данных текущей модели: %w", err)
 	}
 
 	if compressedData == nil {
-		return fmt.Errorf("данные модели провайдера %s не найдены для пользователя %d", provider, userId)
+		return fmt.Errorf("данные модели провайдера %s не найдены для пользователя %d", provider, userID)
 	}
 
 	existing, err := m.DecompressModelData(compressedData, vecIds)
@@ -681,13 +680,13 @@ func (m *UniversalModel) UpdateModelEveryWhere(userId uint32, data *UniversalMod
 	// Обновляем в зависимости от провайдера
 	switch data.Provider {
 	case ProviderOpenAI:
-		return m.updateOpenAIModelInPlace(userId, existing, data)
+		return m.updateOpenAIModelInPlace(userID, existing, data)
 
 	case ProviderMistral:
-		return m.updateMistralModelInPlace(userId, existing, data)
+		return m.updateMistralModelInPlace(userID, existing, data)
 
 	case ProviderGoogle:
-		return m.updateGoogleModelInPlace(userId, existing, data)
+		return m.updateGoogleModelInPlace(userID, existing, data)
 
 	default:
 		return fmt.Errorf("неизвестный провайдер: %s", data.Provider)
@@ -699,8 +698,8 @@ func (m *UniversalModel) UpdateModelEveryWhere(userId uint32, data *UniversalMod
 // ============================================================================
 
 // GetUserModels получает все модели пользователя
-func (m *UniversalModel) GetUserModels(userId uint32) ([]UniversalModelData, error) {
-	records, err := m.db.GetAllUserModels(userId)
+func (m *UniversalModel) GetUserModels(userID uint32) ([]UniversalModelData, error) {
+	records, err := m.db.GetAllUserModels(userID)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
@@ -712,21 +711,21 @@ func (m *UniversalModel) GetUserModels(userId uint32) ([]UniversalModelData, err
 	models := make([]UniversalModelData, 0, len(records))
 	for _, record := range records {
 		// Читаем данные модели по провайдеру
-		compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
+		compressedData, vecIds, err := m.db.ReadUserModelByProvider(userID, record.Provider)
 		if err != nil {
-			//logger.Warn("Пропуск модели %d (Provider: %s): ошибка чтения данных: %v", record.ModelId, record.Provider, err, userId)
+			//logger.Warn("Пропуск модели %d (Provider: %s): ошибка чтения данных: %v", record.ModelId, record.Provider, err, userID)
 			continue
 		}
 
 		if compressedData == nil {
-			//logger.Warn("Пропуск модели %d (Provider: %s): данные отсутствуют", record.ModelId, record.Provider, userId)
+			//logger.Warn("Пропуск модели %d (Provider: %s): данные отсутствуют", record.ModelId, record.Provider, userID)
 			continue
 		}
 
 		// Распаковка данных
 		modelData, err := m.DecompressModelData(compressedData, vecIds)
 		if err != nil {
-			//logger.Warn("Пропуск модели %d (Provider: %s): ошибка распаковки: %v", record.ModelId, record.Provider, err, userId)
+			//logger.Warn("Пропуск модели %d (Provider: %s): ошибка распаковки: %v", record.ModelId, record.Provider, err, userID)
 			continue
 		}
 
@@ -735,14 +734,14 @@ func (m *UniversalModel) GetUserModels(userId uint32) ([]UniversalModelData, err
 		models = append(models, *modelData)
 	}
 
-	//logger.Debug("Загружено %d моделей", len(models), userId)
+	//logger.Debug("Загружено %d моделей", len(models), userID)
 	return models, nil
 }
 
 // GetAllUserModelsResponse получает все модели пользователя в формате для API
 // Возвращает объект с моделями по провайдерам и информацией об активной модели
-func (m *UniversalModel) GetAllUserModelsResponse(userId uint32) (*UserModelsResponse, error) {
-	records, err := m.db.GetAllUserModels(userId)
+func (m *UniversalModel) GetAllUserModelsResponse(userID uint32) (*UserModelsResponse, error) {
+	records, err := m.db.GetAllUserModels(userID)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
@@ -754,16 +753,16 @@ func (m *UniversalModel) GetAllUserModelsResponse(userId uint32) (*UserModelsRes
 
 	for _, record := range records {
 		// Читаем данные модели по провайдеру
-		compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
+		compressedData, vecIds, err := m.db.ReadUserModelByProvider(userID, record.Provider)
 		if err != nil {
 			//logger.Warn("Пропуск модели %d (Provider: %s): ошибка чтения данных: %v",
-			//	record.ModelId, record.Provider, err, userId)
+			//	record.ModelId, record.Provider, err, userID)
 			continue
 		}
 
 		if compressedData == nil {
 			//logger.Warn("Пропуск модели %d (Provider: %s): данные отсутствуют",
-			//	record.ModelId, record.Provider, userId)
+			//	record.ModelId, record.Provider, userID)
 			continue
 		}
 
@@ -771,7 +770,7 @@ func (m *UniversalModel) GetAllUserModelsResponse(userId uint32) (*UserModelsRes
 		modelData, err := m.DecompressModelData(compressedData, vecIds)
 		if err != nil {
 			//logger.Warn("Пропуск модели %d (Provider: %s): ошибка распаковки: %v",
-			//	record.ModelId, record.Provider, err, userId)
+			//	record.ModelId, record.Provider, err, userID)
 			continue
 		}
 		// Устанавливаем провайдера из user_models
@@ -795,19 +794,19 @@ func (m *UniversalModel) GetAllUserModelsResponse(userId uint32) (*UserModelsRes
 }
 
 // GetActiveUserModel получает активную модель пользователя
-func (m *UniversalModel) GetActiveUserModel(userId uint32) (*UniversalModelData, error) {
-	record, err := m.db.GetActiveModel(userId)
+func (m *UniversalModel) GetActiveUserModel(userID uint32) (*UniversalModelData, error) {
+	record, err := m.db.GetActiveModel(userID)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения активной модели: %w", err)
 	}
 
 	if record == nil {
-		//logger.Debug("Активная модель не найдена", userId)
+		//logger.Debug("Активная модель не найдена", userID)
 		return nil, nil
 	}
 
 	// Читаем данные модели по провайдеру
-	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
+	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userID, record.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения данных активной модели: %w", err)
 	}
@@ -825,25 +824,25 @@ func (m *UniversalModel) GetActiveUserModel(userId uint32) (*UniversalModelData,
 	modelData.Provider = record.Provider
 
 	//logger.Debug("Загружена активная модель (Provider: %s, Name: %s)",
-	//	modelData.Provider, modelData.Name, userId)
+	//	modelData.Provider, modelData.Name, userID)
 
 	return modelData, nil
 }
 
 // GetUserModelByProvider получает модель пользователя по провайдеру
-func (m *UniversalModel) GetUserModelByProvider(userId uint32, provider ProviderType) (*UniversalModelData, error) {
-	record, err := m.db.GetModelByProviderAnyStatus(userId, provider)
+func (m *UniversalModel) GetUserModelByProvider(userID uint32, provider ProviderType) (*UniversalModelData, error) {
+	record, err := m.db.GetModelByProviderAnyStatus(userID, provider)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения модели по провайдеру %s: %w", provider, err)
 	}
 
 	if record == nil {
-		//logger.Debug("Модель провайдера %s не найдена", provider, userId)
+		//logger.Debug("Модель провайдера %s не найдена", provider, userID)
 		return nil, nil
 	}
 
 	// Читаем данные модели по провайдеру
-	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userId, record.Provider)
+	compressedData, vecIds, err := m.db.ReadUserModelByProvider(userID, record.Provider)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения данных модели: %w", err)
 	}
@@ -861,19 +860,19 @@ func (m *UniversalModel) GetUserModelByProvider(userId uint32, provider Provider
 	modelData.Provider = record.Provider
 
 	//logger.Debug("Загружена модель провайдера %s (ID: %d)",
-	//	provider, modelData.Provider, userId)
+	//	provider, modelData.Provider, userID)
 
 	return modelData, nil
 }
 
 // SetActiveModelByProvider SetActiveModel переключает активную модель пользователя (в транзакции)
-func (m *UniversalModel) SetActiveModelByProvider(userId uint32, provider ProviderType) error {
-	err := m.db.SetActiveModelByProvider(userId, provider)
+func (m *UniversalModel) SetActiveModelByProvider(userID uint32, provider ProviderType) error {
+	err := m.db.SetActiveModelByProvider(userID, provider)
 	if err != nil {
 		return fmt.Errorf("ошибка переключения активной модели: %w", err)
 	}
 
-	//logger.Debug("Активная модель переключена на %d", provider, userId)
+	//logger.Debug("Активная модель переключена на %d", provider, userID)
 	return nil
 }
 
@@ -916,7 +915,6 @@ func (m *UniversalModel) DecompressModelData(compressedData []byte, vecIds *VecI
 	if modelData.RealtimeVAD != nil {
 		modelData.RealtimeVAD = applyRealtimeVADDefaults(modelData.RealtimeVAD)
 	}
-
 
 	return modelData, nil
 }
@@ -968,15 +966,15 @@ func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
 	return vad
 }
 
-// GetRealUserID получает реальный userId через HTTP запрос к landing серверу
+// GetRealuserID получает реальный userID через HTTP запрос к landing серверу
 // Универсальный метод для всех провайдеров (OpenAI, Mistral)
-func (m *UniversalModel) GetRealUserID(userId uint32) (uint64, error) {
+func (m *UniversalModel) GetRealuserID(userID uint32) (uint64, error) {
 	// Строим URL для запроса к landing серверу
 	var url string
 	if mode.ProductionMode {
-		url = fmt.Sprintf("http://localhost:%s/uid?uid=%d", m.landingPort, userId)
+		url = fmt.Sprintf("http://localhost:%s/uid?uid=%d", m.landingPort, userID)
 	} else {
-		url = fmt.Sprintf("https://localhost:%s/uid?uid=%d", m.landingPort, userId)
+		url = fmt.Sprintf("https://localhost:%s/uid?uid=%d", m.landingPort, userID)
 	}
 
 	// Создаём HTTP клиент с отключённой проверкой SSL для localhost
@@ -990,7 +988,7 @@ func (m *UniversalModel) GetRealUserID(userId uint32) (uint64, error) {
 
 	resp, err := client.Get(url)
 	if err != nil {
-		return 0, fmt.Errorf("ошибка при запросе GetRealUserID: %v", err)
+		return 0, fmt.Errorf("ошибка при запросе GetRealuserID: %v", err)
 	}
 	defer func() {
 		if e := resp.Body.Close(); e != nil {
@@ -1000,18 +998,18 @@ func (m *UniversalModel) GetRealUserID(userId uint32) (uint64, error) {
 
 	// Обрабатываем HTTP ответ
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("неожиданный статус ответа GetRealUserID: %d", resp.StatusCode)
+		return 0, fmt.Errorf("неожиданный статус ответа GetRealuserID: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, fmt.Errorf("ошибка чтения ответа GetRealUserID: %v", err)
+		return 0, fmt.Errorf("ошибка чтения ответа GetRealuserID: %v", err)
 	}
 
 	// Парсим JSON ответ как число
 	var value uint64
 	if err := json.Unmarshal(body, &value); err != nil {
-		return 0, fmt.Errorf("ошибка парсинга JSON ответа GetRealUserID: %v", err)
+		return 0, fmt.Errorf("ошибка парсинга JSON ответа GetRealuserID: %v", err)
 	}
 
 	return value, nil

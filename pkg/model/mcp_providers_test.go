@@ -19,11 +19,11 @@ import (
 
 // providerCase описывает один провайдер для параметризованных тестов.
 type providerCase struct {
-	name     string  // человекочитаемое имя
-	typeID   uint8   // числовой тип провайдера (1=OpenAI, 2=Mistral, 3=Google)
-	session  string  // X-Session-ID header — "userId:providerType"
-	wantTime bool    // get_current_time обязателен для всех
-	wantS3   bool    // ожидаем get_s3_files / create_file (uid=23 имеет S3)
+	name     string // человекочитаемое имя
+	typeID   uint8  // числовой тип провайдера (1=OpenAI, 2=Mistral, 3=Google)
+	session  string // X-Session-ID header — "userID:providerType"
+	wantTime bool   // get_current_time обязателен для всех
+	wantS3   bool   // ожидаем get_s3_files / create_file (uid=23 имеет S3)
 }
 
 var allProviders = []providerCase{
@@ -226,11 +226,11 @@ func TestMCP_Providers_CallGetS3Files(t *testing.T) {
 }
 
 // ============================================================================
-// TestMCP_Providers_NoUserIDInSchema — проверка отсутствия user_id у всех инструментов
+// TestMCP_Providers_NouserIDInSchema — проверка отсутствия user_id у всех инструментов
 // всех провайдеров (агрегированный отчёт)
 // ============================================================================
 
-func TestMCP_Providers_NoUserIDInSchema(t *testing.T) {
+func TestMCP_Providers_NouserIDInSchema(t *testing.T) {
 	for _, prov := range allProviders {
 		prov := prov
 		t.Run(prov.name, func(t *testing.T) {
@@ -374,8 +374,8 @@ func TestMCP_LeadTarget_Schema(t *testing.T) {
 					assert.True(t, hasRespId,
 						"[%s] lead_target.inputSchema должен содержать resp_id", prov.name)
 
-					_, hasUserID := props["user_id"]
-					assert.False(t, hasUserID,
+					_, hasuserID := props["user_id"]
+					assert.False(t, hasuserID,
 						"[%s] lead_target.inputSchema не должен содержать user_id — MCP берёт его из X-Session-ID", prov.name)
 				}
 			}

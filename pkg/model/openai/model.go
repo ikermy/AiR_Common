@@ -33,7 +33,7 @@ type Model struct {
 	realtimeSessions sync.Map // respId -> *RealtimeSession (параллельные голосовые сессии)
 	UserModelTTl     time.Duration
 	actionHandler    model.ActionHandler
-	universalModel   *create.UniversalModel // Для доступа к GetRealUserID
+	universalModel   *create.UniversalModel // Для доступа к GetRealuserID
 	shutdownOnce     sync.Once
 }
 
@@ -93,7 +93,7 @@ type openaiRagResp struct {
 	contextText string        // Обогащённый контекст из Vector Store (пустой если RAG не нужен или не дал результата)
 	history     []ChatMessage // История диалога (из кэша или БД)
 	respModel   *RespModel    // Загруженный респондент
-	realUserID  uint64
+	realuserID  uint64
 	err         error
 	// Метрики производительности
 	embeddingDuration     time.Duration
@@ -174,7 +174,7 @@ func NewAsRouterOption() model.RouterOption {
 	}
 }
 
-// SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID
+// SetUniversalModel устанавливает UniversalModel для доступа к GetRealuserID
 func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
 }
@@ -196,7 +196,7 @@ func (m *Model) NewMessage(operator model.Operator, msgType string, content *mod
 	}
 }
 
-func (m *Model) GetFileAsReader(url string) (io.Reader, error) {
+func (m *Model) GetFileAsReaderData(url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
 	}
@@ -235,7 +235,7 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 		respModel.TTL = time.Now().Add(m.UserModelTTl) // Обновляем TTL
 
 		// АВТОМАТИЧЕСКАЯ предзагрузка истории диалога (если кэш пустой)
-		m.preloadDialogHistoryIfNeeded(dialogID, assist.UserId)
+		m.preloadDialogHistoryIfNeeded(dialogID, assist.UserID)
 
 		return m.convertToModelRespModel(respModel), nil
 	}
@@ -255,9 +255,9 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 	}
 
 	// Загружаем конфигурацию агента из БД
-	agentConfig, haunter, err := m.loadAgentConfig(assist.UserId, user)
+	agentConfig, haunter, err := m.loadAgentConfig(assist.UserID, user)
 	if err != nil {
-		//logger.Warn("Ошибка загрузки конфигурации агента: %v, используем конфигурацию по умолчанию", err, assist.UserId)
+		//logger.Warn("Ошибка загрузки конфигурации агента: %v, используем конфигурацию по умолчанию", err, assist.userID)
 	} else {
 		user.AgentConfig = agentConfig
 		user.Haunter = haunter
@@ -270,7 +270,7 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 	model.NotifyWaitChannels(&m.waitChannels, respId)
 
 	// АВТОМАТИЧЕСКАЯ предзагрузка истории диалога для нового респондента
-	m.preloadDialogHistoryIfNeeded(dialogID, assist.UserId)
+	m.preloadDialogHistoryIfNeeded(dialogID, assist.UserID)
 
 	return m.convertToModelRespModel(user), nil
 }
@@ -288,7 +288,6 @@ func (m *Model) GetCh(respId uint64) (*model.Ch, error) {
 	)
 }
 
-
 func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
 	return model.GetRespIdBydialogIDUniversal(dialogID, &m.responders)
 }
@@ -300,9 +299,9 @@ func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
 // loadAgentConfig загружает конфигурацию агента для OpenAI модели из БД
 // По образцу Google провайдера - конфигурация хранится в БД, а не в OpenAI API
 // Возвращает конфигурацию агента и haunter флаг явно
-func (m *Model) loadAgentConfig(userId uint32, _ *RespModel) (*AgentConfig, bool, error) {
+func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool, error) {
 	// Получаем все модели пользователя
-	userModels, err := m.db.GetAllUserModels(userId)
+	userModels, err := m.db.GetAllUserModels(userID)
 	if err != nil {
 		return nil, false, fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
@@ -317,7 +316,7 @@ func (m *Model) loadAgentConfig(userId uint32, _ *RespModel) (*AgentConfig, bool
 	}
 
 	if found == nil {
-		return nil, false, fmt.Errorf("модель OpenAI не найдена для userId %d", userId)
+		return nil, false, fmt.Errorf("модель OpenAI не найдена для userID %d", userID)
 	}
 
 	// Инициализируем базовую конфигурацию
@@ -331,21 +330,21 @@ func (m *Model) loadAgentConfig(userId uint32, _ *RespModel) (*AgentConfig, bool
 	// Устанавливаем значение по умолчанию если AssistId пустой
 	if agentConfig.ModelName == "" {
 		agentConfig.ModelName = "gpt-4o-mini"
-		//logger.Warn("AssistId пустой, используется модель по умолчанию: gpt-4o-mini", userId)
+		//logger.Warn("AssistId пустой, используется модель по умолчанию: gpt-4o-mini", userID)
 	}
 
 	var haunter bool
 
 	// Загружаем полные данные модели из БД
-	compressedData, _, err := m.db.ReadUserModelByProvider(userId, create.ProviderOpenAI)
+	compressedData, _, err := m.db.ReadUserModelByProvider(userID, create.ProviderOpenAI)
 	if err != nil {
-		//logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, userId)
+		//logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, userID)
 	} else if compressedData != nil {
 		// Распаковываем полные данные модели для получения параметров
 		if m.universalModel != nil {
 			modelData, decompressErr := m.universalModel.DecompressModelData(compressedData, nil)
 			if decompressErr != nil {
-				//logger.Warn("Ошибка распаковки данных модели: %v", decompressErr, userId)
+				//logger.Warn("Ошибка распаковки данных модели: %v", decompressErr, userID)
 			} else {
 				agentConfig.MetaAction = modelData.MetaAction
 				agentConfig.Haunter = modelData.Haunter
@@ -377,11 +376,11 @@ func (m *Model) loadAgentConfig(userId uint32, _ *RespModel) (*AgentConfig, bool
 	}
 
 	// Формируем system_prompt, tools и response_format динамически
-	if err := m.buildAgentConfiguration(userId, agentConfig, compressedData); err != nil {
-		//logger.Warn("Ошибка формирования конфигурации агента: %v", err, userId)
+	if err := m.buildAgentConfiguration(userID, agentConfig, compressedData); err != nil {
+		//logger.Warn("Ошибка формирования конфигурации агента: %v", err, userID)
 	}
 
-	//logger.Debug("Загружена конфигурация агента (GPT Model: %s, AssistName: %s)", agentConfig.ModelName, respModel.Assist.AssistName, userId)
+	//logger.Debug("Загружена конфигурация агента (GPT Model: %s, AssistName: %s)", agentConfig.ModelName, respModel.Assist.AssistName, userID)
 	return agentConfig, haunter, nil
 }
 
@@ -389,7 +388,7 @@ func (m *Model) loadAgentConfig(userId uint32, _ *RespModel) (*AgentConfig, bool
 // Если MCP доступен: system_prompt = modelData.Prompt + hint от MCP, function-tools от MCP.
 // Если MCP недоступен: system_prompt = modelData.Prompt (без инструкций), function-tools не добавляются.
 // Нативные OpenAI инструменты (code_interpreter, web_search) добавляются всегда локально.
-func (m *Model) buildAgentConfiguration(userId uint32, config *AgentConfig, compressedData []byte) error {
+func (m *Model) buildAgentConfiguration(userID uint32, config *AgentConfig, compressedData []byte) error {
 	// Распаковываем данные модели
 	modelData, err := m.universalModel.DecompressModelData(compressedData, nil)
 	if err != nil {
@@ -402,7 +401,7 @@ func (m *Model) buildAgentConfiguration(userId uint32, config *AgentConfig, comp
 	// =========================================================================
 	mcpAvailable := false
 	if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
-		if hint, err := mcpProvider.FetchSystemPrompt(m.ctx, userId, create.ProviderOpenAI); err == nil {
+		if hint, err := mcpProvider.FetchSystemPrompt(m.ctx, userID, create.ProviderOpenAI); err == nil {
 			config.SystemPrompt = modelData.Prompt + "\n\n" + hint
 			mcpAvailable = true
 		}
@@ -441,7 +440,7 @@ func (m *Model) buildAgentConfiguration(userId uint32, config *AgentConfig, comp
 	// Function tools — только от MCP; если сервер недоступен — не добавляем
 	if mcpAvailable {
 		if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
-			if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, userId, create.ProviderOpenAI); err == nil {
+			if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, userID, create.ProviderOpenAI); err == nil {
 				for _, t := range mcpTools {
 					tools = append(tools, map[string]interface{}{
 						"type":        "function",
@@ -637,7 +636,7 @@ func (m *Model) DeleteTempFile(fileID string) error {
 	return nil
 }
 
-func (m *Model) TranscribeAudio(audioData []byte, fileName string) (string, error) {
+func (m *Model) TranscribeAudioData(audioData []byte, fileName string) (string, error) {
 	// Используем существующий метод OpenAIAgentClient.TranscribeAudio
 	if m.client == nil {
 		return "", fmt.Errorf("OpenAI клиент не инициализирован")
@@ -832,11 +831,11 @@ func (m *Model) cleanupAllResponders() {
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
 // Вызывается при обновлении модели чтобы новые сессии получили актуальные настройки
 // Удаляет все кэшированные респондентов пользователя из m.responders
-func (m *Model) InvalidateUserAgentConfigCache(userId uint32) {
+func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 	var invalidatedCount int
 	m.responders.Range(func(key, value interface{}) bool {
 		respModel := value.(*RespModel)
-		if respModel.Assist.UserId == userId {
+		if respModel.Assist.UserID == userID {
 			// Удаляем кэшированный респондент для этого пользователя
 			m.responders.Delete(key)
 			invalidatedCount++
@@ -845,7 +844,7 @@ func (m *Model) InvalidateUserAgentConfigCache(userId uint32) {
 	})
 
 	if invalidatedCount > 0 {
-		//logger.Debug("Инвалидирован кэш конфигурации модели для userId=%d (удалено %d респондентов)", userId, invalidatedCount, userId)
+		//logger.Debug("Инвалидирован кэш конфигурации модели для userID=%d (удалено %d респондентов)", userID, invalidatedCount, userID)
 	}
 }
 

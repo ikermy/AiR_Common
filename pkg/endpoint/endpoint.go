@@ -21,8 +21,8 @@ type Inter interface {
 	SetUserAsk(dialogID, respId uint64, ask string, askLimit ...uint32) bool
 	SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse)
 	GetDialogHistory(dialogID uint64, limit int) ([]Message, error)
-	Meta(userId uint32, dialogID uint64, meta string, respName string, assistName string, metaAction string) error
-	SendEvent(userId uint32, event, userName, assistName, target string)
+	Meta(userID uint32, dialogID uint64, meta string, respName string, assistName string, metaAction string) error
+	SendEvent(userID uint32, event, userName, assistName, target string)
 	SendNotification(msg com.CarpCh) error
 }
 
@@ -327,12 +327,12 @@ func (e *Endpoint) SaveDialog(creator comdb.CreatorType, treadId uint64, resp *m
 }
 
 // Meta Метод вызывается из common.startpoint
-func (e *Endpoint) Meta(userId uint32, dialogID uint64, meta string, respName string, assistName string, metaAction string) error {
+func (e *Endpoint) Meta(userID uint32, dialogID uint64, meta string, respName string, assistName string, metaAction string) error {
 	err := e.db.UpdateDialogsMeta(dialogID, meta)
 	if err != nil {
-		return fmt.Errorf("ошибка обновления метаданных для диалога: %d, пользователь: %d: %v", userId, dialogID, err)
+		return fmt.Errorf("ошибка обновления метаданных для диалога: %d, пользователь: %d: %v", userID, dialogID, err)
 	}
-	e.SendEvent(userId, meta, respName, assistName, metaAction)
+	e.SendEvent(userID, meta, respName, assistName, metaAction)
 
 	return nil
 }

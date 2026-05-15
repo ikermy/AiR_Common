@@ -24,37 +24,37 @@ import (
 const sqlTimeToCancel = 5 // Тайм-аут на операции с БД
 
 type Exterior interface {
-	GetOrSetTreadAndResponder(userId uint32, responderRealId uint64, responderName string, chatType ChatType) (uint64, error)
-	DisableAllUserChannel(userId uint32) error
-	PlusOneMessage(userId uint32) error
-	GetNotificationChannel(userId uint32) (json.RawMessage, error)
-	GetUserSubscriptionLimites(userId uint32) (json.RawMessage, error)
+	GetOrSetTreadAndResponder(userID uint32, responderRealId uint64, responderName string, chatType ChatType) (uint64, error)
+	DisableAllUserChannel(userID uint32) error
+	PlusOneMessage(userID uint32) error
+	GetNotificationChannel(userID uint32) (json.RawMessage, error)
+	GetUserSubscriptionLimites(userID uint32) (json.RawMessage, error)
 	SaveDialog(treadId uint64, message json.RawMessage) error
 	ReadDialog(dialogId uint64, limit ...uint8) (json.RawMessage, error)
-	DeleteDialog(userId uint32, dialogId uint64) error
+	DeleteDialog(userID uint32, dialogId uint64) error
 	UpdateDialogsMeta(dialogId uint64, meta string) error
 	ReadContext(dialogId uint64, provider create.ProviderType) (json.RawMessage, error)
 	SaveContext(threadId uint64, provider create.ProviderType, dialogContext json.RawMessage) error
-	GetActiveProvider(userId uint32) (create.ProviderType, error)
-	GetAllUserModels(userId uint32) ([]create.UserModelRecord, error)
-	UpdateUserGPT(userId uint32, modelId uint64, assistId string, allIds []byte) error
-	GetUserVectorStorage(userId uint32) (string, error)
-	SetChannelEnabled(userId uint32, chName string, status bool) error
-	SaveUserModel(userId uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint8, ids json.RawMessage, operator bool) error
+	GetActiveProvider(userID uint32) (create.ProviderType, error)
+	GetAllUserModels(userID uint32) ([]create.UserModelRecord, error)
+	UpdateUserGPT(userID uint32, modelId uint64, assistId string, allIds []byte) error
+	GetUserVectorStorage(userID uint32) (string, error)
+	SetChannelEnabled(userID uint32, chName string, status bool) error
+	SaveUserModel(userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint8, ids json.RawMessage, operator bool) error
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
-	ReadUserModel(userId uint32) ([]byte, *create.VecIds, error)
+	ReadUserModel(userID uint32) ([]byte, *create.VecIds, error)
 
 	// User Model Management - методы для управления моделями пользователя (для create.DB)
-	ReadUserModelByProvider(userId uint32, provider create.ProviderType) ([]byte, *create.VecIds, error)
-	GetActiveModel(userId uint32) (*create.UserModelRecord, error)
-	GetModelByProvider(userId uint32, provider create.ProviderType) (*create.UserModelRecord, error)
-	GetModelByProviderAnyStatus(userId uint32, provider create.ProviderType) (*create.UserModelRecord, error)
-	SetActiveModel(userId uint32, modelId uint64) error
-	SetActiveModelByProvider(userId uint32, provider create.ProviderType) error
-	RemoveModelFromUser(userId uint32, modelId uint64) error
+	ReadUserModelByProvider(userID uint32, provider create.ProviderType) ([]byte, *create.VecIds, error)
+	GetActiveModel(userID uint32) (*create.UserModelRecord, error)
+	GetModelByProvider(userID uint32, provider create.ProviderType) (*create.UserModelRecord, error)
+	GetModelByProviderAnyStatus(userID uint32, provider create.ProviderType) (*create.UserModelRecord, error)
+	SetActiveModel(userID uint32, modelId uint64) error
+	SetActiveModelByProvider(userID uint32, provider create.ProviderType) error
+	RemoveModelFromUser(userID uint32, modelId uint64) error
 
 	// Vector Embeddings - методы для работы с эмбеддингами в MariaDB
-	SaveEmbedding(userId uint32, modelId uint64, provider create.ProviderType, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error
+	SaveEmbedding(userID uint32, modelId uint64, provider create.ProviderType, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error
 	GetEmbedding(modelId uint64, docID string) ([]float32, error)
 	DeleteEmbedding(modelId uint64, docID string) error
 	DeleteAllModelEmbeddings(modelId uint64) error
@@ -69,13 +69,13 @@ type Exterior interface {
 	GetContactsInBothProviders(userID uint32, provider1, provider2 string) ([]string, error)
 
 	// Google OAuth методы
-	SaveGoogleTokenByProvider(userId uint32, provider create.ProviderType, googleEmail string, token *oauth2.Token) error
-	GetGoogleTokenByProvider(userId uint32, provider create.ProviderType) (*oauth2.Token, string, error)
-	RefreshGoogleTokenIfNeededByProvider(userId uint32, provider create.ProviderType, oauthConfig *oauth2.Config) error
-	DeleteGoogleTokenByProvider(userId uint32, provider create.ProviderType) error
+	SaveGoogleTokenByProvider(userID uint32, provider create.ProviderType, googleEmail string, token *oauth2.Token) error
+	GetGoogleTokenByProvider(userID uint32, provider create.ProviderType) (*oauth2.Token, string, error)
+	RefreshGoogleTokenIfNeededByProvider(userID uint32, provider create.ProviderType, oauthConfig *oauth2.Config) error
+	DeleteGoogleTokenByProvider(userID uint32, provider create.ProviderType) error
 
 	// UserInfo методы
-	UserTimeZone(userId uint32) (string, error)
+	UserTimeZone(userID uint32) (string, error)
 }
 
 // ChatType определяет тип чата (используется в БД)
@@ -392,13 +392,13 @@ func (d *DB) ReadDialog(dialogId uint64, limit ...uint8) (json.RawMessage, error
 }
 
 // DeleteDialog удаляет диалог с проверкой прав пользователя
-func (d *DB) DeleteDialog(userId uint32, dialogId uint64) error {
+func (d *DB) DeleteDialog(userID uint32, dialogId uint64) error {
 	// Проверяем входные значения
 	if dialogId == 0 {
 		return fmt.Errorf("получен некорректный dialogId")
 	}
-	if userId == 0 {
-		return fmt.Errorf("получен некорректный userId")
+	if userID == 0 {
+		return fmt.Errorf("получен некорректный userID")
 	}
 
 	// Дочерний контекст с тайм-аутом на операцию
@@ -406,7 +406,7 @@ func (d *DB) DeleteDialog(userId uint32, dialogId uint64) error {
 	defer cancel()
 
 	// Вызываем хранимую процедуру с проверкой прав
-	_, err := d.Conn().ExecContext(ctx, "CALL DeleteDialog(?, ?)", dialogId, userId)
+	_, err := d.Conn().ExecContext(ctx, "CALL DeleteDialog(?, ?)", dialogId, userID)
 	if err != nil {
 		// Проверяем специальный код ошибки для демо-пользователя
 		if strings.Contains(err.Error(), "SQLSTATE 45001") ||
@@ -477,13 +477,13 @@ func (d *DB) UpdateDialogsMeta(dialogId uint64, meta string) error {
 
 // GetOrSetTreadAndResponder получает или создает тред и респондера
 func (d *DB) GetOrSetTreadAndResponder(
-	userId uint32,
+	userID uint32,
 	responderRealId uint64,
 	responderName string,
 	chatType ChatType,
 ) (uint64, error) {
-	if userId == 0 {
-		return 0, fmt.Errorf("получен пустой userId")
+	if userID == 0 {
+		return 0, fmt.Errorf("получен пустой userID")
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
@@ -503,7 +503,7 @@ func (d *DB) GetOrSetTreadAndResponder(
 
 	// Выполняем вызов процедуры
 	if _, err := d.Conn().ExecContext(ctx, "CALL GetOrSetTreadAndResponder(?, ?, ?, ?, @out_dialogId);",
-		userId, responderRealId, responderName, chatType); err != nil { // Тип чата TgBot
+		userID, responderRealId, responderName, chatType); err != nil { // Тип чата TgBot
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			return 0, fmt.Errorf("тайм-аут (%d с) при вызове процедуры GetOrSetTreadAndResponder: %w", mode.SqlTimeToCancel, err)
@@ -531,16 +531,16 @@ func (d *DB) GetOrSetTreadAndResponder(
 }
 
 // GetUserSubscriptionLimites получает лимиты подписки пользователя
-func (d *DB) GetUserSubscriptionLimites(userId uint32) (json.RawMessage, error) {
-	if userId == 0 {
-		return nil, fmt.Errorf("получен пустой userId")
+func (d *DB) GetUserSubscriptionLimites(userID uint32) (json.RawMessage, error) {
+	if userID == 0 {
+		return nil, fmt.Errorf("получен пустой userID")
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
 	defer cancel()
 
 	var data sql.NullString
-	if err := d.Conn().QueryRowContext(ctx, "SELECT GetUserSubscriptionLimites(?)", userId).Scan(&data); err != nil {
+	if err := d.Conn().QueryRowContext(ctx, "SELECT GetUserSubscriptionLimites(?)", userID).Scan(&data); err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, fmt.Errorf("тайм-аут (%d с) при вызове функции GetUserSubscriptionLimites: %w", mode.SqlTimeToCancel, err)
@@ -561,15 +561,15 @@ func (d *DB) GetUserSubscriptionLimites(userId uint32) (json.RawMessage, error) 
 }
 
 // DisableAllUserChannel отключает все каналы пользователя
-func (d *DB) DisableAllUserChannel(userId uint32) error {
-	if userId == 0 {
-		return fmt.Errorf("получен пустой userId")
+func (d *DB) DisableAllUserChannel(userID uint32) error {
+	if userID == 0 {
+		return fmt.Errorf("получен пустой userID")
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
 	defer cancel()
 
-	if _, err := d.Conn().ExecContext(ctx, "CALL DisableAllUserChannel(?)", userId); err != nil {
+	if _, err := d.Conn().ExecContext(ctx, "CALL DisableAllUserChannel(?)", userID); err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			return fmt.Errorf("тайм-аут (%d с) при отключении каналов: %w", mode.SqlTimeToCancel, err)
@@ -584,15 +584,15 @@ func (d *DB) DisableAllUserChannel(userId uint32) error {
 }
 
 // SetChannelEnabled включает или отключает канал пользователя
-func (d *DB) SetChannelEnabled(userId uint32, chName string, status bool) error {
-	if userId == 0 || chName == "" {
-		return fmt.Errorf("получены некорректные значения: userId или chName пусты")
+func (d *DB) SetChannelEnabled(userID uint32, chName string, status bool) error {
+	if userID == 0 || chName == "" {
+		return fmt.Errorf("получены некорректные значения: userID или chName пусты")
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
 	defer cancel()
 
-	if _, err := d.Conn().ExecContext(ctx, "CALL SetChannelEnabled(?,?,?)", userId, chName, status); err != nil {
+	if _, err := d.Conn().ExecContext(ctx, "CALL SetChannelEnabled(?,?,?)", userID, chName, status); err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			return fmt.Errorf("тайм-аут (%d с) при сохранении статуса канала: %w", mode.SqlTimeToCancel, err)
@@ -607,15 +607,15 @@ func (d *DB) SetChannelEnabled(userId uint32, chName string, status bool) error 
 }
 
 // PlusOneMessage увеличивает счетчик сообщений пользователя на 1
-func (d *DB) PlusOneMessage(userId uint32) error {
-	if userId == 0 {
-		return fmt.Errorf("получен пустой userId")
+func (d *DB) PlusOneMessage(userID uint32) error {
+	if userID == 0 {
+		return fmt.Errorf("получен пустой userID")
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
 	defer cancel()
 
-	if _, err := d.Conn().ExecContext(ctx, "CALL PlusOneMessage(?)", userId); err != nil {
+	if _, err := d.Conn().ExecContext(ctx, "CALL PlusOneMessage(?)", userID); err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			return fmt.Errorf("тайм-аут (%d с) при вызове PlusOneMessage: %w", mode.SqlTimeToCancel, err)
@@ -630,16 +630,16 @@ func (d *DB) PlusOneMessage(userId uint32) error {
 }
 
 // GetNotificationChannel получает данные каналов уведомлений пользователя
-func (d *DB) GetNotificationChannel(userId uint32) (json.RawMessage, error) {
-	if userId == 0 {
-		return nil, fmt.Errorf("получен пустой userId")
+func (d *DB) GetNotificationChannel(userID uint32) (json.RawMessage, error) {
+	if userID == 0 {
+		return nil, fmt.Errorf("получен пустой userID")
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
 	defer cancel()
 
 	var data sql.NullString
-	if err := d.Conn().QueryRowContext(ctx, "SELECT GetNotificationChannel(?)", userId).Scan(&data); err != nil {
+	if err := d.Conn().QueryRowContext(ctx, "SELECT GetNotificationChannel(?)", userID).Scan(&data); err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			return nil, fmt.Errorf("тайм-аут (%d с) при вызове функции GetNotificationChannel: %w", mode.SqlTimeToCancel, err)
@@ -660,9 +660,9 @@ func (d *DB) GetNotificationChannel(userId uint32) (json.RawMessage, error) {
 }
 
 // GetUserModels получает все модели пользователя из таблицы user_models
-func (d *DB) GetAllUserModels(userId uint32) ([]create.UserModelRecord, error) {
-	if userId == 0 {
-		return nil, fmt.Errorf("получен пустой userId")
+func (d *DB) GetAllUserModels(userID uint32) ([]create.UserModelRecord, error) {
+	if userID == 0 {
+		return nil, fmt.Errorf("получен пустой userID")
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
@@ -677,8 +677,8 @@ func (d *DB) GetAllUserModels(userId uint32) ([]create.UserModelRecord, error) {
             ug.Ids
         FROM user_models um
         JOIN user_gpt ug ON um.ModelId = ug.Id
-        WHERE um.UserId = ?
-        ORDER BY um.IsActive DESC, um.CreatedAt DESC`, userId)
+        WHERE um.userID = ?
+        ORDER BY um.IsActive DESC, um.CreatedAt DESC`, userID)
 
 	if err != nil {
 		switch {
@@ -732,9 +732,9 @@ func (d *DB) GetAllUserModels(userId uint32) ([]create.UserModelRecord, error) {
 
 // UpdateUserGPT обновляет поле Ids (AllIds) в таблице user_gpt
 // Используется для обновления информации о файлах и векторных хранилищах/библиотеках
-func (d *DB) UpdateUserGPT(userId uint32, modelId uint64, assistId string, allIds []byte) error {
-	if userId == 0 {
-		return fmt.Errorf("получен пустой userId")
+func (d *DB) UpdateUserGPT(userID uint32, modelId uint64, assistId string, allIds []byte) error {
+	if userID == 0 {
+		return fmt.Errorf("получен пустой userID")
 	}
 	if modelId == 0 {
 		return fmt.Errorf("получен пустой modelId")
@@ -772,10 +772,10 @@ func (d *DB) UpdateUserGPT(userId uint32, modelId uint64, assistId string, allId
 	return nil
 }
 
-func (d *DB) GetUserVectorStorage(userId uint32) (string, error) {
+func (d *DB) GetUserVectorStorage(userID uint32) (string, error) {
 	// Проверяем входное значение
-	if userId == 0 {
-		return "", fmt.Errorf("получен некорректный userId")
+	if userID == 0 {
+		return "", fmt.Errorf("получен некорректный userID")
 	}
 
 	// Дочерний контекст с тайм-аутом на операцию
@@ -788,11 +788,11 @@ func (d *DB) GetUserVectorStorage(userId uint32) (string, error) {
   SELECT JSON_UNQUOTE(JSON_EXTRACT(ug.Ids, '$.VectorId[0]'))
   FROM user_models um
   JOIN user_gpt ug ON um.ModelId = ug.Id
-  WHERE um.UserId = ? AND um.IsActive = 1
+  WHERE um.userID = ? AND um.IsActive = 1
   LIMIT 1`
 
 	var data sql.NullString
-	err := d.Conn().QueryRowContext(ctx, query, userId).Scan(&data)
+	err := d.Conn().QueryRowContext(ctx, query, userID).Scan(&data)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -814,15 +814,15 @@ func (d *DB) GetUserVectorStorage(userId uint32) (string, error) {
 }
 
 // GetActiveProvider получает тип провайдера активной модели пользователя без создания дочернего контекста дял максимальной производительности
-func (d *DB) GetActiveProvider(userId uint32) (create.ProviderType, error) {
-	if userId == 0 {
-		return 0, fmt.Errorf("получен некорректный userId")
+func (d *DB) GetActiveProvider(userID uint32) (create.ProviderType, error) {
+	if userID == 0 {
+		return 0, fmt.Errorf("получен некорректный userID")
 	}
 
 	// Используем родительский контекст напрямую для максимальной производительности
 	// Запрашиваем активные модели с лимитом 2, чтобы проверить уникальность за один запрос
-	query := `SELECT Provider FROM user_models WHERE UserId = ? AND IsActive = 1 LIMIT 2`
-	rows, err := d.Conn().QueryContext(d.Context(), query, userId)
+	query := `SELECT Provider FROM user_models WHERE userID = ? AND IsActive = 1 LIMIT 2`
+	rows, err := d.Conn().QueryContext(d.Context(), query, userID)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -860,10 +860,10 @@ func (d *DB) GetActiveProvider(userId uint32) (create.ProviderType, error) {
 }
 
 // ReadUserModelByProvider получает сжатые данные модели пользователя по провайдеру
-func (d *DB) ReadUserModelByProvider(userId uint32, provider create.ProviderType) ([]byte, *create.VecIds, error) {
+func (d *DB) ReadUserModelByProvider(userID uint32, provider create.ProviderType) ([]byte, *create.VecIds, error) {
 	// Проверяем входные значения
-	if userId == 0 {
-		return nil, nil, fmt.Errorf("получен некорректный userId")
+	if userID == 0 {
+		return nil, nil, fmt.Errorf("получен некорректный userID")
 	}
 	if !provider.IsValid() {
 		return nil, nil, fmt.Errorf("получен некорректный provider: %d", provider)
@@ -878,12 +878,12 @@ func (d *DB) ReadUserModelByProvider(userId uint32, provider create.ProviderType
 		SELECT TO_BASE64(ug.Data), ug.Ids
 		FROM user_models um
 		JOIN user_gpt ug ON um.ModelId = ug.Id
-		WHERE um.UserId = ? AND um.Provider = ?`
+		WHERE um.userID = ? AND um.Provider = ?`
 
 	var base64Data sql.NullString
 	var idsJson sql.NullString
 
-	err := d.Conn().QueryRowContext(ctx, query, userId, uint8(provider)).Scan(&base64Data, &idsJson)
+	err := d.Conn().QueryRowContext(ctx, query, userID, uint8(provider)).Scan(&base64Data, &idsJson)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -931,10 +931,10 @@ func (d *DB) ReadUserModelByProvider(userId uint32, provider create.ProviderType
 }
 
 // GetActiveModel получает активную модель пользователя
-func (d *DB) GetActiveModel(userId uint32) (*create.UserModelRecord, error) {
+func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 	// Проверяем входное значение
-	if userId == 0 {
-		return nil, fmt.Errorf("получен некорректный userId")
+	if userID == 0 {
+		return nil, fmt.Errorf("получен некорректный userID")
 	}
 
 	// Дочерний контекст с тайм-аутом на операцию
@@ -951,7 +951,7 @@ func (d *DB) GetActiveModel(userId uint32) (*create.UserModelRecord, error) {
 			ug.Ids
 		FROM user_models um
 		JOIN user_gpt ug ON um.ModelId = ug.Id
-		WHERE um.UserId = ? AND um.IsActive = 1
+		WHERE um.userID = ? AND um.IsActive = 1
 		LIMIT 1`
 
 	var modelId uint64
@@ -960,7 +960,7 @@ func (d *DB) GetActiveModel(userId uint32) (*create.UserModelRecord, error) {
 	var isActive bool
 	var idsJson sql.NullString
 
-	err := d.Conn().QueryRowContext(ctx, query, userId).Scan(
+	err := d.Conn().QueryRowContext(ctx, query, userID).Scan(
 		&modelId,
 		&assistId,
 		&provider,
@@ -1006,10 +1006,10 @@ func (d *DB) GetActiveModel(userId uint32) (*create.UserModelRecord, error) {
 
 // GetModelByProvider получает АКТИВНУЮ модель пользователя по провайдеру
 // Если модель не активна - возвращает nil
-func (d *DB) GetModelByProvider(userId uint32, provider create.ProviderType) (*create.UserModelRecord, error) {
+func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*create.UserModelRecord, error) {
 	// Проверяем входные значения
-	if userId == 0 {
-		return nil, fmt.Errorf("получен некорректный userId")
+	if userID == 0 {
+		return nil, fmt.Errorf("получен некорректный userID")
 	}
 	if !provider.IsValid() {
 		return nil, fmt.Errorf("получен некорректный provider: %d", provider)
@@ -1029,7 +1029,7 @@ func (d *DB) GetModelByProvider(userId uint32, provider create.ProviderType) (*c
 			ug.Ids
 		FROM user_models um
 		INNER JOIN user_gpt ug ON um.ModelId = ug.Id
-		WHERE um.UserId = ? 
+		WHERE um.userID = ? 
 			AND um.Provider = ?
 			AND um.IsActive = 1
 		LIMIT 1`
@@ -1040,7 +1040,7 @@ func (d *DB) GetModelByProvider(userId uint32, provider create.ProviderType) (*c
 	var isActive bool
 	var idsJson sql.NullString
 
-	err := d.Conn().QueryRowContext(ctx, query, userId, uint8(provider)).Scan(
+	err := d.Conn().QueryRowContext(ctx, query, userID, uint8(provider)).Scan(
 		&modelId,
 		&assistId,
 		&providerDb,
@@ -1087,10 +1087,10 @@ func (d *DB) GetModelByProvider(userId uint32, provider create.ProviderType) (*c
 // GetModelByProviderAnyStatus получает модель пользователя по провайдеру НЕЗАВИСИМО от статуса активности
 // В отличие от GetModelByProvider, эта функция не требует IsActive = 1
 // Используется для обновления неактивных моделей
-func (d *DB) GetModelByProviderAnyStatus(userId uint32, provider create.ProviderType) (*create.UserModelRecord, error) {
+func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.ProviderType) (*create.UserModelRecord, error) {
 	// Проверяем входные значения
-	if userId == 0 {
-		return nil, fmt.Errorf("получен некорректный userId")
+	if userID == 0 {
+		return nil, fmt.Errorf("получен некорректный userID")
 	}
 	if !provider.IsValid() {
 		return nil, fmt.Errorf("получен некорректный provider: %d", provider)
@@ -1110,7 +1110,7 @@ func (d *DB) GetModelByProviderAnyStatus(userId uint32, provider create.Provider
 			ug.Ids
 		FROM user_models um
 		INNER JOIN user_gpt ug ON um.ModelId = ug.Id
-		WHERE um.UserId = ? 
+		WHERE um.userID = ? 
 			AND um.Provider = ?
 		LIMIT 1`
 
@@ -1120,7 +1120,7 @@ func (d *DB) GetModelByProviderAnyStatus(userId uint32, provider create.Provider
 	var isActive bool
 	var idsJson sql.NullString
 
-	err := d.Conn().QueryRowContext(ctx, query, userId, uint8(provider)).Scan(
+	err := d.Conn().QueryRowContext(ctx, query, userID, uint8(provider)).Scan(
 		&modelId,
 		&assistId,
 		&providerDb,
@@ -1166,13 +1166,13 @@ func (d *DB) GetModelByProviderAnyStatus(userId uint32, provider create.Provider
 
 // SetActiveModel переключает активную модель пользователя
 // Параметры:
-//   - userId: ID пользователя
+//   - userID: ID пользователя
 //   - modelId: ID записи из таблицы user_models
 //
 // Функция снимает IsActive с других моделей пользователя в этой же транзакции
-func (d *DB) SetActiveModel(userId uint32, modelId uint64) error {
-	if userId == 0 {
-		return fmt.Errorf("получен пустой userId")
+func (d *DB) SetActiveModel(userID uint32, modelId uint64) error {
+	if userID == 0 {
+		return fmt.Errorf("получен пустой userID")
 	}
 
 	if modelId == 0 {
@@ -1191,8 +1191,8 @@ func (d *DB) SetActiveModel(userId uint32, modelId uint64) error {
 
 	// Сначала снимаем IsActive со всех активных моделей этого пользователя
 	_, err = tx.ExecContext(ctx,
-		"UPDATE user_models SET IsActive = 0 WHERE UserId = ? AND IsActive = 1",
-		userId)
+		"UPDATE user_models SET IsActive = 0 WHERE userID = ? AND IsActive = 1",
+		userID)
 
 	if err != nil {
 		switch {
@@ -1207,8 +1207,8 @@ func (d *DB) SetActiveModel(userId uint32, modelId uint64) error {
 
 	// Обновляем IsActive для указанной модели
 	result, err := tx.ExecContext(ctx,
-		"UPDATE user_models SET IsActive = 1 WHERE Id = ? AND UserId = ?",
-		modelId, userId)
+		"UPDATE user_models SET IsActive = 1 WHERE Id = ? AND userID = ?",
+		modelId, userID)
 
 	if err != nil {
 		switch {
@@ -1228,7 +1228,7 @@ func (d *DB) SetActiveModel(userId uint32, modelId uint64) error {
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("модель с Id=%d для пользователя %d не найдена", modelId, userId)
+		return fmt.Errorf("модель с Id=%d для пользователя %d не найдена", modelId, userID)
 	}
 
 	// Фиксируем транзакцию
@@ -1241,13 +1241,13 @@ func (d *DB) SetActiveModel(userId uint32, modelId uint64) error {
 
 // SetActiveModelByProvider переключает активную модель пользователя для указанного провайдера
 // Параметры:
-//   - userId: ID пользователя
+//   - userID: ID пользователя
 //   - provider: тип провайдера (ProviderOpenAI, ProviderMistral, ...)
 //
 // Функция снимает IsActive с других моделей пользователя в этой же транзакции
-func (d *DB) SetActiveModelByProvider(userId uint32, provider create.ProviderType) error {
-	if userId == 0 {
-		return fmt.Errorf("получен пустой userId")
+func (d *DB) SetActiveModelByProvider(userID uint32, provider create.ProviderType) error {
+	if userID == 0 {
+		return fmt.Errorf("получен пустой userID")
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
@@ -1264,8 +1264,8 @@ func (d *DB) SetActiveModelByProvider(userId uint32, provider create.ProviderTyp
 	_, err = tx.ExecContext(ctx,
 		`UPDATE user_models 
 		SET IsActive = 0 
-		WHERE UserId = ? AND IsActive = 1`,
-		userId)
+		WHERE userID = ? AND IsActive = 1`,
+		userID)
 
 	if err != nil {
 		switch {
@@ -1282,10 +1282,10 @@ func (d *DB) SetActiveModelByProvider(userId uint32, provider create.ProviderTyp
 	result, err := tx.ExecContext(ctx,
 		`UPDATE user_models 
 		SET IsActive = 1 
-		WHERE UserId = ? AND Provider = ? 
+		WHERE userID = ? AND Provider = ? 
 		ORDER BY CreatedAt DESC 
 		LIMIT 1`,
-		userId, uint8(provider))
+		userID, uint8(provider))
 
 	if err != nil {
 		switch {
@@ -1305,7 +1305,7 @@ func (d *DB) SetActiveModelByProvider(userId uint32, provider create.ProviderTyp
 	}
 
 	if rowsAffected == 0 {
-		return fmt.Errorf("пользовательская модель провайдера %s для пользователя %d не найдена", provider.String(), userId)
+		return fmt.Errorf("пользовательская модель провайдера %s для пользователя %d не найдена", provider.String(), userID)
 	}
 
 	// Фиксируем транзакцию
@@ -1320,7 +1320,7 @@ func (d *DB) SetActiveModelByProvider(userId uint32, provider create.ProviderTyp
 func (d *DB) SetContactAvailability(userID uint32, contact, provider string, isAvailable bool) error {
 	// Сначала получаем ContactId из service_contacts
 	var contactID int64
-	query := `SELECT Id FROM service_contacts WHERE UserId = ? AND Contact = ? LIMIT 1`
+	query := `SELECT Id FROM service_contacts WHERE userID = ? AND Contact = ? LIMIT 1`
 	err := d.Conn().QueryRow(query, userID, contact).Scan(&contactID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -1353,7 +1353,7 @@ func (d *DB) GetContactAvailability(userID uint32, contact string) (map[string]b
 		SELECT ca.Provider, ca.IsAvailable 
 		FROM service_contact_availability ca
 		INNER JOIN service_contacts c ON ca.ContactId = c.Id
-		WHERE c.UserId = ? AND c.Contact = ?
+		WHERE c.userID = ? AND c.Contact = ?
 	`
 
 	rows, err := d.Conn().Query(query, userID, contact)
@@ -1385,7 +1385,7 @@ func (d *DB) GetContactsAvailableIn(userID uint32, provider string) ([]string, e
 		SELECT DISTINCT c.Contact 
 		FROM service_contact_availability ca
 		INNER JOIN service_contacts c ON ca.ContactId = c.Id
-		WHERE c.UserId = ? 
+		WHERE c.userID = ? 
 		  AND ca.Provider = ? 
 		  AND ca.IsAvailable = 1
 		ORDER BY c.Contact
@@ -1420,7 +1420,7 @@ func (d *DB) GetContactsInBothProviders(userID uint32, provider1, provider2 stri
 		FROM service_contacts c
 		INNER JOIN service_contact_availability ca1 ON c.Id = ca1.ContactId
 		INNER JOIN service_contact_availability ca2 ON c.Id = ca2.ContactId
-		WHERE c.UserId = ?
+		WHERE c.userID = ?
 		  AND ca1.Provider = ?
 		  AND ca1.IsAvailable = 1
 		  AND ca2.Provider = ?
@@ -1452,10 +1452,10 @@ func (d *DB) GetContactsInBothProviders(userID uint32, provider1, provider2 stri
 
 // RemoveModelFromUser удаляет связь между пользователем и моделью в таблице user_models
 // Также удаляет саму модель из user_gpt, если это была последняя связь с этой моделью
-func (d *DB) RemoveModelFromUser(userId uint32, modelId uint64) error {
+func (d *DB) RemoveModelFromUser(userID uint32, modelId uint64) error {
 	// Проверяем входные значения
-	if userId == 0 || modelId == 0 {
-		return fmt.Errorf("получены некорректные значения: userId или modelId равны 0")
+	if userID == 0 || modelId == 0 {
+		return fmt.Errorf("получены некорректные значения: userID или modelId равны 0")
 	}
 
 	// Дочерний контекст с тайм-аутом на операцию
@@ -1472,8 +1472,8 @@ func (d *DB) RemoveModelFromUser(userId uint32, modelId uint64) error {
 	// Проверяем, существует ли связь пользователя с моделью
 	var exists bool
 	err = tx.QueryRowContext(ctx,
-		"SELECT EXISTS(SELECT 1 FROM user_models WHERE UserId = ? AND ModelId = ?)",
-		userId, modelId).Scan(&exists)
+		"SELECT EXISTS(SELECT 1 FROM user_models WHERE userID = ? AND ModelId = ?)",
+		userID, modelId).Scan(&exists)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -1486,14 +1486,14 @@ func (d *DB) RemoveModelFromUser(userId uint32, modelId uint64) error {
 	}
 
 	if !exists {
-		return fmt.Errorf("связь между пользователем %d и моделью %d не найдена", userId, modelId)
+		return fmt.Errorf("связь между пользователем %d и моделью %d не найдена", userID, modelId)
 	}
 
 	// Проверяем, была ли эта модель активной
 	var wasActive bool
 	err = tx.QueryRowContext(ctx,
-		"SELECT IsActive FROM user_models WHERE UserId = ? AND ModelId = ?",
-		userId, modelId).Scan(&wasActive)
+		"SELECT IsActive FROM user_models WHERE userID = ? AND ModelId = ?",
+		userID, modelId).Scan(&wasActive)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -1507,8 +1507,8 @@ func (d *DB) RemoveModelFromUser(userId uint32, modelId uint64) error {
 
 	// Удаляем связь между пользователем и моделью
 	_, err = tx.ExecContext(ctx,
-		"DELETE FROM user_models WHERE UserId = ? AND ModelId = ?",
-		userId, modelId)
+		"DELETE FROM user_models WHERE userID = ? AND ModelId = ?",
+		userID, modelId)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -1556,14 +1556,14 @@ func (d *DB) RemoveModelFromUser(userId uint32, modelId uint64) error {
 		// Получаем первую доступную модель пользователя
 		var nextModelId sql.NullInt64
 		err = tx.QueryRowContext(ctx,
-			"SELECT ModelId FROM user_models WHERE UserId = ? LIMIT 1",
-			userId).Scan(&nextModelId)
+			"SELECT ModelId FROM user_models WHERE userID = ? LIMIT 1",
+			userID).Scan(&nextModelId)
 
 		// Если есть другая модель, делаем её активной
 		if err == nil && nextModelId.Valid {
 			_, err = tx.ExecContext(ctx,
-				"UPDATE user_models SET IsActive = 1 WHERE UserId = ? AND ModelId = ?",
-				userId, nextModelId.Int64)
+				"UPDATE user_models SET IsActive = 1 WHERE userID = ? AND ModelId = ?",
+				userID, nextModelId.Int64)
 			if err != nil {
 				return fmt.Errorf("ошибка активации следующей модели: %w", err)
 			}
@@ -1575,7 +1575,7 @@ func (d *DB) RemoveModelFromUser(userId uint32, modelId uint64) error {
 			}
 
 			// Отключаем все каналы, так как у пользователя больше нет моделей
-			if err := d.DisableAllUserChannel(userId); err != nil {
+			if err := d.DisableAllUserChannel(userID); err != nil {
 				return fmt.Errorf("ошибка отключения каналов пользователя: %w", err)
 			}
 
@@ -1592,10 +1592,10 @@ func (d *DB) RemoveModelFromUser(userId uint32, modelId uint64) error {
 }
 
 func (d *DB) SaveUserModel(
-	userId uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint8, ids json.RawMessage, operator bool) error {
+	userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint8, ids json.RawMessage, operator bool) error {
 	// Проверяю входные значения
-	if userId == 0 || name == "" || assistantId == "" {
-		return fmt.Errorf("получены некорректные значения: userId, name или assistantId пусты")
+	if userID == 0 || name == "" || assistantId == "" {
+		return fmt.Errorf("получены некорректные значения: userID, name или assistantId пусты")
 	}
 	// Валидация провайдера
 	if provider != create.ProviderOpenAI && provider != create.ProviderMistral && provider != create.ProviderGoogle {
@@ -1623,9 +1623,9 @@ func (d *DB) SaveUserModel(
 		SELECT ug.Id 
 		FROM user_gpt ug
 		INNER JOIN user_models um ON ug.Id = um.ModelId
-		WHERE um.UserId = ? AND um.Provider = ?
+		WHERE um.userID = ? AND um.Provider = ?
 		LIMIT 1
-	`, userId, provider).Scan(&existingModelId)
+	`, userID, provider).Scan(&existingModelId)
 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		switch {
@@ -1675,8 +1675,8 @@ func (d *DB) SaveUserModel(
 		err = tx.QueryRowContext(ctx, `
 			SELECT COUNT(*) 
 			FROM user_models 
-			WHERE UserId = ?
-		`, userId).Scan(&modelCount)
+			WHERE userID = ?
+		`, userID).Scan(&modelCount)
 
 		if err != nil {
 			switch {
@@ -1697,9 +1697,9 @@ func (d *DB) SaveUserModel(
 
 		// Создаём связь в user_models
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO user_models (UserId, ModelId, Provider, IsActive)
+			INSERT INTO user_models (userID, ModelId, Provider, IsActive)
 			VALUES (?, ?, ?, ?)
-		`, userId, modelId, provider, isActive)
+		`, userID, modelId, provider, isActive)
 
 		if err != nil {
 			switch {
@@ -1753,8 +1753,8 @@ func (d *DB) SaveUserModel(
 		SET Telegram_enabled = ?,
 			Changed = 1,
 			Timechange = CURRENT_TIMESTAMP()
-		WHERE UserId = ?
-	`, enabledInt, userId)
+		WHERE userID = ?
+	`, enabledInt, userID)
 
 	if err != nil {
 		switch {
@@ -1778,10 +1778,10 @@ func (d *DB) SaveUserModel(
 }
 
 // ReadUserModel получает данные модели пользователя и идентификаторы файлов
-func (d *DB) ReadUserModel(userId uint32) ([]byte, *create.VecIds, error) {
+func (d *DB) ReadUserModel(userID uint32) ([]byte, *create.VecIds, error) {
 	// Проверяем входное значение
-	if userId == 0 {
-		return nil, nil, fmt.Errorf("получен некорректный userId")
+	if userID == 0 {
+		return nil, nil, fmt.Errorf("получен некорректный userID")
 	}
 
 	// Дочерний контекст с тайм-аутом на операцию
@@ -1793,12 +1793,12 @@ func (d *DB) ReadUserModel(userId uint32) ([]byte, *create.VecIds, error) {
 		SELECT TO_BASE64(ug.Data), ug.Ids
 		FROM user_models um
 		JOIN user_gpt ug ON um.ModelId = ug.Id
-		WHERE um.UserId = ? AND um.IsActive = 1`
+		WHERE um.userID = ? AND um.IsActive = 1`
 
 	var base64Data sql.NullString
 	var idsJson sql.NullString
 
-	err := d.conn.QueryRowContext(ctx, query, userId).Scan(&base64Data, &idsJson)
+	err := d.conn.QueryRowContext(ctx, query, userID).Scan(&base64Data, &idsJson)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -1861,7 +1861,7 @@ func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remainin
 	err = tx.QueryRowContext(ctx, `
   SELECT StorageLimit, StorageUsed
   FROM subscriptions
-  WHERE UserId = ?
+  WHERE userID = ?
   FOR UPDATE`, userID).Scan(&vLimit, &vUsed)
 
 	if err != nil {
@@ -1891,7 +1891,7 @@ func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remainin
 	_, err = tx.ExecContext(ctx, `
   UPDATE subscriptions
   SET StorageUsed = ?
-  WHERE UserId = ?`, vNewUsed, userID)
+  WHERE userID = ?`, vNewUsed, userID)
 
 	if err != nil {
 		switch {
@@ -1916,16 +1916,16 @@ func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remainin
 	return remaining, totalLimit, nil
 }
 
-func (d *DB) UserTimeZone(userId uint32) (string, error) {
-	if userId == 0 {
-		return "", fmt.Errorf("получены некорректные данные: userId")
+func (d *DB) UserTimeZone(userID uint32) (string, error) {
+	if userID == 0 {
+		return "", fmt.Errorf("получены некорректные данные: userID")
 	}
 
 	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
 	defer cancel()
 
 	var tz sql.NullString
-	err := d.conn.QueryRowContext(ctx, "SELECT TimeZone FROM users WHERE Id = ?", userId).Scan(&tz)
+	err := d.conn.QueryRowContext(ctx, "SELECT TimeZone FROM users WHERE Id = ?", userID).Scan(&tz)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -1933,14 +1933,14 @@ func (d *DB) UserTimeZone(userId uint32) (string, error) {
 		case errors.Is(err, context.Canceled):
 			return "", fmt.Errorf("операция отменена: %w", err)
 		case errors.Is(err, sql.ErrNoRows):
-			return "", fmt.Errorf("пользователь с ID %d не найден", userId)
+			return "", fmt.Errorf("пользователь с ID %d не найден", userID)
 		default:
 			return "", fmt.Errorf("ошибка получения часового пояса пользователя: %w", err)
 		}
 	}
 
 	if !tz.Valid {
-		return "", fmt.Errorf("часовой пояс не установлен для пользователя %d", userId)
+		return "", fmt.Errorf("часовой пояс не установлен для пользователя %d", userID)
 	}
 
 	return tz.String, nil

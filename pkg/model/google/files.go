@@ -31,7 +31,7 @@ func (m *Model) DeleteTempFile(fileID string) error {
 	return nil
 }
 
-func (m *Model) GetFileAsReader(url string) (io.Reader, error) {
+func (m *Model) GetFileAsReaderData(url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла")
 	}
@@ -132,6 +132,6 @@ func (m *Model) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32
 	return m.db.SearchSimilarEmbeddings(modelId, create.ProviderGoogle, queryEmbedding, limit)
 }
 
-func (m *Model) saveEmbedding(userId uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
-	return m.db.SaveEmbedding(userId, modelId, create.ProviderGoogle, docID, docName, content, embedding, metadata)
+func (m *Model) saveEmbedding(userID uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
+	return m.db.SaveEmbedding(userID, modelId, create.ProviderGoogle, docID, docName, content, embedding, metadata)
 }

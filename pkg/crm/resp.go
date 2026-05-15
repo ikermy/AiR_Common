@@ -185,7 +185,7 @@ func (u *User) ChannelsSettings(userID uint32) (*ChannelsSettings, error) {
 func (u *User) ContactID(contact string) (Contact, error) {
 	url := fmt.Sprintf("http://localhost:%s/contacts/%s/search?phone=%s", u.port, Type, contact)
 
-	resp, err := u.sendRESP(http.MethodGet, url, u.conf.UserID, nil)
+	resp, err := u.sendRESP(http.MethodGet, url, u.conf.userID, nil)
 	if err != nil {
 		return Contact{}, fmt.Errorf("ошибка получения id контакта: %v", err)
 	}
@@ -215,7 +215,7 @@ func (u *User) ContactID(contact string) (Contact, error) {
 func (u *User) FindContactByAltContact(altContact string) (Contact, error) {
 	url := fmt.Sprintf("http://localhost:%s/contacts/%s/search-by-alt?alt_contact=%s", u.port, Type, altContact)
 
-	resp, err := u.sendRESP(http.MethodGet, url, u.conf.UserID, nil)
+	resp, err := u.sendRESP(http.MethodGet, url, u.conf.userID, nil)
 	if err != nil {
 		return Contact{}, fmt.Errorf("ошибка поиска контакта по альтернативному имени: %v", err)
 	}
@@ -254,7 +254,7 @@ func (u *User) CreateContact(contact *CreateContact) (Contact, error) {
 		return Contact{}, fmt.Errorf("ошибка кодирования JSON: %v", err)
 	}
 
-	resp, err := u.sendRESP(http.MethodPost, url, u.conf.UserID, jsonData)
+	resp, err := u.sendRESP(http.MethodPost, url, u.conf.userID, jsonData)
 	if err != nil {
 		return Contact{}, fmt.Errorf("ошибка создания контакта: %v", err)
 	}
@@ -287,7 +287,7 @@ func (u *User) FindLeadByContactID(contactID string) ([]Lead, error) {
 
 	url := fmt.Sprintf("http://localhost:%s/leads/%s/by-contact/%s", u.port, Type, contactID)
 
-	resp, err := u.sendRESP(http.MethodGet, url, u.conf.UserID, nil)
+	resp, err := u.sendRESP(http.MethodGet, url, u.conf.userID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения лидов для контакта %s: %v", contactID, err)
 	}
@@ -326,7 +326,7 @@ func (u *User) NewLead(lead *CreateLead) (Lead, error) {
 		return Lead{}, fmt.Errorf("ошибка кодирования JSON: %v", err)
 	}
 
-	resp, err := u.sendRESP(http.MethodPost, url, u.conf.UserID, jsonData)
+	resp, err := u.sendRESP(http.MethodPost, url, u.conf.userID, jsonData)
 	if err != nil {
 		return Lead{}, fmt.Errorf("ошибка создания лида: %v", err)
 	}
@@ -349,7 +349,7 @@ func (u *User) NewLead(lead *CreateLead) (Lead, error) {
 	}
 
 	//logger.Debug("Лид успешно создан: ID=%s, Name=%s, ContactID=%s",
-	//	createResp.Lead.ID, createResp.Lead.Name, createResp.Lead.ContactID, u.conf.UserID)
+	//	createResp.Lead.ID, createResp.Lead.Name, createResp.Lead.ContactID, u.conf.userID)
 
 	return createResp.Lead, nil
 }
@@ -370,7 +370,7 @@ func (u *User) AddNote(note AddNote) error {
 		return fmt.Errorf("ошибка кодирования JSON: %v", err)
 	}
 
-	resp, err := u.sendRESP(http.MethodPost, url, u.conf.UserID, jsonData)
+	resp, err := u.sendRESP(http.MethodPost, url, u.conf.userID, jsonData)
 	if err != nil {
 		return fmt.Errorf("ошибка добавления заметки: %v", err)
 	}
@@ -403,7 +403,7 @@ func (u *User) UpdateLeadState(leadID string) error {
 
 	url := fmt.Sprintf("http://localhost:%s/leads/%s/%s", u.port, Type, leadID)
 
-	resp, err := u.sendRESP(http.MethodPatch, url, u.conf.UserID)
+	resp, err := u.sendRESP(http.MethodPatch, url, u.conf.userID)
 	if err != nil {
 		return fmt.Errorf("ошибка обновления лида: %v", err)
 	}
@@ -432,7 +432,7 @@ func (u *User) UpdateLeadState(leadID string) error {
 		return fmt.Errorf("сервер вернул ошибку при обновлении лида: %s", updateResp.Message)
 	}
 
-	//logger.Debug("Лид успешно обновлён: LeadID=%s", leadID, u.conf.UserID)
+	//logger.Debug("Лид успешно обновлён: LeadID=%s", leadID, u.conf.userID)
 
 	return nil
 }

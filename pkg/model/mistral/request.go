@@ -49,7 +49,7 @@ func prepareUserContent(text string, files []model.FileUpload) interface{} {
 					"type":      "image_url",
 					"image_url": file.URL,
 				})
-				//logger.Debug("Добавлено изображение по URL: %s", file.URL, userId)
+				//logger.Debug("Добавлено изображение по URL: %s", file.URL, userID)
 			}
 		}
 		return contentParts
@@ -110,7 +110,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 		// Первый запрос - создаём новый conversation
 		inputs := createConversationInputs(userContent)
 
-		//logger.Debug("Создание нового conversation для агента %s", respModel.Assist.AssistId, userId)
+		//logger.Debug("Создание нового conversation для агента %s", respModel.Assist.AssistId, userID)
 		convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs)
 		if err != nil {
 			return emptyResponse, fmt.Errorf("ошибка создания conversation: %w", err)
@@ -118,7 +118,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 
 		// Сохраняем conversation_id в RespModel
 		respModel.ConversationId = convResp.ConversationID
-		//logger.Debug("Conversation создан, ID=%s", respModel.ConversationId, userId)
+		//logger.Debug("Conversation создан, ID=%s", respModel.ConversationId, userID)
 
 		// Сохраняем conversation_id в БД сразу
 		m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
@@ -129,7 +129,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 		if err != nil {
 			// Проверяем на ошибку 400 с кодом 3230 - рассинхронизация вызовов функций
 			if strings.Contains(err.Error(), "400") && strings.Contains(err.Error(), "Not the same number of function calls and responses") {
-				//logger.Warn("Conversation %s: рассинхронизация вызовов функций (400/3230) при ContinueConversation, сбрасываем и создаём новый", respModel.ConversationId, userId)
+				//logger.Warn("Conversation %s: рассинхронизация вызовов функций (400/3230) при ContinueConversation, сбрасываем и создаём новый", respModel.ConversationId, userID)
 
 				// Сбрасываем conversation_id
 				respModel.ConversationId = ""
@@ -145,10 +145,10 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 
 				respModel.ConversationId = convResp.ConversationID
 				m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
-				//logger.Debug("Создан новый conversation после 400/3230 при ContinueConversation: %s", respModel.ConversationId, userId)
+				//logger.Debug("Создан новый conversation после 400/3230 при ContinueConversation: %s", respModel.ConversationId, userID)
 			} else if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "was not found") {
 				// Проверяем на ошибку 404 - агент не найден (был пересоздан с новыми параметрами)
-				//logger.Warn("Агент для conversation %s не найден (404), возможно агент был пересоздан. Создаём новый conversation", respModel.ConversationId, userId, userId)
+				//logger.Warn("Агент для conversation %s не найден (404), возможно агент был пересоздан. Создаём новый conversation", respModel.ConversationId, userID, userID)
 
 				// Сбрасываем старый conversation_id
 				respModel.ConversationId = ""
@@ -162,13 +162,13 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 				}
 
 				respModel.ConversationId = convResp.ConversationID
-				//logger.Debug("Создан новый conversation после 404, ID=%s", respModel.ConversationId, userId)
+				//logger.Debug("Создан новый conversation после 404, ID=%s", respModel.ConversationId, userID)
 
 				// Сохраняем новый conversation_id в БД
 				m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
 			} else if strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "Failed to create conversation response") {
 				// Проверяем на ошибку 503 - conversation в сломанном состоянии
-				//logger.Warn("Conversation %s в сломанном состоянии (503), создаём новый", respModel.ConversationId, userId)
+				//logger.Warn("Conversation %s в сломанном состоянии (503), создаём новый", respModel.ConversationId, userID)
 
 				// Сбрасываем старый conversation_id
 				respModel.ConversationId = ""
@@ -182,12 +182,12 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 				}
 
 				respModel.ConversationId = convResp.ConversationID
-				//logger.Debug("Создан новый conversation после 503, ID=%s", respModel.ConversationId, userId)
+				//logger.Debug("Создан новый conversation после 503, ID=%s", respModel.ConversationId, userID)
 
 				// Сохраняем новый conversation_id в БД
 				m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
 			} else if strings.Contains(err.Error(), "500") || strings.Contains(err.Error(), "Internal Server Error") {
-				//logger.Warn("API вернул 500, сбрасываем conversation_id и создаём новый для dialogID %d", respModel.Chan.DialogID, userId)
+				//logger.Warn("API вернул 500, сбрасываем conversation_id и создаём новый для dialogID %d", respModel.Chan.DialogID, userID)
 
 				// Сбрасываем conversation_id
 				respModel.ConversationId = ""
@@ -209,7 +209,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 				// Сохраняем новый conversation_id
 				respModel.ConversationId = convResp.ConversationID
 				m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
-				//logger.Debug("Создан новый conversation после 500: %s", respModel.ConversationId, userId)
+				//logger.Debug("Создан новый conversation после 500: %s", respModel.ConversationId, userID)
 			} else {
 				return emptyResponse, fmt.Errorf("ошибка продолжения conversation: %w", err)
 			}
@@ -219,7 +219,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 	// Обновляем conversation_id если API вернул новый
 	if convResp.ConversationID != "" && convResp.ConversationID != respModel.ConversationId {
 		respModel.ConversationId = convResp.ConversationID
-		//logger.Debug("Conversation ID обновлён: %s", respModel.ConversationId, userId)
+		//logger.Debug("Conversation ID обновлён: %s", respModel.ConversationId, userID)
 		// Сохраняем обновлённый conversation_id в БД
 		m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
 	}
@@ -228,10 +228,10 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 	response := ParseConversationResponse(convResp)
 
 	// Логируем сырой ответ для диагностики
-	//logger.Debug("Mistral RAW ответ: Message='%s', HasFunc=%v, FuncName='%s'", response.Message, response.HasFunc, response.FuncName, userId)
+	//logger.Debug("Mistral RAW ответ: Message='%s', HasFunc=%v, FuncName='%s'", response.Message, response.HasFunc, response.FuncName, userID)
 
 	// Обрабатываем ответ
-	assistResponse := m.processResponse(response, respModel.RealUserId, respModel.Assist.Provider)
+	assistResponse := m.processResponse(response, respModel.RealuserID, respModel.Assist.Provider)
 
 	// Обрабатываем цепочку вызовов функций (если есть)
 	// ВАЖНО: Mistral может вызывать несколько функций подряд (например: get_current_time -> sheets_write_range)
@@ -239,10 +239,10 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 
 	for response.HasFunc && m.actionHandler != nil && response.FuncName != "" && functionCallCount < create.MaxFunctionCalls {
 		functionCallCount++
-		//logger.Debug("Mistral вызвал функцию #%d: %s с аргументами: %s", functionCallCount, response.FuncName, response.FuncArgs, userId)
+		//logger.Debug("Mistral вызвал функцию #%d: %s с аргументами: %s", functionCallCount, response.FuncName, response.FuncArgs, userID)
 
-		funcResult := m.actionHandler.RunAction(m.ctx, response.FuncName, response.FuncArgs, respModel.Assist.Provider, respModel.Assist.UserId)
-		//logger.Debug("Результат функции #%d %s: %s", functionCallCount, response.FuncName, funcResult, userId)
+		funcResult := m.actionHandler.RunAction(m.ctx, response.FuncName, response.FuncArgs, respModel.Assist.Provider, respModel.Assist.UserID)
+		//logger.Debug("Результат функции #%d %s: %s", functionCallCount, response.FuncName, funcResult, userID)
 
 		// Сохраняем результат функции в контекст для истории
 		toolResultMessage := Message{
@@ -255,7 +255,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 
 		// Отправляем результат функции обратно в conversation
 		// Используем чистый результат без дополнительного форматирования
-		//logger.Debug("Отправляем результат функции %s агенту", response.FuncName, userId)
+		//logger.Debug("Отправляем результат функции %s агенту", response.FuncName, userID)
 
 		var finalResponse Response
 		if respModel.ConversationId != "" {
@@ -265,7 +265,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 			if err != nil {
 				// Проверяем на ошибку 400 - невалидный tool_call_id или рассинхронизация вызовов функций
 				if strings.Contains(err.Error(), "400") && (strings.Contains(err.Error(), "Unexpected tool call id") || strings.Contains(err.Error(), "Not the same number of function calls and responses")) {
-					//logger.Warn("Conversation %s: проблема с tool_call_id или рассинхронизация (400/3230), сбрасываем и создаём новый", respModel.ConversationId, userId)
+					//logger.Warn("Conversation %s: проблема с tool_call_id или рассинхронизация (400/3230), сбрасываем и создаём новый", respModel.ConversationId, userID)
 
 					// Сбрасываем conversation_id
 					respModel.ConversationId = ""
@@ -281,12 +281,12 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 
 					respModel.ConversationId = newConvResp.ConversationID
 					m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
-					//logger.Debug("Создан новый conversation после 400/3230: %s", respModel.ConversationId, userId)
+					//logger.Debug("Создан новый conversation после 400/3230: %s", respModel.ConversationId, userID)
 
 					finalResponse = ParseConversationResponse(newConvResp)
 				} else if strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "Failed to create conversation response") {
 					// Проверяем на ошибку 503 - conversation в сломанном состоянии
-					//logger.Warn("Conversation %s сломан (503) после функции, сбрасываем", respModel.ConversationId, userId)
+					//logger.Warn("Conversation %s сломан (503) после функции, сбрасываем", respModel.ConversationId, userID)
 
 					// Сбрасываем conversation_id - при следующем запросе создастся новый
 					respModel.ConversationId = ""
@@ -303,26 +303,26 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 			// Обновляем conversation_id (может измениться)
 			if convResp.ConversationID != respModel.ConversationId {
 				respModel.ConversationId = convResp.ConversationID
-				//logger.Debug("Conversation ID обновлён после функции: %s", respModel.ConversationId, userId)
+				//logger.Debug("Conversation ID обновлён после функции: %s", respModel.ConversationId, userID)
 				// Сохраняем обновлённый conversation_id в БД
 				m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
 			}
 			finalResponse = ParseConversationResponse(convResp)
 		} else {
 			// conversation_id был сброшен (после ошибки 503), создаём НОВЫЙ conversation
-			//logger.Warn("conversation_id пустой после ошибки, создаём новый conversation для отправки результата функции", userId)
+			//logger.Warn("conversation_id пустой после ошибки, создаём новый conversation для отправки результата функции", userID)
 
 			// Создаём новый conversation с результатом функции
 			inputs := createConversationInputs(fmt.Sprintf("Результат выполнения функции %s: %s", response.FuncName, funcResult))
 
 			newConvResp, err := m.client.StartConversation(respModel.Assist.AssistId, inputs)
 			if err != nil {
-				//logger.Error("Ошибка создания нового conversation после функции: %v", err, userId)
+				//logger.Error("Ошибка создания нового conversation после функции: %v", err, userID)
 				// Оставляем текущий assistResponse
 				finalResponse = Response{}
 			} else {
 				respModel.ConversationId = newConvResp.ConversationID
-				//logger.Debug("Создан новый conversation после функции, ID=%s", respModel.ConversationId, userId)
+				//logger.Debug("Создан новый conversation после функции, ID=%s", respModel.ConversationId, userID)
 				m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
 
 				finalResponse = ParseConversationResponse(newConvResp)
@@ -331,27 +331,27 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 
 		// Обновляем response и assistResponse ТОЛЬКО если получен финальный ответ
 		if finalResponse.Message != "" || finalResponse.HasFunc {
-			//logger.Debug("RAW ответ агента: Message='%s', HasFunc=%v, FuncName='%s'", finalResponse.Message, finalResponse.HasFunc, finalResponse.FuncName, userId)
+			//logger.Debug("RAW ответ агента: Message='%s', HasFunc=%v, FuncName='%s'", finalResponse.Message, finalResponse.HasFunc, finalResponse.FuncName, userID)
 
 			response = finalResponse
-			assistResponse = m.processResponse(finalResponse, respModel.RealUserId, respModel.Assist.Provider)
+			assistResponse = m.processResponse(finalResponse, respModel.RealuserID, respModel.Assist.Provider)
 
 			// Если это НЕ вызов функции, выходим из цикла - получен финальный ответ
 			if !finalResponse.HasFunc {
-				//logger.Debug("Получен финальный ответ после %d вызовов функций", functionCallCount, userId)
+				//logger.Debug("Получен финальный ответ после %d вызовов функций", functionCallCount, userID)
 				break
 			}
 			// Если HasFunc==true, цикл продолжится и выполнит следующую функцию
 		} else {
 			// Логируем если финальный ответ пустой
 			//logger.Warn("Mistral вернул пустой финальный ответ после функции #%d %s. Message='%s', HasFunc=%v, funcResult='%s'. Прерываем цепочку.",
-			//	functionCallCount, response.FuncName, finalResponse.Message, finalResponse.HasFunc, funcResult, userId)
+			//	functionCallCount, response.FuncName, finalResponse.Message, finalResponse.HasFunc, funcResult, userID)
 			break
 		}
 	} // Конец цикла обработки функций
 
 	if functionCallCount >= create.MaxFunctionCalls {
-		//logger.Warn("Достигнут лимит вызовов функций (%d), прерываем цепочку", create.MaxFunctionCalls, userId)
+		//logger.Warn("Достигнут лимит вызовов функций (%d), прерываем цепочку", create.MaxFunctionCalls, userID)
 	}
 
 	// Добавляем ответ ассистента в контекст только если он не пустой
@@ -365,14 +365,14 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 		respModel.Context.Messages = append(respModel.Context.Messages, assistantMessage)
 		respModel.Context.LastUsed = time.Now()
 		//} else {
-		//	logger.Warn("Получен пустой ответ от ассистента, не добавляем в контекст", userId)
+		//	logger.Warn("Получен пустой ответ от ассистента, не добавляем в контекст", userID)
 	}
 
 	return assistResponse, nil
 }
 
 // processResponse обрабатывает ответ от Mistral
-func (m *Model) processResponse(response Response, realUserId uint64, provider create.ProviderType) model.AssistResponse {
+func (m *Model) processResponse(response Response, realuserID uint64, provider create.ProviderType) model.AssistResponse {
 	messageText := strings.TrimSpace(response.Message)
 
 	// СНАЧАЛА парсим JSON из ответа (если есть) чтобы получить красивые имена файлов
@@ -420,9 +420,9 @@ func (m *Model) processResponse(response Response, realUserId uint64, provider c
 	if len(response.GeneratedImages) > 0 {
 		//logger.Debug("processResponse: обнаружено %d сгенерированных изображений", len(response.GeneratedImages))
 
-		// Проверяем наличие realUserId
-		if realUserId == 0 {
-			//logger.Warn("processResponse: realUserId не установлен, пропускаем сохранение изображений")
+		// Проверяем наличие realuserID
+		if realuserID == 0 {
+			//logger.Warn("processResponse: realuserID не установлен, пропускаем сохранение изображений")
 			return model.AssistResponse{
 				Message:  messageText,
 				Meta:     false,
@@ -470,7 +470,7 @@ func (m *Model) processResponse(response Response, realUserId uint64, provider c
 			args := fmt.Sprintf(`{"image_data":"%s","file_name":"%s"}`,
 				base64Encode(imageData), fileName)
 
-			result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, uint32(realUserId))
+			result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, uint32(realuserID))
 
 			var saveResult struct {
 				URL   string `json:"url"`
@@ -716,7 +716,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 			// Обработка ошибок - сброс и пересоздание conversation
 			if strings.Contains(err.Error(), "400") || strings.Contains(err.Error(), "404") ||
 				strings.Contains(err.Error(), "503") || strings.Contains(err.Error(), "500") {
-				//logger.Warn("Conversation %s: ошибка %v, сбрасываем и создаём новый", respModel.ConversationId, err, userId)
+				//logger.Warn("Conversation %s: ошибка %v, сбрасываем и создаём новый", respModel.ConversationId, err, userID)
 
 				respModel.ConversationId = ""
 				m.saveConversationId(respModel.Chan.DialogID, "")
@@ -760,8 +760,9 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 			},
 		}
 		if usageJSON, err := json.Marshal(tokenUsage); err == nil {
-			//nolint:errcheck
-			onDelta(string(usageJSON), false)
+			if streamErr := onDelta(string(usageJSON), false); streamErr != nil {
+				//logger.Warn("[RequestStreaming] Ошибка при отправке token_usage: %v", streamErr)
+			}
 		}
 	}
 
@@ -771,7 +772,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 	// Если нет function calls в первом ответе - это обычный текстовый ответ
 	if len(functionCalls) == 0 {
 		response := ParseConversationResponse(convResp)
-		assistResponse := m.processResponse(response, respModel.RealUserId, respModel.Assist.Provider)
+		assistResponse := m.processResponse(response, respModel.RealuserID, respModel.Assist.Provider)
 
 		// Сохраняем ответ в контекст
 		if assistResponse.Message != "" {
@@ -794,7 +795,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 
 		if onDelta != nil {
 			if err := onDelta(string(responseJSON), true); err != nil {
-				//logger.Warn("Ошибка в onDelta callback: %v", err, userId)
+				//logger.Warn("Ошибка в onDelta callback: %v", err, userID)
 			}
 		}
 
@@ -807,17 +808,17 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 
 	for len(functionCalls) > 0 && functionCallRound < maxRounds && m.actionHandler != nil {
 		functionCallRound++
-		//logger.Debug("Раунд вызовов функций #%d: обнаружено %d функций", functionCallRound, len(functionCalls), userId)
+		//logger.Debug("Раунд вызовов функций #%d: обнаружено %d функций", functionCallRound, len(functionCalls), userID)
 
 		// Выполняем ВСЕ функции параллельно (или последовательно)
 		functionResults := make([]map[string]interface{}, 0, len(functionCalls))
 
 		for _, funcCall := range functionCalls {
 			//logger.Debug("Вызов функции #%d в раунде %d: %s с аргументами: %s",
-			//	i+1, functionCallRound, funcCall.Name, funcCall.Arguments, userId)
+			//	i+1, functionCallRound, funcCall.Name, funcCall.Arguments, userID)
 
-			funcResult := m.actionHandler.RunAction(m.ctx, funcCall.Name, funcCall.Arguments, respModel.Assist.Provider, respModel.Assist.UserId)
-			//logger.Debug("Результат функции %s: %s", funcCall.Name, funcResult, userId)
+			funcResult := m.actionHandler.RunAction(m.ctx, funcCall.Name, funcCall.Arguments, respModel.Assist.Provider, respModel.Assist.UserID)
+			//logger.Debug("Результат функции %s: %s", funcCall.Name, funcResult, userID)
 
 			// Сохраняем результат функции
 			functionResults = append(functionResults, map[string]interface{}{
@@ -848,12 +849,12 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 				if strings.Contains(err.Error(), "400") || strings.Contains(err.Error(), "503") ||
 					strings.Contains(err.Error(), "conversation error") || strings.Contains(err.Error(), "3000") {
 					//logger.Warn("Conversation %s: проблема при SendMultipleFunctionResultsStreaming (%v), сбрасываем",
-					//	respModel.ConversationId, err, userId)
+					//	respModel.ConversationId, err, userID)
 					respModel.ConversationId = ""
 					m.saveConversationId(respModel.Chan.DialogID, "")
 					break
 				} else {
-					//logger.Error("Ошибка SendMultipleFunctionResultsStreaming: %v", err, userId)
+					//logger.Error("Ошибка SendMultipleFunctionResultsStreaming: %v", err, userID)
 					return fmt.Errorf("ошибка отправки результатов функций: %w", err)
 				}
 			}
@@ -879,12 +880,12 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 
 			// Парсим ответ для проверки наличия контента
 			response := ParseConversationResponse(finalConvResp)
-			assistResponse := m.processResponse(response, respModel.RealUserId, respModel.Assist.Provider)
+			assistResponse := m.processResponse(response, respModel.RealuserID, respModel.Assist.Provider)
 
 			// Если нет больше function calls И есть текстовый ответ - это финальный ответ
 			if len(functionCalls) == 0 {
 				//logger.Debug("Раунд #%d завершен: получен финальный ответ (len=%d)",
-				//	functionCallRound, len(assistResponse.Message), userId)
+				//	functionCallRound, len(assistResponse.Message), userID)
 
 				// Сохраняем ответ в контекст если есть
 				if assistResponse.Message != "" {
@@ -907,7 +908,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 
 				if onDelta != nil {
 					if err := onDelta(string(responseJSON), true); err != nil {
-						//logger.Warn("Ошибка в onDelta callback: %v", err, userId)
+						//logger.Warn("Ошибка в onDelta callback: %v", err, userID)
 					}
 				}
 
@@ -916,7 +917,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 
 			// Есть новые function calls - продолжаем цикл
 			//logger.Debug("Раунд #%d: обнаружено %d новых function calls, продолжаем",
-			//	functionCallRound, len(functionCalls), userId)
+			//	functionCallRound, len(functionCalls), userID)
 		} else {
 			// conversation_id был сброшен - выходим
 			break
@@ -924,20 +925,20 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 	}
 
 	if functionCallRound >= maxRounds {
-		//logger.Warn("Достигнут лимит раундов вызовов функций (%d), прерываем цепочку", maxRounds, userId)
+		//logger.Warn("Достигнут лимит раундов вызовов функций (%d), прерываем цепочку", maxRounds, userID)
 	}
 
 	// Если вышли из цикла без финального ответа - отправляем пустой ответ
-	//logger.Warn("Получен пустой ответ от ассистента, не добавляем в контекст", userId)
+	//logger.Warn("Получен пустой ответ от ассистента, не добавляем в контекст", userID)
 
-	emptyResponse := m.processResponse(Response{}, respModel.RealUserId, respModel.Assist.Provider)
+	emptyResponse := m.processResponse(Response{}, respModel.RealuserID, respModel.Assist.Provider)
 	responseJSON, _ := json.Marshal(emptyResponse)
 
 	sendTotalUsage()
 
 	if onDelta != nil {
 		if err := onDelta(string(responseJSON), true); err != nil {
-			//logger.Warn("Ошибка в onDelta callback (fallback): %v", err, userId)
+			//logger.Warn("Ошибка в onDelta callback (fallback): %v", err, userID)
 		}
 	}
 
@@ -963,7 +964,7 @@ func (m *Model) syncAgentTools(respModel *RespModel) {
 	var tools []map[string]interface{}
 
 	// MCP function tools — основной источник runtime-инструментов
-	if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, respModel.Assist.UserId, create.ProviderMistral); err == nil {
+	if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, respModel.Assist.UserID, create.ProviderMistral); err == nil {
 		for _, t := range mcpTools {
 			tools = append(tools, map[string]interface{}{
 				"type": "function",
@@ -978,7 +979,7 @@ func (m *Model) syncAgentTools(respModel *RespModel) {
 
 	// Нативные built-in инструменты агента (code_interpreter, image_generation, web_search, document_library)
 	if m.universalModel != nil {
-		if compressedData, _, err := m.db.ReadUserModelByProvider(respModel.Assist.UserId, create.ProviderMistral); err == nil && compressedData != nil {
+		if compressedData, _, err := m.db.ReadUserModelByProvider(respModel.Assist.UserID, create.ProviderMistral); err == nil && compressedData != nil {
 			if modelData, err := m.universalModel.DecompressModelData(compressedData, nil); err == nil {
 				if modelData.Interpreter {
 					tools = append(tools, map[string]interface{}{"type": "code_interpreter"})

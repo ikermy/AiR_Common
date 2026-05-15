@@ -16,7 +16,7 @@ import (
 )
 
 type Inter interface {
-	UploadDocumentWithEmbedding(userId uint32, docName, content string, metadata create.DocumentMetadata) (string, error)
+	UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata create.DocumentMetadata) (string, error)
 }
 
 type DB = comdb.Exterior
@@ -33,7 +33,7 @@ type Model struct {
 	embeddingCache sync.Map // hash(text) -> *CachedEmbedding (кэш эмбеддингов для RAG)
 	UserModelTTl   time.Duration
 	actionHandler  model.ActionHandler
-	universalModel *create.UniversalModel // Для доступа к GetRealUserID
+	universalModel *create.UniversalModel // Для доступа к GetRealuserID
 	shutdownOnce   sync.Once
 }
 
@@ -123,11 +123,11 @@ func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.Acti
 	googleClient := create.NewGoogleAgentClient(ctx, conf.GPT.GoogleKey)
 	if mcpProvider, ok := actionHandler.(model.MCPConfigProvider); ok {
 		googleClient.SetMCPConfigFetchers(
-			func(fetchCtx context.Context, userId uint32, provider create.ProviderType) (string, error) {
-				return mcpProvider.FetchSystemPrompt(fetchCtx, userId, provider)
+			func(fetchCtx context.Context, userID uint32, provider create.ProviderType) (string, error) {
+				return mcpProvider.FetchSystemPrompt(fetchCtx, userID, provider)
 			},
-			func(fetchCtx context.Context, userId uint32, provider create.ProviderType) ([]create.FunctionDeclaration, error) {
-				mcpTools, err := mcpProvider.FetchToolsList(fetchCtx, userId, provider)
+			func(fetchCtx context.Context, userID uint32, provider create.ProviderType) ([]create.FunctionDeclaration, error) {
+				mcpTools, err := mcpProvider.FetchToolsList(fetchCtx, userID, provider)
 				if err != nil {
 					return nil, err
 				}
@@ -181,7 +181,7 @@ func (m *Model) SetClient(client *create.GoogleAgentClient) {
 	m.client = client
 }
 
-// SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID
+// SetUniversalModel устанавливает UniversalModel для доступа к GetRealuserID
 func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
 	if m.client != nil {
@@ -212,9 +212,9 @@ func (m *Model) NewMessage(operator model.Operator, msgType string, content *mod
 // loadAgentConfig загружает конфигурацию агента для Google модели
 // Пытается загрузить из AllIds, если пусто - создает конфигурацию по умолчанию
 // Также проверяет наличие эмбеддингов в таблице vector_embeddings
-func (m *Model) loadAgentConfig(userId uint32, respModel *GoogleRespModel) error {
+func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error {
 	// Получаем все модели пользователя
-	userModels, err := m.db.GetAllUserModels(userId)
+	userModels, err := m.db.GetAllUserModels(userID)
 	if err != nil {
 		return fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
@@ -229,7 +229,7 @@ func (m *Model) loadAgentConfig(userId uint32, respModel *GoogleRespModel) error
 	}
 
 	if found == nil {
-		return fmt.Errorf("модель Google не найдена для userId %d", userId)
+		return fmt.Errorf("модель Google не найдена для userID %d", userID)
 	}
 
 	// Инициализируем базовую конфигурацию
@@ -240,20 +240,20 @@ func (m *Model) loadAgentConfig(userId uint32, respModel *GoogleRespModel) error
 	}
 
 	// Загружаем полные данные модели из БД для получения всех параметров
-	compressedData, _, err := m.db.ReadUserModelByProvider(userId, create.ProviderGoogle)
+	compressedData, _, err := m.db.ReadUserModelByProvider(userID, create.ProviderGoogle)
 	if err != nil {
-		//logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, userId)
+		//logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, userID)
 	} else if compressedData != nil {
 		// Распаковываем данные модели чтобы получить Prompt (SystemInstruction)
 		if m.universalModel != nil {
 			modelData, decompressErr := m.universalModel.DecompressModelData(compressedData, nil)
 			if decompressErr != nil {
-				//logger.Warn("Ошибка распаковки данных модели: %v", decompressErr, userId)
+				//logger.Warn("Ошибка распаковки данных модели: %v", decompressErr, userID)
 			} else {
 				// SystemInstruction: базовый prompt + hint от MCP, если он доступен.
 				promptText := modelData.Prompt
 				if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
-					if hint, fetchErr := mcpProvider.FetchSystemPrompt(m.ctx, userId, create.ProviderGoogle); fetchErr == nil && hint != "" {
+					if hint, fetchErr := mcpProvider.FetchSystemPrompt(m.ctx, userID, create.ProviderGoogle); fetchErr == nil && hint != "" {
 						promptText = modelData.Prompt + "\n\n" + hint
 					}
 				}
@@ -266,7 +266,7 @@ func (m *Model) loadAgentConfig(userId uint32, respModel *GoogleRespModel) error
 						},
 					}
 					//} else {
-					//	logger.Warn("Prompt пустой в БД!", userId)
+					//	logger.Warn("Prompt пустой в БД!", userID)
 				}
 
 				// Загружаем остальные параметры
@@ -281,7 +281,7 @@ func (m *Model) loadAgentConfig(userId uint32, respModel *GoogleRespModel) error
 				agentConfig.Interpreter = modelData.Interpreter
 			}
 		} else {
-			return fmt.Errorf("UniversalModel не установлен, невозможно загрузить данные модели для пользователя %d", userId)
+			return fmt.Errorf("UniversalModel не установлен, невозможно загрузить данные модели для пользователя %d", userID)
 		}
 	}
 
@@ -297,7 +297,7 @@ func (m *Model) loadAgentConfig(userId uint32, respModel *GoogleRespModel) error
 	// Если MCP недоступен — function tools не добавляются (модель работает только с modelData.Prompt).
 	var functionDeclarations []map[string]interface{}
 	if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
-		if mcpTools, fetchErr := mcpProvider.FetchToolsList(m.ctx, userId, create.ProviderGoogle); fetchErr == nil {
+		if mcpTools, fetchErr := mcpProvider.FetchToolsList(m.ctx, userID, create.ProviderGoogle); fetchErr == nil {
 			for _, t := range mcpTools {
 				functionDeclarations = append(functionDeclarations, map[string]interface{}{
 					"name":        t.Name,
@@ -333,10 +333,10 @@ func (m *Model) loadAgentConfig(userId uint32, respModel *GoogleRespModel) error
 	if agentConfig.VSearch {
 		embeddings, err := m.db.ListModelEmbeddings(found.ModelId, create.ProviderGoogle)
 		if err != nil {
-			//logger.Warn("Ошибка получения эмбеддингов для modelId=%d: %v", found.ModelId, err, userId)
+			//logger.Warn("Ошибка получения эмбеддингов для modelId=%d: %v", found.ModelId, err, userID)
 		} else if len(embeddings) > 0 {
 			agentConfig.HasVector = true
-			//logger.Debug("Найдено %d эмбеддингов в vector_embeddings для modelId=%d", len(embeddings), found.ModelId, userId)
+			//logger.Debug("Найдено %d эмбеддингов в vector_embeddings для modelId=%d", len(embeddings), found.ModelId, userID)
 
 			// Извлекаем уникальные doc_id как VectorIds
 			vectorIdsMap := make(map[string]bool)
@@ -348,10 +348,10 @@ func (m *Model) loadAgentConfig(userId uint32, respModel *GoogleRespModel) error
 				agentConfig.VectorIds = append(agentConfig.VectorIds, id)
 			}
 		} else {
-			//logger.Debug("VSearch включен для modelId=%d, но эмбеддинги отсутствуют", found.ModelId, userId)
+			//logger.Debug("VSearch включен для modelId=%d, но эмбеддинги отсутствуют", found.ModelId, userID)
 		}
 		//} else {
-		//	logger.Debug("VSearch отключен для modelId=%d, пропускаем загрузку эмбеддингов", found.ModelId, userId)
+		//	logger.Debug("VSearch отключен для modelId=%d, пропускаем загрузку эмбеддингов", found.ModelId, userID)
 	}
 
 	respModel.AgentConfig = &agentConfig
@@ -360,7 +360,7 @@ func (m *Model) loadAgentConfig(userId uint32, respModel *GoogleRespModel) error
 	// Логируем загруженную конфигурацию для отладки
 	//logger.Debug("Загружена конфигурация Google агента: model=%s, tools=%d, WebSearch=%v, S3=%v, Calendar=%v, Sheets=%v, Interpreter=%v, VSearch=%v, hasVector=%v",
 	//	agentConfig.ModelName, len(agentConfig.Tools), agentConfig.WebSearch, agentConfig.S3,
-	//	agentConfig.Interpreter, agentConfig.VSearch, agentConfig.HasVector, userId)
+	//	agentConfig.Interpreter, agentConfig.VSearch, agentConfig.HasVector, userID)
 
 	return nil
 }
@@ -418,8 +418,8 @@ func (m *Model) Shutdown(shutCh chan<- com.LogMsg) {
 	}
 }
 
-// TranscribeAudio транскрибирует аудио в текст (обёртка для клиента)
-func (m *Model) TranscribeAudio(audioData []byte, mimeType string) (string, error) {
+// TranscribeAudioData транскрибирует аудио в текст (обёртка для клиента)
+func (m *Model) TranscribeAudioData(audioData []byte, mimeType string) (string, error) {
 	if m.client == nil {
 		return "", fmt.Errorf("google клиент не инициализирован")
 	}
@@ -464,7 +464,7 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 			respModel.Chan = newCh
 
 			//logger.Debug("Создан новый канал для существующего респондента: dialogID=%d, respId=%d, буфер TxCh=%d",
-			//	dialogID, respId, cap(newCh.TxCh), assist.UserId)
+			//	dialogID, respId, cap(newCh.TxCh), assist.userID)
 		}
 
 		// Конвертируем в model.RespModel
@@ -486,7 +486,7 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 	}
 
 	// Загружаем конфигурацию агента из БД
-	if err := m.loadAgentConfig(assist.UserId, googleResp); err != nil {
+	if err := m.loadAgentConfig(assist.UserID, googleResp); err != nil {
 		cancel() // Очищаем ресурсы при ошибке
 		return nil, fmt.Errorf("ошибка загрузки конфигурации агента: %w", err)
 	}
@@ -495,7 +495,7 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 	m.responders.Store(respId, googleResp)
 
 	//logger.Debug("Создан новый Google респондент для dialogID %d, respId=%d с каналом TxCh (буфер=%d)",
-	//	dialogID, respId, cap(ch.TxCh), assist.UserId)
+	//	dialogID, respId, cap(ch.TxCh), assist.userID)
 
 	// Уведомляем ожидающие горутины о создании респондента
 	model.NotifyWaitChannels(&m.waitChannels, respId)
@@ -517,7 +517,6 @@ func (m *Model) GetCh(respId uint64) (*model.Ch, error) {
 		},
 	)
 }
-
 
 // GetRespIdBydialogID получает respId по dialogID
 func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
@@ -805,17 +804,17 @@ func (m *Model) periodicFlush() {
 }
 
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
-func (m *Model) InvalidateUserAgentConfigCache(userId uint32) {
+func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 	var invalidatedCount int
 	m.responders.Range(func(key, value interface{}) bool {
 		respModel := value.(*GoogleRespModel)
-		if respModel.Assist.UserId == userId {
+		if respModel.Assist.UserID == userID {
 			m.responders.Delete(key)
 			invalidatedCount++
 		}
 		return true
 	})
 	if invalidatedCount > 0 {
-		//logger.Debug("Инвалидирован кэш конфигурации модели для userId=%d (удалено %d респондентов)", userId, invalidatedCount)
+		//logger.Debug("Инвалидирован кэш конфигурации модели для userID=%d (удалено %d респондентов)", userID, invalidatedCount)
 	}
 }

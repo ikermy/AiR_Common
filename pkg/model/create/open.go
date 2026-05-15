@@ -105,7 +105,7 @@ type OpenAIAgentClient struct {
 	url            string
 	ctx            context.Context
 	httpClient     *http.Client
-	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealUserID
+	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealuserID
 }
 
 // StreamingFunctionCall представляет накапливаемый function call для Realtime API
@@ -306,9 +306,9 @@ func (c *OpenAIAgentClient) CreateResponse(
 	agentConfig interface{},
 	onDelta func(string) error,
 	onToolCall func([]interface{}) ([]interface{}, error),
-	userId uint32,
+	userID uint32,
 ) (interface{}, string, error) {
-	return c.createResponseInternal(ctx, input, agentConfig, onDelta, onToolCall, userId, 0)
+	return c.createResponseInternal(ctx, input, agentConfig, onDelta, onToolCall, userID, 0)
 }
 
 func (c *OpenAIAgentClient) createResponseInternal(
@@ -317,7 +317,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 	agentConfig interface{}, // *OpenAIAgentConfig
 	onDelta func(string) error,
 	onToolCall func([]interface{}) ([]interface{}, error),
-	userId uint32,
+	userID uint32,
 	depth int,
 ) (interface{}, string, error) {
 	// Защита от бесконечной рекурсии при многократных вызовах инструментов
@@ -385,11 +385,11 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		if supportsExtendedCaching {
 			// Extended Caching для поддерживаемых моделей
 			payload["prompt_cache_retention"] = "24h"
-			//logger.Debug("[CreateResponse] Включен Extended Caching (24h) для модели %s", modelName, userId)
+			//logger.Debug("[CreateResponse] Включен Extended Caching (24h) для модели %s", modelName, userID)
 		} else {
 			// Для остальных моделей (включая gpt-4.1-nano) НЕ указываем параметр
 			// Кэширование всё равно работает автоматически (in_memory по умолчанию)
-			//logger.Debug("[CreateResponse] Используется автоматическое кэширование (in_memory) для модели %s", modelName, userId)
+			//logger.Debug("[CreateResponse] Используется автоматическое кэширование (in_memory) для модели %s", modelName, userID)
 		}
 	}
 
@@ -446,7 +446,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 	//Supported values are:'auto', 'default', 'flex', and 'priority'
 	const SERVICE_TIER = "default"
 	payload["service_tier"] = SERVICE_TIER
-	//logger.Debug("[CreateResponse] Используется service_tier: %s", SERVICE_TIER, userId)
+	//logger.Debug("[CreateResponse] Используется service_tier: %s", SERVICE_TIER, userID)
 
 	// Выполняем streaming запрос к /responses
 	resp, err := c.doRequest(ctx, "POST", "/responses", payload)
@@ -477,14 +477,14 @@ func (c *OpenAIAgentClient) createResponseInternal(
 
 		// Пропускаем "[DONE]" маркер
 		if data == "[DONE]" {
-			//logger.Debug("[CreateResponse] Получен маркер [DONE], завершаем чтение SSE", userId)
+			//logger.Debug("[CreateResponse] Получен маркер [DONE], завершаем чтение SSE", userID)
 			break
 		}
 
 		// Парсим JSON событие
 		var event map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
-			//logger.Warn("[CreateResponse] Ошибка парсинга SSE события: %v, data: %s", err, data, userId)
+			//logger.Warn("[CreateResponse] Ошибка парсинга SSE события: %v, data: %s", err, data, userID)
 			continue
 		}
 
@@ -526,7 +526,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 							eventJSON, err := json.Marshal(event)
 							if err == nil {
 								if streamErr := onDelta(string(eventJSON)); streamErr != nil {
-									//logger.Warn("[CreateResponse] Ошибка при отправке response.output_item.added: %v", streamErr, userId)
+									//logger.Warn("[CreateResponse] Ошибка при отправке response.output_item.added: %v", streamErr, userID)
 								}
 							}
 						}
@@ -548,7 +548,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 						eventJSON, err := json.Marshal(event)
 						if err == nil {
 							if streamErr := onDelta(string(eventJSON)); streamErr != nil {
-								//logger.Warn("[CreateResponse] Ошибка при отправке response.function_call_arguments.delta: %v", streamErr, userId)
+								//logger.Warn("[CreateResponse] Ошибка при отправке response.function_call_arguments.delta: %v", streamErr, userID)
 							}
 						}
 					}
@@ -569,7 +569,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 						eventJSON, err := json.Marshal(event)
 						if err == nil {
 							if streamErr := onDelta(string(eventJSON)); streamErr != nil {
-								//logger.Warn("[CreateResponse] Ошибка при отправке response.function_call_arguments.done: %v", streamErr, userId)
+								//logger.Warn("[CreateResponse] Ошибка при отправке response.function_call_arguments.done: %v", streamErr, userID)
 							}
 						}
 					}
@@ -585,7 +585,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 						eventJSON, err := json.Marshal(event)
 						if err == nil {
 							if streamErr := onDelta(string(eventJSON)); streamErr != nil {
-								//logger.Warn("[CreateResponse] Ошибка при отправке response.output_item.done: %v", streamErr, userId)
+								//logger.Warn("[CreateResponse] Ошибка при отправке response.output_item.done: %v", streamErr, userID)
 							}
 						}
 					}
@@ -603,7 +603,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 					errorMsg = fmt.Sprintf("%s (code: %s)", errorMsg, code)
 				}
 			}
-			//logger.Error("[CreateResponse] OpenAI API error: %s", errorMsg, userId)
+			//logger.Error("[CreateResponse] OpenAI API error: %s", errorMsg, userID)
 			return nil, "", fmt.Errorf("OpenAI API error: %s", errorMsg)
 
 		case "response.failed":
@@ -617,11 +617,11 @@ func (c *OpenAIAgentClient) createResponseInternal(
 					if code, ok := lastError["code"].(string); ok {
 						errorMsg = fmt.Sprintf("%s (code: %s)", errorMsg, code)
 					}
-					//logger.Error("[CreateResponse] Response failed: %s", errorMsg, userId)
+					//logger.Error("[CreateResponse] Response failed: %s", errorMsg, userID)
 					return nil, "", fmt.Errorf("response failed: %s", errorMsg)
 				}
 			}
-			//logger.Error("[CreateResponse] Response failed: no error details", userId)
+			//logger.Error("[CreateResponse] Response failed: no error details", userID)
 			return nil, "", fmt.Errorf("response failed: no error details")
 
 		case "response.completed":
@@ -662,16 +662,16 @@ func (c *OpenAIAgentClient) createResponseInternal(
 					//if cachedTokens > 0 {
 					//	// Показываем экономию от кэширования
 					//	logger.Debug("[TOKEN USAGE] Input: %d | Cached: %d (💰 90%% экономия!) | Output: %d | Total: %d",
-					//		inputTokens, cachedTokens, outputTokens, totalTokens, userId)
+					//		inputTokens, cachedTokens, outputTokens, totalTokens, userID)
 					//} else {
 					//	logger.Debug("[TOKEN USAGE] Input: %d | Output: %d | Total: %d",
-					//		inputTokens, outputTokens, totalTokens, userId)
+					//		inputTokens, outputTokens, totalTokens, userID)
 					//}
 				} else {
-					//logger.Warn("[CreateResponse] response.completed: поле response.usage отсутствует", userId)
+					//logger.Warn("[CreateResponse] response.completed: поле response.usage отсутствует", userID)
 				}
 			} else {
-				//logger.Warn("[CreateResponse] response.completed: поле response отсутствует", userId)
+				//logger.Warn("[CreateResponse] response.completed: поле response отсутствует", userID)
 			}
 		}
 	}
@@ -682,7 +682,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 
 	// Обрабатываем накопленные вызовы функций если есть
 	if len(functionCallsMap) > 0 && onToolCall != nil {
-		//logger.Debug("🔧 [CreateResponse] Обнаружено %d function calls, начинаю обработку...", len(functionCallsMap), userId)
+		//logger.Debug("🔧 [CreateResponse] Обнаружено %d function calls, начинаю обработку...", len(functionCallsMap), userID)
 
 		// Преобразуем map в массив (извлекаем все значения)
 		var functionCallsArray []interface{}
@@ -696,17 +696,17 @@ func (c *OpenAIAgentClient) createResponseInternal(
 			}
 			functionCallsArray = append(functionCallsArray, toolCallMap)
 			//logger.Debug("[CreateResponse] Function call [output_index=%d]: name=%s, call_id=%s, args_length=%d",
-			//	outputIndex, fn.Name, fn.CallID, len(fn.Arguments), userId)
+			//	outputIndex, fn.Name, fn.CallID, len(fn.Arguments), userID)
 		}
 
 		// Вызываем обработчик функций
-		//logger.Debug("🔧 [CreateResponse] Вызываю onToolCall с %d функциями...", len(functionCallsArray), userId)
+		//logger.Debug("🔧 [CreateResponse] Вызываю onToolCall с %d функциями...", len(functionCallsArray), userID)
 		toolOutputs, err := onToolCall(functionCallsArray)
 		if err != nil {
-			//logger.Error("[CreateResponse] Ошибка в onToolCall: %v", err, userId)
+			//logger.Error("[CreateResponse] Ошибка в onToolCall: %v", err, userID)
 			return nil, "", fmt.Errorf("tool call handler error: %w", err)
 		}
-		//logger.Debug("✅ [CreateResponse] onToolCall вернул %d результатов", len(toolOutputs), userId)
+		//logger.Debug("✅ [CreateResponse] onToolCall вернул %d результатов", len(toolOutputs), userID)
 
 		// Отправляем результаты функций клиенту через streaming (ДО обработки моделью)
 		if onDelta != nil {
@@ -729,10 +729,10 @@ func (c *OpenAIAgentClient) createResponseInternal(
 					if err == nil {
 						// Отправляем результат клиенту через streaming
 						if streamErr := onDelta(string(resultJSON)); streamErr != nil {
-							//logger.Error("[CreateResponse] Ошибка при отправке результата функции клиенту: %v", streamErr, userId)
+							//logger.Error("[CreateResponse] Ошибка при отправке результата функции клиенту: %v", streamErr, userID)
 						}
 					} else {
-						//logger.Error("[CreateResponse] Ошибка при сериализации результата функции: %v", err, userId)
+						//logger.Error("[CreateResponse] Ошибка при сериализации результата функции: %v", err, userID)
 					}
 				}
 			}
@@ -781,7 +781,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		newInput := input + toolResultsContext.String()
 
 		// Рекурсивный вызов с результатами функций (увеличиваем глубину)
-		return c.createResponseInternal(ctx, newInput, agentConfig, onDelta, onToolCall, userId, depth+1)
+		return c.createResponseInternal(ctx, newInput, agentConfig, onDelta, onToolCall, userID, depth+1)
 	}
 
 	// Отправляем информацию о токенах клиенту в финальной дельте
@@ -793,7 +793,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 
 		if usageJSON, err := json.Marshal(tokenUsage); err == nil {
 			if streamErr := onDelta(string(usageJSON)); streamErr != nil {
-				//logger.Warn("[CreateResponse] Ошибка при отправке token_usage: %v", streamErr, userId)
+				//logger.Warn("[CreateResponse] Ошибка при отправке token_usage: %v", streamErr, userID)
 				//} else {
 				//	// Проверяем наличие cached_tokens для логирования
 				//	hasCachedTokens := false
@@ -804,9 +804,9 @@ func (c *OpenAIAgentClient) createResponseInternal(
 				//	}
 				//
 				//	if hasCachedTokens {
-				//		logger.Debug("[CreateResponse] Отправлена информация о расходе токенов клиенту (с cached_tokens): %s", string(usageJSON), userId)
+				//		logger.Debug("[CreateResponse] Отправлена информация о расходе токенов клиенту (с cached_tokens): %s", string(usageJSON), userID)
 				//	} else {
-				//		logger.Debug("[CreateResponse] Отправлена информация о расходе токенов клиенту: %s", string(usageJSON), userId)
+				//		logger.Debug("[CreateResponse] Отправлена информация о расходе токенов клиенту: %s", string(usageJSON), userID)
 				//	}
 			}
 		}
@@ -918,7 +918,7 @@ func (m *UniversalModel) createModel(_ uint32, modelData *UniversalModelData, _ 
 	var allIds []byte = nil
 
 	//logger.Debug("Конфигурация OpenAI модели создана: model=%s, embeddings=local",
-	//	modelData.GptType.Name, userId)
+	//	modelData.GptType.Name, userID)
 
 	return UMCR{
 		AssistID: modelData.GptType.Name, // Просто имя модели (gpt-4o-mini и т.д.)
@@ -937,7 +937,7 @@ func (m *UniversalModel) deleteModel(_ uint32, modelRecord *UserModelRecord, _ b
 	var vecIds VecIds
 	if len(modelRecord.AllIds) > 0 {
 		if err := json.Unmarshal(modelRecord.AllIds, &vecIds); err != nil {
-			//logger.Warn("Ошибка парсинга VecIds: %v", err, userId)
+			//logger.Warn("Ошибка парсинга VecIds: %v", err, userID)
 		}
 	}
 
@@ -948,21 +948,21 @@ func (m *UniversalModel) deleteModel(_ uint32, modelRecord *UserModelRecord, _ b
 
 	// Удаляем все эмбеддинги связанные с этой моделью
 	if err := m.db.DeleteAllModelEmbeddings(modelRecord.ModelId); err != nil {
-		//	logger.Warn("Ошибка удаления эмбеддингов модели %d: %v", modelRecord.ModelId, err, userId)
+		//	logger.Warn("Ошибка удаления эмбеддингов модели %d: %v", modelRecord.ModelId, err, userID)
 		//} else {
-		//	logger.Debug("Векторные эмбеддинги модели %d успешно удалены из БД", modelRecord.ModelId, userId)
+		//	logger.Debug("Векторные эмбеддинги модели %d успешно удалены из БД", modelRecord.ModelId, userID)
 	}
 
 	if progressCallback != nil {
 		progressCallback("✅ Модель OpenAI успешно удалена")
 	}
 
-	//logger.Debug("Модель OpenAI успешно удалена (включая векторные эмбеддинги)", userId)
+	//logger.Debug("Модель OpenAI успешно удалена (включая векторные эмбеддинги)", userID)
 	return nil
 }
 
 // updateOpenAIModelInPlace обновляет OpenAI Assistant
-func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, _, updated *UniversalModelData) error {
+func (m *UniversalModel) updateOpenAIModelInPlace(userID uint32, _, updated *UniversalModelData) error {
 
 	// ВАЖНО: В новом подходе с Chat Completions API НЕ создаётся Assistant в OpenAI.
 	// AssistId в БД хранит имя модели (например "gpt-4o-mini"), а не ID ассистента.
@@ -971,7 +971,7 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, _, updated *Uni
 	// Поэтому обновление через ModifyAssistant НЕ требуется и было удалено.
 
 	// Получаем запись из БД для получения AssistId
-	record, err := m.db.GetModelByProviderAnyStatus(userId, ProviderOpenAI)
+	record, err := m.db.GetModelByProviderAnyStatus(userID, ProviderOpenAI)
 	if err != nil {
 		return fmt.Errorf("ошибка получения записи модели: %w", err)
 	}
@@ -988,7 +988,7 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, _, updated *Uni
 	}
 
 	// Сохраняем в БД
-	if err := m.SaveModel(userId, umcr, updated); err != nil {
+	if err := m.SaveModel(userID, umcr, updated); err != nil {
 		return fmt.Errorf("ошибка сохранения обновленной модели в БД: %w", err)
 	}
 

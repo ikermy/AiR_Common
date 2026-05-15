@@ -56,7 +56,7 @@ type Result struct {
 	Groups      []*Group      `protobuf:"bytes,4,rep,name=groups,proto3" json:"groups"`
 	Supergroups []*Supergroup `protobuf:"bytes,5,rep,name=supergroups,proto3" json:"supergroups"`
 	Service     Service       `protobuf:"varint,6,opt,name=service,proto3,enum=contacts.Service" json:"service"`
-	UserId      uint32        `protobuf:"varint,7,opt,name=user_id,json=userId,proto3" json:"user_id"`
+	UserID      uint32        `protobuf:"varint,7,opt,name=user_id,json=userID,proto3" json:"user_id"`
 }
 
 func (*Result) ProtoMessage()  {}
@@ -98,9 +98,9 @@ func (x *Result) GetService() Service {
 	}
 	return SERVICE_UNSPECIFIED
 }
-func (x *Result) GetUserId() uint32 {
+func (x *Result) GetuserID() uint32 {
 	if x != nil {
-		return x.UserId
+		return x.UserID
 	}
 	return 0
 }
