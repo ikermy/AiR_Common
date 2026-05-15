@@ -39,8 +39,10 @@ const (
 	RealtimeGoogleModel = "gemini-2.0-flash-lite"
 	//RealtimeGoogleModel = "gemini-2.0-flash"
 
-	// RealtimeBaseURL базовый WebSocket URL для OpenAI Realtime API
-	RealtimeBaseURL = "wss://api.openai.com/v1/realtime"
+	// RealtimeOpenAIURL базовый WebSocket URL для OpenAI Realtime API
+	RealtimeOpenAIURL = "wss://api.openai.com/v1/realtime"
+
+	RealtimeGoogleURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
 
 	// Параметры сессии Realtime API
 	RealtimeTemperature  = 0.7
@@ -324,29 +326,55 @@ type UniversalModelData struct {
 	Provider ProviderType `json:"provider"` // "openai=1", "mistral=2..."
 }
 
-// RealtimeVAD параметры голосовой активности (VAD) и генерации для OpenAI Realtime API.
+// RealtimeVAD универсальные параметры голосовой активности (VAD) и генерации.
+// Общие поля работают для всех провайдеров. Провайдер-специфичные параметры
+// вынесены в отдельные вложенные структуры (Google и т.д.).
 // Все поля опциональны — nil/0 означает «использовать значение по умолчанию».
 type RealtimeVAD struct {
-	// VAD — детекция речи (server_vad)
-	Threshold         *float64 `json:"threshold,omitempty"`           // 0.0–1.0, дефолт 0.5
-	PrefixPaddingMs   *int     `json:"prefix_padding_ms,omitempty"`   // мс перед речью, дефолт 200
-	SilenceDurationMs *int     `json:"silence_duration_ms,omitempty"` // мс тишины до конца фразы, дефолт 500
-	InterruptResponse *bool    `json:"interrupt_response,omitempty"`  // прерывать ответ при речи, дефолт true
+	// ── Общие параметры VAD (все провайдеры) ────────────────────────────────
+	SilenceDurationMs *int  `json:"silence_duration_ms,omitempty"` // мс тишины до конца фразы, дефолт 500
+	InterruptResponse *bool `json:"interrupt_response,omitempty"`  // прерывать ответ при речи, дефолт true
 
-	// Параметры генерации (передаются только в session.update, НЕ в response.create)
-	Temperature             *float64  `json:"temperature,omitempty"`                // 0.6–1.2
-	MaxResponseOutputTokens *IntOrInf `json:"max_response_output_tokens,omitempty"` // число или "inf"
+	// ── Общие параметры генерации (все провайдеры) ──────────────────────────
+	Temperature *float64 `json:"temperature,omitempty"` // 0.0–2.0
 
-	// Транскрибировать входящую речь в текст для логирования в БД
-	InputAudioTranscription *bool `json:"input_audio_transcription,omitempty"` // дефолт true
+	// ── Транскрипция входящей речи (все провайдеры) ─────────────────────────
+	InputAudioTranscription *bool `json:"input_audio_transcription,omitempty"` // STT пользователя, дефолт true
 
-	// Управление приветствием при начале диалога
-	InitialGreeting *bool `json:"initial_greeting,omitempty"` // включить/отключить приветствие (дефолт true)
-	// Промпт приветствия добавляется в sendInitialGreeting
-	Greeting *string `json:"greeting,omitempty"` // явная фраза приветствия (если nil — использовать дефолт)
+	// ── Управление приветствием (все провайдеры) ────────────────────────────
+	InitialGreeting *bool   `json:"initial_greeting,omitempty"` // включить/отключить приветствие, дефолт true
+	Greeting        *string `json:"greeting,omitempty"`         // явная фраза (nil → авто-генерация)
 
-	// Выбор голоса модели
-	Voice *string `json:"voice,omitempty"` // имя голоса для генерации речи (дефолт verse)
+	// ── Выбор голоса (все провайдеры) ───────────────────────────────────────
+	// OpenAI: имена типа "verse", "alloy"; Google: если не задан Google.VoiceName, используется это поле.
+	Voice *string `json:"voice,omitempty"` // имя голоса, дефолт зависит от провайдера
+
+	// ── OpenAI-специфичные параметры ────────────────────────────────────────
+	Threshold               *float64  `json:"threshold,omitempty"`                    // VAD порог, дефолт 0.5
+	PrefixPaddingMs         *int      `json:"prefix_padding_ms,omitempty"`            // мс перед речью, дефолт 200
+	MaxResponseOutputTokens *IntOrInf `json:"max_response_output_tokens,omitempty"`   // число или "inf"
+
+	// ── Google-специфичные параметры ────────────────────────────────────────
+	// При наличии переопределяют соответствующие общие поля для Google провайдера.
+	Google *GoogleRealtimeVAD `json:"google,omitempty"`
+}
+
+// GoogleRealtimeVAD Google-специфичные параметры для Multimodal Live API.
+// Поля с совпадающим смыслом (VoiceName, SilenceDurationMs, BargeIn, InputAudioTranscription)
+// имеют приоритет над общими полями RealtimeVAD при работе с Google провайдером.
+type GoogleRealtimeVAD struct {
+	// Голос и язык
+	VoiceName    *string `json:"voice_name,omitempty"`    // prebuilt_voice_config.voice_name, дефолт "Puck"
+	LanguageCode *string `json:"language_code,omitempty"` // speech_config.language_code, напр. "ru-RU"
+
+	// Транскрипция
+	InputAudioTranscription  *bool `json:"input_audio_transcription,omitempty"`  // STT пользователя, дефолт true
+	OutputAudioTranscription *bool `json:"output_audio_transcription,omitempty"` // субтитры модели, дефолт false
+
+	// VAD
+	AutomaticActivityDetection *bool `json:"automatic_activity_detection,omitempty"` // авто-VAD, дефолт true
+	BargeIn                    *bool `json:"barge_in,omitempty"`                      // перебивание модели, дефолт true
+	SilenceDurationMs          *int  `json:"silence_duration_ms,omitempty"`           // мс тишины, дефолт 500
 }
 
 // EsperoConfig представляет настройки ожидания из ModelDataRequest
@@ -919,25 +947,22 @@ func (m *UniversalModel) DecompressModelData(compressedData []byte, vecIds *VecI
 	return modelData, nil
 }
 
-// applyRealtimeVADDefaults применяет дефолтные значения к RealtimeVAD
-// Дефолты: Threshold=0.5, PrefixPaddingMs=200, SilenceDurationMs=500,
-// InterruptResponse=true, InputAudioTranscription=true, InitialGreeting=true
+// applyRealtimeVADDefaults применяет дефолтные значения к RealtimeVAD и вложенному GoogleRealtimeVAD.
+//
+// Общие дефолты: SilenceDurationMs=500, InterruptResponse=true,
+// InputAudioTranscription=true, InitialGreeting=true.
+//
+// OpenAI-специфичные дефолты: Threshold=0.5, PrefixPaddingMs=200.
+//
+// Google-специфичные дефолты (Google-блок): VoiceName="Puck",
+// InputAudioTranscription=true, OutputAudioTranscription=false,
+// AutomaticActivityDetection=true, BargeIn=true, SilenceDurationMs=500.
 func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
 	if vad == nil {
 		return nil
 	}
 
-	// Threshold: дефолт 0.5
-	if vad.Threshold == nil {
-		v := 0.5
-		vad.Threshold = &v
-	}
-
-	// PrefixPaddingMs: дефолт 200
-	if vad.PrefixPaddingMs == nil {
-		v := 200
-		vad.PrefixPaddingMs = &v
-	}
+	// ── Общие параметры ──────────────────────────────────────────────────────
 
 	// SilenceDurationMs: дефолт 500
 	if vad.SilenceDurationMs == nil {
@@ -961,6 +986,61 @@ func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
 	if vad.InitialGreeting == nil {
 		v := true
 		vad.InitialGreeting = &v
+	}
+
+	// ── OpenAI-специфичные дефолты ───────────────────────────────────────────
+
+	// Threshold: дефолт 0.5
+	if vad.Threshold == nil {
+		v := 0.5
+		vad.Threshold = &v
+	}
+
+	// PrefixPaddingMs: дефолт 200
+	if vad.PrefixPaddingMs == nil {
+		v := 200
+		vad.PrefixPaddingMs = &v
+	}
+
+	// ── Google-специфичные дефолты ───────────────────────────────────────────
+	if vad.Google != nil {
+		g := vad.Google
+
+		// VoiceName: дефолт "Puck"
+		if g.VoiceName == nil {
+			v := GoogleRealtimeDefaultVoice
+			g.VoiceName = &v
+		}
+
+		// InputAudioTranscription: дефолт true
+		if g.InputAudioTranscription == nil {
+			v := true
+			g.InputAudioTranscription = &v
+		}
+
+		// OutputAudioTranscription: дефолт false
+		if g.OutputAudioTranscription == nil {
+			v := false
+			g.OutputAudioTranscription = &v
+		}
+
+		// AutomaticActivityDetection: дефолт true
+		if g.AutomaticActivityDetection == nil {
+			v := true
+			g.AutomaticActivityDetection = &v
+		}
+
+		// BargeIn: дефолт true
+		if g.BargeIn == nil {
+			v := true
+			g.BargeIn = &v
+		}
+
+		// SilenceDurationMs: дефолт 500
+		if g.SilenceDurationMs == nil {
+			v := GoogleRealtimeSilenceDurationMs
+			g.SilenceDurationMs = &v
+		}
 	}
 
 	return vad

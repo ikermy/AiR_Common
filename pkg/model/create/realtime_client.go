@@ -40,6 +40,55 @@ func (v *IntOrInf) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ============================================================================
+// GOOGLE MULTIMODAL LIVE API
+// ============================================================================
+
+const (
+	// GoogleRealtimeBaseURL WebSocket URL для Google Multimodal Live API
+	GoogleRealtimeBaseURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+
+	// GoogleRealtimeDefaultVoice голос по умолчанию для Google Live API
+	GoogleRealtimeDefaultVoice = "Puck"
+
+	// GoogleRealtimeSilenceDurationMs пауза ожидания после окончания речи пользователя (мс)
+	GoogleRealtimeSilenceDurationMs = 500
+
+	// GoogleRealtimeInputSampleRate частота дискретизации входящего аудио (Гц) — PCM16 mono
+	GoogleRealtimeInputSampleRate = 16000
+
+	// GoogleRealtimeOutputSampleRate частота дискретизации исходящего аудио (Гц) — PCM16 mono
+	// ВАЖНО: Google Live API всегда возвращает аудио с частотой 24 kHz, изменить нельзя.
+	GoogleRealtimeOutputSampleRate = 24000
+)
+
+// DialGoogleRealtimeSession устанавливает WebSocket соединение к Google Multimodal Live API.
+// Возвращает готовое *websocket.Conn. После установки соединения необходимо отправить setup-сообщение.
+//
+// API ключ передаётся как query-параметр (стандарт для Google AI API).
+func DialGoogleRealtimeSession(apiKey, model string) (*websocket.Conn, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("DialGoogleRealtimeSession: apiKey не может быть пустым")
+	}
+	if model == "" {
+		model = RealtimeGoogleModel
+	}
+
+	wsURL := fmt.Sprintf("%s?key=%s", GoogleRealtimeBaseURL, apiKey)
+
+	dialer := websocket.Dialer{}
+	conn, resp, err := dialer.Dial(wsURL, http.Header{})
+	if err != nil {
+		if resp != nil {
+			return nil, fmt.Errorf("DialGoogleRealtimeSession: ошибка подключения (HTTP %d): %w",
+				resp.StatusCode, err)
+		}
+		return nil, fmt.Errorf("DialGoogleRealtimeSession: ошибка подключения к %s: %w", GoogleRealtimeBaseURL, err)
+	}
+
+	return conn, nil
+}
+
 // DialRealtimeSession устанавливает WebSocket соединение к OpenAI Realtime API.
 // Возвращает готовое *websocket.Conn для отправки/приёма событий.
 //
@@ -55,7 +104,7 @@ func DialRealtimeSession(apiKey, model string) (*websocket.Conn, error) {
 	}
 
 	// Формируем URL с параметрами сессии
-	baseURL, _ := url.Parse(RealtimeBaseURL)
+	baseURL, _ := url.Parse(RealtimeOpenAIURL)
 	q := baseURL.Query()
 	q.Set("model", model)
 	q.Set("temperature", strconv.FormatFloat(RealtimeTemperature, 'f', 1, 64))

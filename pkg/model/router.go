@@ -381,11 +381,9 @@ func (r *Router) TranscribeAudio(userID uint32, audioData []byte, fileName strin
 	return manager.TranscribeAudio(userID, audioData, fileName)
 }
 
-// GetRealtimeProvider возвращает RealtimeProvider если активная модель поддерживает Realtime API
+// GetRealtimeProvider возвращает RealtimeProvider если активная модель пользователя поддерживает Realtime API.
+// Работает для OpenAI и Google провайдеров.
 func (r *Router) GetRealtimeProvider(userID uint32) (RealtimeProvider, bool) {
-	if r.openai == nil {
-		return nil, false
-	}
 	activeManager, err := r.GetActiveUserManager(userID)
 	if err != nil {
 		return nil, false
@@ -394,12 +392,27 @@ func (r *Router) GetRealtimeProvider(userID uint32) (RealtimeProvider, bool) {
 	return rp, ok
 }
 
+// getRealtimeProviderByRespId возвращает первый RealtimeProvider, у которого есть сессия с данным respId.
+func (r *Router) getRealtimeProviderByRespId(respId uint64) (RealtimeProvider, bool) {
+	for _, p := range []Inter{r.openai, r.mistral, r.google} {
+		if p == nil {
+			continue
+		}
+		rp, ok := p.(RealtimeProvider)
+		if !ok {
+			continue
+		}
+		// Используем GetRealtimeGenerating как зонд — если сессия существует, не вернёт nil
+		if rp.GetRealtimeGenerating(respId) != nil {
+			return rp, true
+		}
+	}
+	return nil, false
+}
+
 // GetRealtimeGenerating возвращает указатель на флаг генерации Realtime-сессии
 func (r *Router) GetRealtimeGenerating(respId uint64) *atomic.Bool {
-	if r.openai == nil {
-		return nil
-	}
-	rp, ok := r.openai.(RealtimeProvider)
+	rp, ok := r.getRealtimeProviderByRespId(respId)
 	if !ok {
 		return nil
 	}
@@ -408,10 +421,7 @@ func (r *Router) GetRealtimeGenerating(respId uint64) *atomic.Bool {
 
 // DisconnectRealtimeSession завершает голосовую сессию
 func (r *Router) DisconnectRealtimeSession(respId uint64) {
-	if r.openai == nil {
-		return
-	}
-	rp, ok := r.openai.(RealtimeProvider)
+	rp, ok := r.getRealtimeProviderByRespId(respId)
 	if !ok {
 		return
 	}
@@ -420,12 +430,9 @@ func (r *Router) DisconnectRealtimeSession(respId uint64) {
 
 // SetRealtimeDisconnectCallback устанавливает callback критического таймаута watchdog
 func (r *Router) SetRealtimeDisconnectCallback(respId uint64, callback func(respId uint64)) error {
-	if r.openai == nil {
-		return fmt.Errorf("SetRealtimeDisconnectCallback: OpenAI провайдер не инициализирован")
-	}
-	rp, ok := r.openai.(RealtimeProvider)
+	rp, ok := r.getRealtimeProviderByRespId(respId)
 	if !ok {
-		return fmt.Errorf("SetRealtimeDisconnectCallback: OpenAI провайдер не реализует RealtimeProvider")
+		return fmt.Errorf("SetRealtimeDisconnectCallback: Realtime сессия не найдена для respId=%d", respId)
 	}
 	return rp.SetRealtimeDisconnectCallback(respId, callback)
 }

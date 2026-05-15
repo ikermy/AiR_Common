@@ -23,18 +23,19 @@ type DB = comdb.Exterior
 
 // Model управляет Google Gemini моделями и респондентами
 type Model struct {
-	ctx            context.Context
-	cancel         context.CancelFunc
-	client         *create.GoogleAgentClient
-	db             DB
-	responders     sync.Map // respId -> *GoogleRespModel
-	waitChannels   sync.Map
-	dialogCache    sync.Map // dialogID -> *DialogCache (локальный кэш истории диалогов)
-	embeddingCache sync.Map // hash(text) -> *CachedEmbedding (кэш эмбеддингов для RAG)
-	UserModelTTl   time.Duration
-	actionHandler  model.ActionHandler
-	universalModel *create.UniversalModel // Для доступа к GetRealuserID
-	shutdownOnce   sync.Once
+	ctx              context.Context
+	cancel           context.CancelFunc
+	client           *create.GoogleAgentClient
+	db               DB
+	responders       sync.Map // respId -> *GoogleRespModel
+	waitChannels     sync.Map
+	dialogCache      sync.Map // dialogID -> *DialogCache (локальный кэш истории диалогов)
+	embeddingCache   sync.Map // hash(text) -> *CachedEmbedding (кэш эмбеддингов для RAG)
+	realtimeSessions sync.Map // respId -> *GoogleRealtimeSession (параллельные голосовые сессии)
+	UserModelTTl     time.Duration
+	actionHandler    model.ActionHandler
+	universalModel   *create.UniversalModel // Для доступа к GetRealuserID
+	shutdownOnce     sync.Once
 }
 
 // GoogleRespModel представляет респондента для Google Gemini
@@ -88,6 +89,10 @@ type GoogleAgentConfig struct {
 	// Флаги для Google Services
 	S3          bool `json:"s3"`          // S3 хранилище
 	Interpreter bool `json:"interpreter"` // Code Interpreter
+
+	// Голосовой режим реального времени (Google Multimodal Live API)
+	RealtimeEnabled bool                `json:"realtime_enabled"`       // Голосовой режим включён
+	RealtimeVAD     *create.RealtimeVAD `json:"realtime_vad,omitempty"` // Параметры VAD и голоса
 }
 
 // DialogCache кэширует историю диалога в памяти для быстрого доступа
@@ -279,6 +284,8 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 				agentConfig.MetaAction = modelData.MetaAction
 				agentConfig.S3 = modelData.S3
 				agentConfig.Interpreter = modelData.Interpreter
+				agentConfig.RealtimeEnabled = modelData.Realtime
+				agentConfig.RealtimeVAD = modelData.RealtimeVAD
 			}
 		} else {
 			return fmt.Errorf("UniversalModel не установлен, невозможно загрузить данные модели для пользователя %d", userID)

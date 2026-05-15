@@ -99,7 +99,7 @@ type RealtimeEvent struct {
 }
 
 // RealtimeProvider опциональный интерфейс для голосовых сессий реального времени.
-// Реализуется только OpenAIModel.
+// Реализуется OpenAIModel (OpenAI Realtime API) и GoogleModel (Google Multimodal Live API).
 type RealtimeProvider interface {
 	StartRealtimeSession(userID uint32, dialogID, respId uint64) error
 	CloseRealtimeSession(respId uint64)
