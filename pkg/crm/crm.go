@@ -107,7 +107,7 @@ type AmoCRMSettings struct {
 }
 
 type UserCRMConfig struct {
-	userID       uint32
+	UserID       uint32
 	Channels     ChannelsSettings
 	AltContactID int64 // ID канала для создания контактов без номера телефона
 }
@@ -308,7 +308,7 @@ func (c *CRM) Init(userID uint32) (*User, string, error) {
 	}
 
 	crmConfig := &UserCRMConfig{
-		userID:   userID,
+		UserID:   userID,
 		Channels: *setting,
 	}
 
