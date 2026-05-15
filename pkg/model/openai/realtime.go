@@ -25,7 +25,7 @@ type RealtimeSession struct {
 	openaiConn  *websocket.Conn // WSS-соединение к OpenAI Realtime API
 	ctx         context.Context // Контекст сессии — отменяется при CloseRealtimeSession
 	cancel      context.CancelFunc
-	agentConfig *OpenAIAgentConfig // Ссылка на конфиг агента (не копируется)
+	agentConfig *AgentConfig // Ссылка на конфиг агента (не копируется)
 	userId      uint32
 	dialogID    uint64 // treadId из TestSession — для сохранения транскрипции в БД
 	respId      uint64
@@ -84,7 +84,7 @@ func (rs *RealtimeSession) publishEvent(ev RealtimeEvent) {
 // ============================================================================
 
 // GetRealtimeSession возвращает активную сессию по respId или nil.
-func (m *OpenAIModel) GetRealtimeSession(respId uint64) *RealtimeSession {
+func (m *Model) GetRealtimeSession(respId uint64) *RealtimeSession {
 	if val, ok := m.realtimeSessions.Load(respId); ok {
 		return val.(*RealtimeSession)
 	}
@@ -93,7 +93,7 @@ func (m *OpenAIModel) GetRealtimeSession(respId uint64) *RealtimeSession {
 
 // SubscribeEvents регистрирует нового подписчика на события сессии и возвращает его канал.
 // Вызывается WebSocket-клиентом при подключении.
-func (m *OpenAIModel) SubscribeEvents(respId uint64) (<-chan model.RealtimeEvent, error) {
+func (m *Model) SubscribeEvents(respId uint64) (<-chan model.RealtimeEvent, error) {
 	rs := m.GetRealtimeSession(respId)
 	if rs == nil {
 		return nil, fmt.Errorf("SubscribeEvents: сессия не найдена для respId=%d", respId)
@@ -107,7 +107,7 @@ func (m *OpenAIModel) SubscribeEvents(respId uint64) (<-chan model.RealtimeEvent
 
 // UnsubscribeEvents удаляет подписчика и закрывает его канал.
 // Вызывается WebSocket-клиентом при отключении.
-func (m *OpenAIModel) UnsubscribeEvents(respId uint64, sub <-chan model.RealtimeEvent) {
+func (m *Model) UnsubscribeEvents(respId uint64, sub <-chan model.RealtimeEvent) {
 	rs := m.GetRealtimeSession(respId)
 	if rs == nil {
 		return
@@ -132,7 +132,7 @@ func (m *OpenAIModel) UnsubscribeEvents(respId uint64, sub <-chan model.Realtime
 }
 
 // GetRealtimeAudio реализует model.RealtimeProvider.
-func (m *OpenAIModel) GetRealtimeAudio(respId uint64) (<-chan []byte, error) {
+func (m *Model) GetRealtimeAudio(respId uint64) (<-chan []byte, error) {
 	rs := m.GetRealtimeSession(respId)
 	if rs == nil {
 		return nil, fmt.Errorf("GetRealtimeAudio: сессия не найдена для respId=%d", respId)
@@ -141,7 +141,7 @@ func (m *OpenAIModel) GetRealtimeAudio(respId uint64) (<-chan []byte, error) {
 }
 
 // GetRealtimeDrain реализует model.RealtimeProvider.
-func (m *OpenAIModel) GetRealtimeDrain(respId uint64) (<-chan struct{}, error) {
+func (m *Model) GetRealtimeDrain(respId uint64) (<-chan struct{}, error) {
 	rs := m.GetRealtimeSession(respId)
 	if rs == nil {
 		return nil, fmt.Errorf("GetRealtimeDrain: сессия не найдена для respId=%d", respId)
@@ -151,7 +151,7 @@ func (m *OpenAIModel) GetRealtimeDrain(respId uint64) (<-chan struct{}, error) {
 
 // GetRealtimeGenerating возвращает указатель на IsGenerating флаг сессии.
 // true — OpenAI сейчас генерирует ответ (response.created → response.done).
-func (m *OpenAIModel) GetRealtimeGenerating(respId uint64) *atomic.Bool {
+func (m *Model) GetRealtimeGenerating(respId uint64) *atomic.Bool {
 	rs := m.GetRealtimeSession(respId)
 	if rs == nil {
 		return nil
@@ -161,7 +161,7 @@ func (m *OpenAIModel) GetRealtimeGenerating(respId uint64) *atomic.Bool {
 
 // StartRealtimeSession создаёт WSS-соединение к OpenAI Realtime API и запускает pump-горутины.
 // Вызывается после GetOrSetRespGPT — RespModel уже должен существовать в m.responders.
-func (m *OpenAIModel) StartRealtimeSession(userId uint32, dialogID, respId uint64) error {
+func (m *Model) StartRealtimeSession(userId uint32, dialogID, respId uint64) error {
 	if existing := m.GetRealtimeSession(respId); existing != nil {
 		//logger.Debug("StartRealtimeSession: сессия уже существует для respId=%d", respId, userId)
 		return nil
@@ -231,7 +231,7 @@ func (m *OpenAIModel) StartRealtimeSession(userId uint32, dialogID, respId uint6
 // injectDialogHistory загружает историю диалога из dialogCache (или БД) и отправляет
 // в Realtime API как conversation.item.create — до первого голосового сообщения.
 // Лимит: DialogHistoryLimit/2 (вдвое меньше чем для текстового режима).
-func (m *OpenAIModel) injectDialogHistory(rs *RealtimeSession, dialogID uint64) error {
+func (m *Model) injectDialogHistory(rs *RealtimeSession, dialogID uint64) error {
 	maxInject := int(create.DialogHistoryLimit) / 2 // = 10
 
 	// Берём из кэша (предзагружен в preloadDialogHistoryIfNeeded при GetOrSetRespGPT)
@@ -297,7 +297,7 @@ func (m *OpenAIModel) injectDialogHistory(rs *RealtimeSession, dialogID uint64) 
 
 // CloseRealtimeSession завершает голосовую сессию. Текстовый режим не затрагивается.
 // Очищает transcripts и eventSubs, вызывает OnDisconnect callback если установлен (только один раз).
-func (m *OpenAIModel) CloseRealtimeSession(respId uint64) {
+func (m *Model) CloseRealtimeSession(respId uint64) {
 	val, ok := m.realtimeSessions.LoadAndDelete(respId)
 	if !ok {
 		return
@@ -343,7 +343,7 @@ func (m *OpenAIModel) CloseRealtimeSession(respId uint64) {
 }
 
 // SendRealtimeAudio ставит PCM16-чанк от клиента в очередь pumpToOpenAI.
-func (m *OpenAIModel) SendRealtimeAudio(respId uint64, pcm16 []byte) error {
+func (m *Model) SendRealtimeAudio(respId uint64, pcm16 []byte) error {
 	rs := m.GetRealtimeSession(respId)
 	if rs == nil {
 		return fmt.Errorf("SendRealtimeAudio: сессия не найдена для respId=%d", respId)
@@ -362,7 +362,7 @@ func (m *OpenAIModel) SendRealtimeAudio(respId uint64, pcm16 []byte) error {
 
 // SetRealtimeDisconnectCallback устанавливает callback вызываемый при критическом таймауте watchdog.
 // Используется для завершения звонка (Telegram) при том что модель совсем не отвечает.
-func (m *OpenAIModel) SetRealtimeDisconnectCallback(respId uint64, callback func(respId uint64)) error {
+func (m *Model) SetRealtimeDisconnectCallback(respId uint64, callback func(respId uint64)) error {
 	rs := m.GetRealtimeSession(respId)
 	if rs == nil {
 		return fmt.Errorf("SetRealtimeDisconnectCallback: сессия не найдена для respId=%d", respId)
@@ -376,7 +376,7 @@ func (m *OpenAIModel) SetRealtimeDisconnectCallback(respId uint64, callback func
 // ============================================================================
 
 // sendSessionUpdate отправляет session.update в OpenAI Realtime API.
-func (m *OpenAIModel) sendSessionUpdate(rs *RealtimeSession) error {
+func (m *Model) sendSessionUpdate(rs *RealtimeSession) error {
 	// Промпт строится на лету из SystemPrompt
 	instructions := buildRealtimeSystemPrompt(rs.agentConfig)
 
@@ -598,7 +598,7 @@ func copyMapDeep(m map[string]interface{}) map[string]interface{} {
 
 // sendInitialGreeting отправляет response.create сразу после session.updated —
 // модель произносит приветственную фразу не дожидаясь голоса пользователя.
-func (m *OpenAIModel) sendInitialGreeting(rs *RealtimeSession) {
+func (m *Model) sendInitialGreeting(rs *RealtimeSession) {
 	if !rs.greetingSent.CompareAndSwap(false, true) {
 		return // уже отправлено
 	}

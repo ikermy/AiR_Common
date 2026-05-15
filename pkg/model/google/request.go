@@ -42,37 +42,14 @@ func (dm *DialogMessage) GetCreator() string {
 // google не хранит модели на своей стороне, поэтому modelId игнорируется
 // ОПТИМИЗАЦИЯ: История диалога кэшируется локально в памяти с LiveTTL для избежания постоянных обращений к БД
 // Использует RequestStreaming с буферизацией для получения финального ответа
-func (m *GoogleModel) Request(userId uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
-	var emptyResponse model.AssistResponse
-
-	if text == "" && len(files) == 0 {
-		return emptyResponse, fmt.Errorf("пустое сообщение и нет файлов")
-	}
-
-	// Вызываем RequestStreaming с буферизацией
-	var accumulatedText strings.Builder
-	err := m.RequestStreaming(userId, dialogID, text, func(delta string, done bool) error {
-		if !done {
-			accumulatedText.WriteString(delta)
-		}
-		return nil
-	}, files...)
-
-	if err != nil {
-		return emptyResponse, err
-	}
-
-	// Парсим накопленный текст как JSON
-	var response model.AssistResponse
-	if err := json.Unmarshal([]byte(accumulatedText.String()), &response); err != nil {
-		return emptyResponse, fmt.Errorf("ошибка парсинга ответа: %w", err)
-	}
-
-	return response, nil
+func (m *Model) Request(userId uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+	return model.StreamingToSync(text, files, func(onDelta func(string, bool) error, files ...model.FileUpload) error {
+		return m.RequestStreaming(userId, dialogID, text, onDelta, files...)
+	})
 }
 
 // ConvertDialogToGoogleFormat конвертирует историю из БД в формат Google Gemini
-func (m *GoogleModel) ConvertDialogToGoogleFormat(dialogID uint64) ([]GoogleContent, error) {
+func (m *Model) ConvertDialogToGoogleFormat(dialogID uint64) ([]GoogleContent, error) {
 	// Читаем историю из БД
 	dialogData, err := m.db.ReadDialog(dialogID, create.DialogHistoryLimit)
 	if err != nil {
@@ -80,89 +57,34 @@ func (m *GoogleModel) ConvertDialogToGoogleFormat(dialogID uint64) ([]GoogleCont
 	}
 
 	if len(dialogData) == 0 {
-		return []GoogleContent{}, nil // Пустая история
+		return nil, nil // Пустая история
 	}
 
-	var messages []DialogMessage
-
-	type DialogDataWrapperArray struct {
-		Data []string `json:"Data"` // Массив JSON строк
+	// Используем базовый парсер для консолидации логики парсинга
+	parsedMessages, err := model.ParseDialogHistory(dialogData)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка парсинга истории: %w", err)
 	}
 
-	type DialogDataWrapperString struct {
-		Data string `json:"Data"` // Строка JSON (с двойной экранизацией)
-	}
-
-	// Сначала пытаемся распарсить как структуру с полем Data (массив строк)
-	var wrapperArray DialogDataWrapperArray
-	if err := json.Unmarshal(dialogData, &wrapperArray); err == nil && len(wrapperArray.Data) > 0 {
-		// Успешно распарсили как структуру с полем Data (массив строк)
-		for _, jsonStr := range wrapperArray.Data {
-			var msg DialogMessage
-			if err := json.Unmarshal([]byte(jsonStr), &msg); err != nil {
-				//logger.Warn("Ошибка парсинга сообщения %d: %v (jsonStr: %.100s)", i, err, jsonStr)
-				continue
-			}
-			messages = append(messages, msg)
-		}
-	} else {
-		// Пытаемся распарсить как структуру с полем Data (строка JSON)
-		var wrapperString DialogDataWrapperString
-		if err := json.Unmarshal(dialogData, &wrapperString); err == nil && len(wrapperString.Data) > 0 {
-			// Распарсиваем строку как массив строк JSON
-			var stringArray []string
-			if err := json.Unmarshal([]byte(wrapperString.Data), &stringArray); err == nil && len(stringArray) > 0 {
-				for _, jsonStr := range stringArray {
-					var msg DialogMessage
-					if err := json.Unmarshal([]byte(jsonStr), &msg); err != nil {
-						//logger.Warn("Ошибка парсинга сообщения %d: %v (jsonStr: %.100s)", i, err, jsonStr)
-						continue
-					}
-					messages = append(messages, msg)
-				}
-			}
-		} else {
-			// Пытаемся распарсить как массив строк напрямую (каждая строка - JSON объект)
-			var stringArray []string
-			err = json.Unmarshal(dialogData, &stringArray)
-			if err == nil && len(stringArray) > 0 {
-				// Успешно распарсили как массив строк
-				for _, jsonStr := range stringArray {
-					var msg DialogMessage
-					if err := json.Unmarshal([]byte(jsonStr), &msg); err != nil {
-						//logger.Warn("Ошибка парсинга сообщения %d: %v (jsonStr: %.100s)", i, err, jsonStr)
-						continue
-					}
-					messages = append(messages, msg)
-				}
-			} else {
-				// Пытаемся распарсить как массив объектов
-				if err := json.Unmarshal(dialogData, &messages); err != nil {
-					// Если ошибка - пытаемся распарсить как один объект
-					var singleMessage DialogMessage
-					if singleErr := json.Unmarshal(dialogData, &singleMessage); singleErr != nil {
-						return nil, fmt.Errorf("ошибка парсинга истории (не структура Data, не массив строк, не массив, не объект): %w", err)
-					}
-					// Если распарсилось как один объект - оборачиваем в массив
-					messages = []DialogMessage{singleMessage}
-				}
-			}
-		}
-	}
-
+	// Конвертируем парсенные сообщения в формат Google
 	var contents []GoogleContent
-	for _, msg := range messages {
-		// Определяем роль (используем GetCreator для нормализации)
+	for _, msg := range parsedMessages {
+		// Нормализуем creator (1 = "assistant", 2 = "user")
 		role := "user"
-		creator := msg.GetCreator()
-		if creator == "assistant" || creator == "model" {
-			role = "model"
+		if creator, ok := msg.Creator.(float64); ok {
+			if creator == 1 {
+				role = "model"
+			}
+		} else if creator, ok := msg.Creator.(string); ok {
+			if creator == "assistant" || creator == "model" {
+				role = "model"
+			}
 		}
 
 		// Извлекаем текст сообщения
 		var messageText string
-		if msgInterface, ok := msg.Message["message"]; ok {
-			if msgStr, ok := msgInterface.(string); ok {
+		if msgInterface, ok := msg.Message.(map[string]interface{}); ok {
+			if msgStr, ok := msgInterface["message"].(string); ok {
 				messageText = msgStr
 			}
 		}
@@ -186,7 +108,7 @@ func (m *GoogleModel) ConvertDialogToGoogleFormat(dialogID uint64) ([]GoogleCont
 }
 
 // createUserMessage создаёт сообщение пользователя в формате Google
-func (m *GoogleModel) createUserMessage(text string, files []model.FileUpload) GoogleContent {
+func (m *Model) createUserMessage(text string, files []model.FileUpload) GoogleContent {
 	parts := []map[string]interface{}{
 		{"text": text},
 	}
@@ -224,7 +146,7 @@ func (m *GoogleModel) createUserMessage(text string, files []model.FileUpload) G
 }
 
 // createModelMessage создаёт сообщение модели в формате Google Gemini
-func (m *GoogleModel) createModelMessage(assistResponse model.AssistResponse) GoogleContent {
+func (m *Model) createModelMessage(assistResponse model.AssistResponse) GoogleContent {
 	// Извлекаем текстовое сообщение
 	messageText := assistResponse.Message
 	if messageText == "" {
@@ -243,7 +165,7 @@ func (m *GoogleModel) createModelMessage(assistResponse model.AssistResponse) Go
 
 // sendToGeminiAPI отправляет запрос к Google Gemini API
 // Автоматически обрабатывает ошибку 429 (quota exceeded) с retry логикой
-func (m *GoogleModel) sendToGeminiAPI(modelName string, payload map[string]interface{}) ([]byte, error) {
+func (m *Model) sendToGeminiAPI(modelName string, payload map[string]interface{}) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка сериализации запроса: %v", err)
@@ -320,7 +242,7 @@ func (m *GoogleModel) sendToGeminiAPI(modelName string, payload map[string]inter
 // Использует endpoint streamGenerateContent для получения ответа в режиме реального времени
 // onDelta вызывается для каждого delta-события, onComplete - для финального ответа с токенами
 // Возвращает: fullText, usageMetadata, functionCalls, error
-func (m *GoogleModel) sendToGeminiAPIStreaming(modelName string, payload map[string]interface{}, onDelta func(delta string) error, _ uint32) (string, map[string]interface{}, []map[string]interface{}, error) {
+func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]interface{}, onDelta func(delta string) error, _ uint32) (string, map[string]interface{}, []map[string]interface{}, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("ошибка сериализации запроса: %v", err)
@@ -520,7 +442,7 @@ func (m *GoogleModel) sendToGeminiAPIStreaming(modelName string, payload map[str
 
 // parseGeminiResponseWithFunctionHandling парсит ответ и обрабатывает function calls через multi-turn conversation
 // Если модель вызывает функцию без текста, отправляем результат обратно модели для продолжения
-func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byte, history []GoogleContent,
+func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, history []GoogleContent,
 	payload map[string]interface{}, modelName string, provider create.ProviderType, userId uint32) (model.AssistResponse, error) {
 
 	var emptyResponse model.AssistResponse
@@ -716,7 +638,7 @@ func (m *GoogleModel) parseGeminiResponseWithFunctionHandling(responseBody []byt
 }
 
 // handleFunctionCall обрабатывает вызов функции от модели
-func (m *GoogleModel) handleFunctionCall(functionCall map[string]interface{}, provider create.ProviderType, userId uint32) (map[string]interface{}, error) {
+func (m *Model) handleFunctionCall(functionCall map[string]interface{}, provider create.ProviderType, userId uint32) (map[string]interface{}, error) {
 	functionName, ok := functionCall["name"].(string)
 	if !ok {
 		return nil, fmt.Errorf("function call не содержит имени")
@@ -753,7 +675,7 @@ func (m *GoogleModel) handleFunctionCall(functionCall map[string]interface{}, pr
 
 // processVideoGeneration автоматически генерирует видео если модель вызвала generate_video
 // или если в промпте агента включен флаг Video и обнаружены ключевые слова
-func (m *GoogleModel) processVideoGeneration(userId uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
+func (m *Model) processVideoGeneration(userId uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
 	// Проверяем включена ли генерация видео в конфигурации
 	if !m.isVideoEnabled(agentConfig) {
 		return response, nil
@@ -856,7 +778,7 @@ func (m *GoogleModel) processVideoGeneration(userId uint32, userText string, res
 }
 
 // extractVideoPrompt извлекает промпт для генерации видео из текста
-func (m *GoogleModel) extractVideoPrompt(userText, modelResponse string) string {
+func (m *Model) extractVideoPrompt(userText, modelResponse string) string {
 	// Приоритет 1: Ищем описание в ответе модели после ключевых фраз
 	modelResponseLower := strings.ToLower(modelResponse)
 	triggers := []string{"генерирую видео:", "creating video:", "video:", "описание:"}
@@ -902,7 +824,7 @@ func (m *GoogleModel) extractVideoPrompt(userText, modelResponse string) string 
 }
 
 // isVideoEnabled проверяет включена ли генерация видео в конфигурации агента
-func (m *GoogleModel) isVideoEnabled(config *GoogleAgentConfig) bool {
+func (m *Model) isVideoEnabled(config *GoogleAgentConfig) bool {
 	if config == nil || config.SystemInstruction == nil {
 		return false
 	}
@@ -922,7 +844,7 @@ func getStringField(m map[string]interface{}, key string) string {
 
 // processImageGeneration автоматически генерирует изображение если модель включила Image
 // и обнаружены ключевые слова в запросе пользователя
-func (m *GoogleModel) processImageGeneration(userId uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
+func (m *Model) processImageGeneration(userId uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
 	// Проверяем включена ли генерация изображений в конфигурации
 	if !agentConfig.Image {
 		return response, nil
@@ -1044,7 +966,7 @@ func (m *GoogleModel) processImageGeneration(userId uint32, userText string, res
 }
 
 // extractImagePrompt извлекает промпт для генерации изображения из текста
-func (m *GoogleModel) extractImagePrompt(userText, modelResponse string) string {
+func (m *Model) extractImagePrompt(userText, modelResponse string) string {
 	// Приоритет 1: Ищем описание в ответе модели
 	modelResponseLower := strings.ToLower(modelResponse)
 	triggers := []string{"создаю изображение:", "генерирую:", "drawing:", "creating image:", "описание:"}
@@ -1127,7 +1049,7 @@ type ragResp struct {
 	cacheHit              bool
 }
 
-func (m *GoogleModel) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- ragResp) {
+func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- ragResp) {
 	defer close(ch)
 
 	result := ragResp{}
@@ -1305,42 +1227,9 @@ User query: %s`, contextText, text)
 // RequestStreaming выполняет запрос с потоковой передачей через SSE (Server-Sent Events)
 // Использует Google Gemini streamGenerateContent API для получения ответов в реальном времени
 // onDelta вызывается для каждого delta-события, в финальной дельте передаются данные о токенах
-func (m *GoogleModel) RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
+func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
 	if text == "" && len(files) == 0 {
 		return fmt.Errorf("пустое сообщение и нет файлов")
-	}
-
-	// Создаём callback для выполнения функций (аналогично OpenAI)
-	onToolCall := func(toolCalls []interface{}) ([]interface{}, error) {
-		//logger.Debug("🔧 [RequestStreaming/Google] ВЫЗВАН onToolCall! Количество tool calls: %d", len(toolCalls), userId)
-
-		var toolOutputs []interface{}
-
-		for _, toolCall := range toolCalls {
-			toolCallMap, ok := toolCall.(map[string]interface{})
-			if !ok {
-				continue
-			}
-
-			callID, _ := toolCallMap["call_id"].(string)
-
-			// Выполняем функцию через action handler
-			var result string
-			if m.actionHandler == nil {
-				result = `{"error": "action handler not initialized"}`
-			}
-
-			// Формируем tool output
-			toolOutput := map[string]interface{}{
-				"call_id": callID,
-				"content": result,
-			}
-
-			toolOutputs = append(toolOutputs, toolOutput)
-		}
-
-		//logger.Debug("🔧 [RequestStreaming/Google] ЗАВЕРШЁН! Возвращаю %d результатов", len(toolOutputs), userId)
-		return toolOutputs, nil
 	}
 
 	// ============================================================================
@@ -1349,11 +1238,6 @@ func (m *GoogleModel) RequestStreaming(userId uint32, dialogID uint64, text stri
 	// ============================================================================
 	ragCh := make(chan ragResp, 1)
 	go m.applyRAG(userId, dialogID, text, ragCh)
-
-	// Пока applyRAG работает в фоне, выполняем лёгкие операции
-	// Основная тяжёлая работа теперь выполняется параллельно в горутине
-	// Пока applyRAG работает в фоне, выполняем лёгкие операции
-	// Основная тяжёлая работа теперь выполняется параллельно в горутине
 
 	// Ждём результат RAG из горутины
 	// Он содержит: history, resp, realUserID, contextText и метрики производительности
@@ -1374,6 +1258,39 @@ func (m *GoogleModel) RequestStreaming(userId uint32, dialogID uint64, text stri
 	history := ragResult.history
 	resp := ragResult.resp
 
+	// Создаём callback для выполнения функций через MCP action handler.
+	// ВАЖНО: определяем ПОСЛЕ получения resp из applyRAG, чтобы иметь доступ к
+	// resp.Assist.Provider и userId для вызова RunAction.
+	onToolCall := func(toolCalls []interface{}) ([]interface{}, error) {
+		//logger.Debug("🔧 [RequestStreaming/Google] ВЫЗВАН onToolCall! Количество tool calls: %d", len(toolCalls), userId)
+		var toolOutputs []interface{}
+		for _, toolCall := range toolCalls {
+			toolCallMap, ok := toolCall.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			callID, _ := toolCallMap["call_id"].(string)
+			functionName, _ := toolCallMap["name"].(string)
+			arguments, _ := toolCallMap["arguments"].(string)
+
+			var result string
+			if m.actionHandler == nil {
+				result = `{"error": "action handler not initialized"}`
+			} else {
+				result = m.actionHandler.RunAction(m.ctx, functionName, arguments, resp.Assist.Provider, userId)
+			}
+
+			//logger.Debug("🔧 [Google] Выполнена функция %s → %s", functionName, result, userId)
+			toolOutputs = append(toolOutputs, map[string]interface{}{
+				"call_id": callID,
+				"name":    functionName,
+				"content": result,
+			})
+		}
+		//logger.Debug("🔧 [RequestStreaming/Google] ЗАВЕРШЁН! Возвращаю %d результатов", len(toolOutputs), userId)
+		return toolOutputs, nil
+	}
+
 	// Обновляем TTL респондента
 	resp.TTL = time.Now().Add(m.UserModelTTl)
 
@@ -1385,7 +1302,6 @@ func (m *GoogleModel) RequestStreaming(userId uint32, dialogID uint64, text stri
 		enhancedText = ragResult.contextText
 		//logger.Info("[USER:%d] RAG: добавлено контекста (%d символов)", userId, len(ragResult.contextText))
 	}
-
 
 	// Ждём результат RAG из горутины (он может прийти раньше, позже или вообще не прийти если что-то пошло по дуге)
 	ragContent := ""

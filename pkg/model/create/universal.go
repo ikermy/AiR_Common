@@ -32,9 +32,12 @@ var OpenAIExtandingCacheModels = []string{
 }
 
 const (
-	// RealtimeDefaultModel фиксированная realtime-модель OpenAI
-	RealtimeDefaultModel = "gpt-realtime-mini"
-	//RealtimeDefaultModel = "gpt-realtime"
+	// RealtimeOpenAIModel фиксированная realtime-модель OpenAI
+	RealtimeOpenAIModel = "gpt-realtime-mini"
+	//RealtimeOpenAIModel = "gpt-realtime"
+
+	RealtimeGoogleModel = "gemini-2.0-flash-lite"
+	//RealtimeGoogleModel = "gemini-2.0-flash"
 
 	// RealtimeBaseURL базовый WebSocket URL для OpenAI Realtime API
 	RealtimeBaseURL = "wss://api.openai.com/v1/realtime"
@@ -346,34 +349,6 @@ type RealtimeVAD struct {
 	Voice *string `json:"voice,omitempty"` // имя голоса для генерации речи (дефолт verse)
 }
 
-// IntOrInf хранит значение max_response_output_tokens: 0 → "inf", >0 → число.
-type IntOrInf struct {
-	Value int // 0 означает "inf"
-}
-
-func (v IntOrInf) MarshalJSON() ([]byte, error) {
-	if v.Value == 0 {
-		return []byte(`"inf"`), nil
-	}
-	return json.Marshal(v.Value)
-}
-
-func (v *IntOrInf) UnmarshalJSON(data []byte) error {
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		if s == "inf" {
-			v.Value = 0
-			return nil
-		}
-		return fmt.Errorf("IntOrInf: неизвестная строка %q", s)
-	}
-	var n int
-	if err := json.Unmarshal(data, &n); err != nil {
-		return fmt.Errorf("IntOrInf: ожидалось число или \"inf\": %w", err)
-	}
-	v.Value = n
-	return nil
-}
 
 // EsperoConfig представляет настройки ожидания из ModelDataRequest
 type EsperoConfig struct {
@@ -902,162 +877,32 @@ func (m *UniversalModel) SetActiveModelByProvider(userId uint32, provider Provid
 	return nil
 }
 
-// DecompressModelData - распаковывает данные модели из БД и преобразует в UniversalModelData
-// Данные в БД хранятся в формате ModelDataRequest (name, prompt, mact, trig, и т.д.)
+// DecompressModelData распаковывает и десериализует данные модели из БД.
+// UniversalModelData имеет те же JSON-теги что и формат хранения, поэтому
+// используется прямой json.Unmarshal вместо ручного поля-за-полем парсинга.
+//
+// После десериализации:
+//   - vecIds (FileIds и VectorId) переносятся из отдельного поля БД
+//   - RealtimeVAD получает дефолтные значения для nil-полей
 func (m *UniversalModel) DecompressModelData(compressedData []byte, vecIds *VecIds) (*UniversalModelData, error) {
-	// Распаковываем gzip
 	reader, err := gzip.NewReader(bytes.NewReader(compressedData))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка распаковки данных модели: %w", err)
 	}
-	defer func() {
-		if e := reader.Close(); e != nil {
-			//logger.Warn("error closing gzip reader: %v", e)
-		}
-	}()
+	defer func() { _ = reader.Close() }()
 
 	decompressed, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения распакованных данных: %w", err)
 	}
 
-	// Парсим формат ModelDataRequest в map
-	var rawData map[string]interface{}
-	if err := json.Unmarshal(decompressed, &rawData); err != nil {
+	modelData := &UniversalModelData{}
+	if err := json.Unmarshal(decompressed, modelData); err != nil {
 		return nil, fmt.Errorf("ошибка десериализации данных модели: %w", err)
 	}
 
-	// Создаём UniversalModelData из формата ModelDataRequest
-	modelData := &UniversalModelData{}
-
-	// Извлекаем поля из ModelDataRequest
-	if name, ok := rawData["name"].(string); ok {
-		modelData.Name = name
-	}
-	if prompt, ok := rawData["prompt"].(string); ok {
-		modelData.Prompt = prompt
-	}
-	if mact, ok := rawData["mact"].(string); ok {
-		modelData.MetaAction = mact
-	}
-	if operator, ok := rawData["operator"].(bool); ok {
-		modelData.Operator = operator
-	}
-	if search, ok := rawData["search"].(bool); ok {
-		modelData.Search = search
-	}
-	if interpreter, ok := rawData["interpreter"].(bool); ok {
-		modelData.Interpreter = interpreter
-	}
-	if image, ok := rawData["image"].(bool); ok {
-		modelData.Image = image
-	}
-	if webSearch, ok := rawData["web_search"].(bool); ok {
-		modelData.WebSearch = webSearch
-	}
-	if realtime, ok := rawData["realtime"].(bool); ok {
-		modelData.Realtime = realtime
-	}
-	if vadMap, ok := rawData["realtime_vad"].(map[string]interface{}); ok {
-		vad := &RealtimeVAD{}
-		if v, ok := vadMap["threshold"].(float64); ok {
-			vad.Threshold = &v
-		}
-		if v, ok := vadMap["prefix_padding_ms"].(float64); ok {
-			iv := int(v)
-			vad.PrefixPaddingMs = &iv
-		}
-		if v, ok := vadMap["silence_duration_ms"].(float64); ok {
-			iv := int(v)
-			vad.SilenceDurationMs = &iv
-		}
-		if v, ok := vadMap["interrupt_response"].(bool); ok {
-			vad.InterruptResponse = &v
-		}
-		if v, ok := vadMap["temperature"].(float64); ok {
-			vad.Temperature = &v
-		}
-		if v, ok := vadMap["max_response_output_tokens"]; ok {
-			ioi := &IntOrInf{}
-			if raw, err := json.Marshal(v); err == nil {
-				_ = json.Unmarshal(raw, ioi)
-			}
-			vad.MaxResponseOutputTokens = ioi
-		}
-		if v, ok := vadMap["input_audio_transcription"].(bool); ok {
-			vad.InputAudioTranscription = &v
-		}
-		if v, ok := vadMap["initial_greeting"].(bool); ok {
-			vad.InitialGreeting = &v
-		}
-		if v, ok := vadMap["greeting"].(string); ok {
-			vad.Greeting = &v
-		}
-		if v, ok := vadMap["voice"].(string); ok {
-			vad.Voice = &v
-		}
-		modelData.RealtimeVAD = vad
-	}
-	if s3, ok := rawData["s3"].(bool); ok {
-		modelData.S3 = s3
-	}
-	if ha, ok := rawData["haunter"].(bool); ok {
-		modelData.Haunter = ha
-	}
-	if prov, ok := rawData["provider"].(float64); ok {
-		modelData.Provider = ProviderType(prov)
-	}
-	// g_oauth — флаги доступа к Google OAuth (Calendar, Sheets).
-	// Используется MCP-сервером при формировании tools/list.
-	// Провайдеры (OpenAI/Mistral/Google) эти флаги не используют напрямую.
-	if goauthMap, ok := rawData["g_oauth"].(map[string]interface{}); ok {
-		if calendar, ok := goauthMap["calendar"].(bool); ok {
-			modelData.GOAuth.Calendar = calendar
-		}
-		if sheets, ok := goauthMap["sheets"].(bool); ok {
-			modelData.GOAuth.Sheets = sheets
-		}
-	}
-	if esperoMap, ok := rawData["espero"].(map[string]interface{}); ok {
-		espero := EsperoConfig{}
-		if limit, ok := esperoMap["limit"].(float64); ok {
-			espero.Limit = uint16(limit)
-		}
-		if wait, ok := esperoMap["wait"].(float64); ok {
-			espero.Wait = uint8(wait)
-		}
-		if ignore, ok := esperoMap["ignore"].(bool); ok {
-			espero.Ignore = ignore
-		}
-		modelData.Espero = espero
-	}
-	if trig, ok := rawData["trig"].([]interface{}); ok {
-		triggers := make([]string, 0, len(trig))
-		for _, t := range trig {
-			if str, ok := t.(string); ok {
-				triggers = append(triggers, str)
-			}
-		}
-		modelData.Triggers = triggers
-	}
-
-	// Извлекаем gpttype (модель провайдера)
-	if gptTypeMap, ok := rawData["gpttype"].(map[string]interface{}); ok {
-		gptType := &GptType{}
-		if name, ok := gptTypeMap["name"].(string); ok {
-			gptType.Name = name
-		}
-		if id, ok := gptTypeMap["id"].(float64); ok {
-			gptType.ID = uint8(id)
-		}
-		modelData.GptType = gptType
-	}
-
-	// AssistantId НЕ хранится в Data - он приходит из user_gpt.AssistantId
-	// Будет установлен позже из БД
-
-	// Добавляем fileIds и vectorIds ТОЛЬКО из БД (поле Ids в user_gpt)
-	// Они НЕ хранятся в Data, только в отдельном поле Ids
+	// FileIds и VectorId хранятся в отдельном поле БД (Ids в user_gpt),
+	// а не внутри сжатых данных модели — применяем их поверх.
 	if vecIds != nil {
 		if len(vecIds.FileIds) > 0 {
 			modelData.FileIds = vecIds.FileIds
@@ -1067,14 +912,11 @@ func (m *UniversalModel) DecompressModelData(compressedData []byte, vecIds *VecI
 		}
 	}
 
-	// Применяем дефолтные значения для RealtimeVAD
+	// Применяем дефолтные значения для nil-полей RealtimeVAD
 	if modelData.RealtimeVAD != nil {
 		modelData.RealtimeVAD = applyRealtimeVADDefaults(modelData.RealtimeVAD)
 	}
 
-	// Не перезаписываем S3 из лимита хранилища!
-	// S3 уже корректно прочитан из сохраненных данных модели
-	// Старая логика ошибочно всегда устанавливала S3=true если у пользователя есть лимит
 
 	return modelData, nil
 }
@@ -1129,6 +971,7 @@ func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
 // GetRealUserID получает реальный userId через HTTP запрос к landing серверу
 // Универсальный метод для всех провайдеров (OpenAI, Mistral)
 func (m *UniversalModel) GetRealUserID(userId uint32) (uint64, error) {
+	// Строим URL для запроса к landing серверу
 	var url string
 	if mode.ProductionMode {
 		url = fmt.Sprintf("http://localhost:%s/uid?uid=%d", m.landingPort, userId)
@@ -1136,7 +979,7 @@ func (m *UniversalModel) GetRealUserID(userId uint32) (uint64, error) {
 		url = fmt.Sprintf("https://localhost:%s/uid?uid=%d", m.landingPort, userId)
 	}
 
-	// Создаем HTTP клиент с отключенной проверкой SSL для localhost
+	// Создаём HTTP клиент с отключённой проверкой SSL для localhost
 	tr := &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
@@ -1155,6 +998,7 @@ func (m *UniversalModel) GetRealUserID(userId uint32) (uint64, error) {
 		}
 	}()
 
+	// Обрабатываем HTTP ответ
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("неожиданный статус ответа GetRealUserID: %d", resp.StatusCode)
 	}
@@ -1164,13 +1008,13 @@ func (m *UniversalModel) GetRealUserID(userId uint32) (uint64, error) {
 		return 0, fmt.Errorf("ошибка чтения ответа GetRealUserID: %v", err)
 	}
 
-	// Пробуем распарсить как число напрямую
-	var userID uint64
-	if err := json.Unmarshal(body, &userID); err != nil {
+	// Парсим JSON ответ как число
+	var value uint64
+	if err := json.Unmarshal(body, &value); err != nil {
 		return 0, fmt.Errorf("ошибка парсинга JSON ответа GetRealUserID: %v", err)
 	}
 
-	return userID, nil
+	return value, nil
 }
 
 // ParseModelSchemaJSON парсит статическую JSON Schema в map[string]interface{}

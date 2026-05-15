@@ -19,7 +19,7 @@ import (
 // для избежания дублирования кода с OpenAIAgentClient.GenerateEmbedding()
 //
 // Используется внутри UploadDocumentWithEmbedding, SearchSimilarDocuments и других публичных методов OpenAIModel
-func (m *OpenAIModel) GenerateEmbedding(text string) ([]float32, error) {
+func (m *Model) GenerateEmbedding(text string) ([]float32, error) {
 	return create.GenerateOpenAIEmbedding(m.ctx, m.client.GetAPIKey(), text)
 }
 
@@ -27,18 +27,18 @@ func (m *OpenAIModel) GenerateEmbedding(text string) ([]float32, error) {
 // VECTOR STORAGE - Работа с эмбеддингами в MariaDB
 // ============================================================================
 
-func (m *OpenAIModel) deleteDocument(modelId uint64, docID string) error {
+func (m *Model) deleteDocument(modelId uint64, docID string) error {
 	return m.db.DeleteEmbedding(modelId, docID)
 }
 
-func (m *OpenAIModel) listModelDocuments(modelId uint64) ([]create.VectorDocument, error) {
+func (m *Model) listModelDocuments(modelId uint64) ([]create.VectorDocument, error) {
 	return m.db.ListModelEmbeddings(modelId, create.ProviderOpenAI)
 }
 
-func (m *OpenAIModel) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]create.VectorDocument, error) {
+func (m *Model) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]create.VectorDocument, error) {
 	return m.db.SearchSimilarEmbeddings(modelId, create.ProviderOpenAI, queryEmbedding, limit)
 }
 
-func (m *OpenAIModel) saveEmbedding(userId uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
+func (m *Model) saveEmbedding(userId uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
 	return m.db.SaveEmbedding(userId, modelId, create.ProviderOpenAI, docID, docName, content, embedding, metadata)
 }

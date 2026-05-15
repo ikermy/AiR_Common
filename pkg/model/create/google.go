@@ -241,7 +241,6 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 		}
 	}
 
-
 	// Build payload for agent creation
 	// Google Gemini API uses system_instruction for prompt
 	payload := map[string]interface{}{
@@ -390,7 +389,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	}, nil
 }
 
-// deleteGoogleAgent удаляет Google Gemini агента по ID
+// DeleteGoogleAgent deleteGoogleAgent удаляет Google Gemini агента по ID
 // Примечание: Google Gemini использует модели напрямую, без создания отдельных агентов
 // Поэтому "удаление" агента - это просто удаление записи из БД
 func (m *GoogleAgentClient) DeleteGoogleAgent(agentID string) error {

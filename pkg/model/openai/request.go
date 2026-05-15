@@ -19,7 +19,7 @@ import (
 // Результат отправляется в канал ch. Канал закрывается в конце горутины.
 // При критической ошибке (не найден respModel) — поле err заполнено.
 // При некритических ошибках (эмбеддинг/поиск) — продолжаем без RAG.
-func (m *OpenAIModel) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- openaiRagResp) {
+func (m *Model) applyRAG(userId uint32, dialogID uint64, text string, ch chan<- openaiRagResp) {
 	defer close(ch)
 
 	//totalStart := time.Now()
@@ -193,39 +193,15 @@ func (m *OpenAIModel) applyRAG(userId uint32, dialogID uint64, text string, ch c
 }
 
 // Request выполняет синхронный запрос к модели (с буферизацией streaming ответов)
-func (m *OpenAIModel) Request(userId uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
-	var emptyResponse model.AssistResponse
-
-	if text == "" && len(files) == 0 {
-		return emptyResponse, fmt.Errorf("пустое сообщение и нет файлов")
-	}
-
-	// Вызываем RequestStreaming с буферизацией
-	var accumulatedText strings.Builder
-	err := m.RequestStreaming(userId, dialogID, text, func(delta string, done bool) error {
-		if !done {
-			accumulatedText.WriteString(delta)
-		}
-		return nil
-	}, files...)
-
-	if err != nil {
-		return emptyResponse, err
-	}
-
-	// Парсим накопленный текст как JSON
-	var response model.AssistResponse
-	if err := json.Unmarshal([]byte(accumulatedText.String()), &response); err != nil {
-		//logger.Error("Ошибка парсинга JSON ответа: %v. Ответ: %s", err, accumulatedText.String(), userId)
-		return emptyResponse, fmt.Errorf("ошибка парсинга ответа: %w", err)
-	}
-
-	return response, nil
+func (m *Model) Request(userId uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+	return model.StreamingToSync(text, files, func(onDelta func(string, bool) error, files ...model.FileUpload) error {
+		return m.RequestStreaming(userId, dialogID, text, onDelta, files...)
+	})
 }
 
 // RequestStreaming выполняет запрос с потоковой передачей delta-событий
 // Использует Responses API (новый подход OpenAI с поддержкой file_search, code_interpreter, web_search)
-func (m *OpenAIModel) RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
+func (m *Model) RequestStreaming(userId uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
 	if text == "" && len(files) == 0 {
 		return fmt.Errorf("пустое сообщение и нет файлов")
 	}
@@ -450,7 +426,7 @@ func (m *OpenAIModel) RequestStreaming(userId uint32, dialogID uint64, text stri
 
 // createUserMessageWithFiles создает сообщение пользователя с поддержкой файлов
 // Для Chat Completions API: изображения через image_url, документы через file_search в tools
-func (m *OpenAIModel) createUserMessageWithFiles(text string, files []model.FileUpload, _ uint32) ChatMessage {
+func (m *Model) createUserMessageWithFiles(text string, files []model.FileUpload, _ uint32) ChatMessage {
 	// Если нет файлов - простое текстовое сообщение
 	if len(files) == 0 {
 		return ChatMessage{
@@ -501,26 +477,7 @@ func (m *OpenAIModel) createUserMessageWithFiles(text string, files []model.File
 // ConvertDialogToOpenAIFormat конвертирует историю диалога из БД в формат OpenAI Chat
 // Используется при обработке запросов для загрузки истории диалога
 // По образцу Google провайдера с поддержкой всех форматов данных
-func (m *OpenAIModel) ConvertDialogToOpenAIFormat(dialogID uint64) ([]ChatMessage, error) {
-	// Временная структура для парсинга ответа БД
-	type DialogMsg struct {
-		Creator   interface{} `json:"creator"`
-		Message   interface{} `json:"message"`
-		Timestamp string      `json:"timestamp"`
-	}
-
-	type DialogDataTemp struct {
-		Dialog []DialogMsg `json:"dialog"`
-	}
-
-	type DialogDataWrapperArray struct {
-		Data []string `json:"Data"` // Массив JSON строк
-	}
-
-	type DialogDataWrapperString struct {
-		Data string `json:"Data"` // Строка JSON (с двойной экранизацией)
-	}
-
+func (m *Model) ConvertDialogToOpenAIFormat(dialogID uint64) ([]ChatMessage, error) {
 	// Читаем сырые данные из БД с лимитом истории
 	rawData, err := m.db.ReadDialog(dialogID, create.DialogHistoryLimit)
 	if err != nil {
@@ -528,71 +485,19 @@ func (m *OpenAIModel) ConvertDialogToOpenAIFormat(dialogID uint64) ([]ChatMessag
 	}
 
 	if len(rawData) == 0 {
-		return []ChatMessage{}, nil // Пустая история
+		return nil, nil // Пустая история
 	}
 
-	var dialogMsgs []DialogMsg
-
-	// Попытка 1: Парсим как структуру с полем "Data" (массив строк)
-	var wrapperArray DialogDataWrapperArray
-	if err := json.Unmarshal(rawData, &wrapperArray); err == nil && len(wrapperArray.Data) > 0 {
-		// Успешно распарсили как структуру с полем Data (массив строк)
-		for _, jsonStr := range wrapperArray.Data {
-			var msg DialogMsg
-			if err := json.Unmarshal([]byte(jsonStr), &msg); err != nil {
-				//logger.Warn("Ошибка парсинга сообщения %d: %v (jsonStr: %.100s)", i, err, jsonStr)
-				continue
-			}
-			dialogMsgs = append(dialogMsgs, msg)
-		}
-	} else {
-		// Попытка 2: Парсим как структуру с полем "Data" (строка JSON с вложенным массивом)
-		var wrapperString DialogDataWrapperString
-		if err := json.Unmarshal(rawData, &wrapperString); err == nil && len(wrapperString.Data) > 0 {
-			// Распарсиваем строку как массив строк JSON
-			var stringArray []string
-			if err := json.Unmarshal([]byte(wrapperString.Data), &stringArray); err == nil && len(stringArray) > 0 {
-				for _, jsonStr := range stringArray {
-					var msg DialogMsg
-					if err := json.Unmarshal([]byte(jsonStr), &msg); err != nil {
-						//logger.Warn("Ошибка парсинга сообщения %d: %v (jsonStr: %.100s)", i, err, jsonStr)
-						continue
-					}
-					dialogMsgs = append(dialogMsgs, msg)
-				}
-			}
-		} else {
-			// Попытка 3: Парсим как структуру с полем "dialog"
-			var dialogData DialogDataTemp
-			if err := json.Unmarshal(rawData, &dialogData); err == nil && len(dialogData.Dialog) > 0 {
-				dialogMsgs = dialogData.Dialog
-			} else {
-				// Попытка 4: Парсим как массив строк напрямую
-				var stringArray []string
-				if err := json.Unmarshal(rawData, &stringArray); err == nil && len(stringArray) > 0 {
-					for _, jsonStr := range stringArray {
-						var msg DialogMsg
-						if err := json.Unmarshal([]byte(jsonStr), &msg); err != nil {
-							//logger.Warn("Ошибка парсинга сообщения %d: %v (jsonStr: %.100s)", i, err, jsonStr)
-							continue
-						}
-						dialogMsgs = append(dialogMsgs, msg)
-					}
-				} else {
-					// Попытка 5: Парсим как прямой массив объектов
-					if err := json.Unmarshal(rawData, &dialogMsgs); err != nil {
-						//logger.Warn("Не удалось распарсить историю диалога %d ни в одном известном формате, rawData length: %d", dialogID, len(rawData))
-						return []ChatMessage{}, nil // Возвращаем пустую историю вместо ошибки
-					}
-				}
-			}
-		}
+	// Используем базовый парсер для консолидации логики парсинга
+	parsedMessages, err := model.ParseDialogHistory(rawData)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка парсинга истории: %w", err)
 	}
 
 	var messages []ChatMessage
 
-	// Парсим историю диалога
-	for _, msg := range dialogMsgs {
+	// Конвертируем парсенные сообщения в формат OpenAI
+	for _, msg := range parsedMessages {
 		var role string
 		// creator: 1 = AI, 2 = User
 		if creator, ok := msg.Creator.(float64); ok {

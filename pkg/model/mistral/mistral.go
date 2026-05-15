@@ -486,6 +486,43 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 // STREAMING METHODS - Методы для работы в режиме Server-Sent Events (SSE)
 // ============================================================================
 
+// PatchAgent обновляет конфигурацию Mistral Agent через PATCH /v1/agents/{agent_id}.
+// Используется для синхронизации инструментов (tools) с текущим набором MCP-функций.
+func (m *MistralAgentClient) PatchAgent(agentID string, tools []map[string]interface{}) error {
+	baseURL := strings.Replace(m.url, "/completions", "", 1)
+	patchURL := fmt.Sprintf("%s/%s", baseURL, agentID)
+
+	payload := map[string]interface{}{
+		"tools": tools,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("ошибка сериализации PATCH запроса: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodPatch, patchURL, bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("ошибка создания PATCH запроса: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("ошибка HTTP запроса PATCH agent: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyText, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("PATCH agent вернул статус %d: %s", resp.StatusCode, string(bodyText))
+	}
+
+	return nil
+}
+
 // StartConversationStreaming начинает новый диалог с агентом в streaming режиме
 // onDelta вызывается для каждого delta события с текстом или JSON событиями function calls
 // Возвращает ConversationResponse с накопленными данными и usage токенов
@@ -493,9 +530,10 @@ func (m *MistralAgentClient) StartConversationStreaming(agentID string, inputs i
 	conversationsURL := "https://api.mistral.ai/v1/conversations"
 
 	payload := map[string]interface{}{
-		"agent_id": agentID,
-		"inputs":   inputs,
-		"stream":   true, // Включаем streaming
+		"agent_id":          agentID,
+		"inputs":            inputs,
+		"stream":            true,
+		"handoff_execution": "client", // Клиент выполняет function tools — Mistral возвращает function.call события
 	}
 
 	body, err := json.Marshal(payload)
@@ -532,9 +570,10 @@ func (m *MistralAgentClient) ContinueConversationStreaming(conversationID string
 	conversationsURL := fmt.Sprintf("https://api.mistral.ai/v1/conversations/%s", conversationID)
 
 	payload := map[string]interface{}{
-		"inputs": inputs,
-		"stream": true,
-		"store":  true,
+		"inputs":            inputs,
+		"stream":            true,
+		"store":             true,
+		"handoff_execution": "client", // Клиент выполняет function tools — Mistral возвращает function.call события
 	}
 
 	body, err := json.Marshal(payload)
@@ -571,10 +610,10 @@ func (m *MistralAgentClient) SendMultipleFunctionResultsStreaming(conversationID
 	conversationsURL := fmt.Sprintf("https://api.mistral.ai/v1/conversations/%s", conversationID)
 
 	payload := map[string]interface{}{
-		"inputs":            functionResults,
-		"stream":            true,
-		"store":             true,
-		"handoff_execution": "server",
+		"inputs": functionResults,
+		"stream": true,
+		"store":  true,
+		// handoff_execution не указываем: мы уже выполнили функции на клиенте и возвращаем результаты
 	}
 
 	body, err := json.Marshal(payload)
@@ -785,34 +824,11 @@ func (m *MistralAgentClient) readStreamingResponse(body io.Reader, onDelta func(
 
 	// Формируем финальный результат
 	result.Outputs = outputs
-	result.Usage = usageData // Сохраняем информацию о токенах
+	result.Usage = usageData // Сохраняем информацию о токенах (отправку делает RequestStreaming один раз)
 	if conversationID != "" {
 		result.ConversationID = conversationID
 	}
 
-	// Отправляем информацию о токенах клиенту в виде JSON события
-	if usageData != nil && onDelta != nil {
-		tokenUsage := map[string]interface{}{
-			"type": "token_usage",
-			"usage": map[string]interface{}{
-				"prompt_tokens":     usageData.PromptTokens,
-				"completion_tokens": usageData.CompletionTokens,
-				"total_tokens":      usageData.TotalTokens,
-			},
-		}
-
-		if usageJSON, err := json.Marshal(tokenUsage); err == nil {
-			if streamErr := onDelta(string(usageJSON)); streamErr != nil {
-				//logger.Warn("readStreamingResponse: ошибка при отправке token_usage: %v", streamErr)
-			}
-		}
-	}
-
-	// Логируем информацию о токенах
-	//if usageData != nil {
-	//	logger.Info("[MISTRAL TOKEN USAGE] Input: %d | Output: %d | Total: %d",
-	//		usageData.PromptTokens, usageData.CompletionTokens, usageData.TotalTokens)
-	//}
 
 	return result, nil
 }

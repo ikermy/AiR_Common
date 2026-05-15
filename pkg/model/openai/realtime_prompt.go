@@ -37,7 +37,7 @@ You are operating in real-time voice mode.
 //  1. universalRealtimeSystemPrompt (голосовой стиль)
 //  2. Если есть function-tools — универсальные инструкции по их использованию голосом
 //  3. Промпт агента из config.SystemPrompt (уже содержит все специфичные инструкции от MCP)
-func buildRealtimeSystemPrompt(config *OpenAIAgentConfig) string {
+func buildRealtimeSystemPrompt(config *AgentConfig) string {
 	var b strings.Builder
 
 	// Шаг 1: голосовой стиль

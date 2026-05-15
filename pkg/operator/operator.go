@@ -145,7 +145,7 @@ func (o *Operator) getOrCreateSession(userID uint32, dialogID uint64) (*session,
 
 // GetConnectionErrors возвращает канал для получения ошибок подключения
 // Если сессия ещё не создана, возвращает пустой канал (не создаёт сессию)
-func (o *Operator) GetConnectionErrors(ctx context.Context, userID uint32, dialogID uint64) <-chan string {
+func (o *Operator) GetConnectionErrors(_ context.Context, userID uint32, dialogID uint64) <-chan string {
 	key := opKey{userID: userID, dialogID: dialogID}
 
 	// Проверяем, существует ли уже сессия (БЕЗ создания новой)

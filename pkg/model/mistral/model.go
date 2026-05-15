@@ -20,8 +20,8 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
-// MistralModel реализует интерфейс model.UniversalModel для работы с Mistral AI
-type MistralModel struct {
+// Model реализует интерфейс model.UniversalModel для работы с Mistral AI
+type Model struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	client         *MistralAgentClient
@@ -50,6 +50,7 @@ type RespModel struct {
 	RealUserId     uint64 // Кэшированный реальный user_id
 	ConversationId string // ID conversation для Mistral Conversations API
 	Haunter        bool   // Модель используется для поиска лидов
+	ToolsSynced    bool   // true — агент уже синхронизирован с MCP tools в этой сессии
 	//LibraryId string // ID библиотеки Mistral для document_library (кэш из БД)
 }
 
@@ -82,10 +83,10 @@ type Services struct {
 }
 
 // New создает новую модель Mistral
-func New(parent context.Context, conf *conf.Conf, actionHandler model.ActionHandler, db DB, router model.RouterInterface) *MistralModel {
+func New(parent context.Context, conf *conf.Conf, actionHandler model.ActionHandler, db DB, router model.RouterInterface) *Model {
 	ctx, cancel := context.WithCancel(parent)
 
-	return &MistralModel{
+	return &Model{
 		ctx:           ctx,
 		cancel:        cancel,
 		client:        NewMistralAgentClient(parent, conf),
@@ -101,7 +102,7 @@ func New(parent context.Context, conf *conf.Conf, actionHandler model.ActionHand
 // NewAsRouterOption создаёт Mistral модель и возвращает её как опцию для ModelRouter
 // Использование: router := model.NewModelRouter(ctx, conf, db, mistral.NewAsRouterOption())
 func NewAsRouterOption() model.RouterOption {
-	return func(r *model.ModelRouter, ctx context.Context, cfg *conf.Conf, db model.DB) error {
+	return func(r *model.Router, ctx context.Context, cfg *conf.Conf, db model.DB) error {
 		// Создаём универсальный обработчик функций с Google OAuth конфигом
 		actionHandler := model.NewUniversalActionHandler(ctx, db, cfg)
 
@@ -144,7 +145,7 @@ func NewAsRouterOption() model.RouterOption {
 }
 
 // NewMessage создает новое сообщение (реализация model.UniversalModel)
-func (m *MistralModel) NewMessage(operator model.Operator, msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message {
+func (m *Model) NewMessage(operator model.Operator, msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message {
 	var nameStr string
 	if name != nil {
 		nameStr = *name
@@ -161,7 +162,7 @@ func (m *MistralModel) NewMessage(operator model.Operator, msgType string, conte
 }
 
 // GetFileAsReader загружает файл по URL (реализация model.UniversalModel)
-func (m *MistralModel) GetFileAsReader(_ uint32, url string) (io.Reader, error) {
+func (m *Model) GetFileAsReader(url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
 	}
@@ -185,7 +186,7 @@ func (m *MistralModel) GetFileAsReader(_ uint32, url string) (io.Reader, error) 
 }
 
 // GetOrSetRespGPT получает или создает RespModel (реализация model.UniversalModel)
-func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64, respName string) (*model.RespModel, error) {
+func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64, respName string) (*model.RespModel, error) {
 	// Используем respId как ключ
 	if val, ok := m.responders.Load(respId); ok {
 		respModel := val.(*RespModel)
@@ -289,7 +290,7 @@ func (m *MistralModel) GetOrSetRespGPT(assist model.Assistant, dialogID, respId 
 }
 
 // GetCh получает канал для респондента (реализация model.UniversalModel)
-func (m *MistralModel) GetCh(respId uint64) (*model.Ch, error) {
+func (m *Model) GetCh(respId uint64) (*model.Ch, error) {
 	return model.GetChannel(
 		respId,
 		m.ctx,
@@ -297,31 +298,18 @@ func (m *MistralModel) GetCh(respId uint64) (*model.Ch, error) {
 		&m.responders,
 		func(val interface{}) (*model.Ch, error) {
 			respModel := val.(*RespModel)
-			return model.ExtractChannelSimple(respModel)
-		},
-	)
-}
-
-func (m *MistralModel) getTryCh(respId uint64) (*model.Ch, error) {
-	return model.GetChannel(
-		respId,
-		m.ctx,
-		&m.waitChannels,
-		&m.responders,
-		func(val interface{}) (*model.Ch, error) {
-			respModel := val.(*RespModel)
-			return model.ExtractChannelSimple(respModel)
+			return model.ExtractChannelWithPriority(respModel)
 		},
 	)
 }
 
 // GetRespIdBydialogID получает ID респондента по ID диалога (реализация model.UniversalModel)
-func (m *MistralModel) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
+func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
 	return model.GetRespIdBydialogIDUniversal(dialogID, &m.responders)
 }
 
 // SaveAllContextDuringExit сохраняет контекст при выходе (реализация model.UniversalModel)
-func (m *MistralModel) SaveAllContextDuringExit() {
+func (m *Model) SaveAllContextDuringExit() {
 	m.responders.Range(func(key, value interface{}) bool {
 		respModel := value.(*RespModel)
 
@@ -364,7 +352,7 @@ func (m *MistralModel) SaveAllContextDuringExit() {
 }
 
 // CleanDialogData очищает данные конкретного диалога (реализация model.UniversalModel)
-func (m *MistralModel) CleanDialogData(dialogID uint64) {
+func (m *Model) CleanDialogData(dialogID uint64) {
 	// Ищем responder по dialogID в Chan
 	m.responders.Range(func(key, value interface{}) bool {
 		respModel := value.(*RespModel)
@@ -379,7 +367,7 @@ func (m *MistralModel) CleanDialogData(dialogID uint64) {
 }
 
 // saveConversationId сохраняет conversation_id в БД (или удаляет если пустой)
-func (m *MistralModel) saveConversationId(dialogID uint64, conversationId string) {
+func (m *Model) saveConversationId(dialogID uint64, conversationId string) {
 	if conversationId == "" {
 		// Удаляем conversation_id из БД (сброс)
 		contextObj := map[string]interface{}{
@@ -416,12 +404,12 @@ func (m *MistralModel) saveConversationId(dialogID uint64, conversationId string
 }
 
 // TranscribeAudio обёртка
-func (m *MistralModel) TranscribeAudio(_ uint32, audioData []byte, fileName string) (string, error) {
+func (m *Model) TranscribeAudio(audioData []byte, fileName string) (string, error) {
 	return m.transcribeAudioFile(audioData, fileName)
 }
 
 // TranscribeAudio транскрибирует аудио файл используя Mistral Audio Transcription API
-func (m *MistralModel) transcribeAudioFile(audioData []byte, fileName string) (string, error) {
+func (m *Model) transcribeAudioFile(audioData []byte, fileName string) (string, error) {
 	if len(audioData) == 0 {
 		return "", fmt.Errorf("пустые аудиоданные")
 	}
@@ -507,7 +495,7 @@ func (m *MistralModel) transcribeAudioFile(audioData []byte, fileName string) (s
 
 // DeleteTempFile удаляет загруженный файл из Mistral Files API
 // Используется для очистки временных файлов после обработки
-func (m *MistralModel) DeleteTempFile(fileID string) error {
+func (m *Model) DeleteTempFile(fileID string) error {
 	if m.client == nil {
 		return fmt.Errorf("mistral client не инициализирован")
 	}
@@ -527,7 +515,7 @@ func (m *MistralModel) DeleteTempFile(fileID string) error {
 }
 
 // CleanUp запускает фоновую очистку устаревших респондеров (реализация model.UniversalModel)
-func (m *MistralModel) CleanUp() {
+func (m *Model) CleanUp() {
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
 
@@ -566,7 +554,7 @@ func (m *MistralModel) CleanUp() {
 }
 
 // Shutdown корректно завершает работу модели (реализация model.UniversalModel)
-func (m *MistralModel) Shutdown(shutCh chan<- com.LogMsg) {
+func (m *Model) Shutdown(shutCh chan<- com.LogMsg) {
 	m.shutdownOnce.Do(func() {
 		shutCh <- com.LogMsg{
 			Msg: "начало shutdown",
@@ -595,7 +583,7 @@ func (m *MistralModel) Shutdown(shutCh chan<- com.LogMsg) {
 	})
 }
 
-func (m *MistralModel) convertToModelRespModel(internal *RespModel) *model.RespModel {
+func (m *Model) convertToModelRespModel(internal *RespModel) *model.RespModel {
 	// Создаем map с одним каналом для совместимости
 	chanMap := make(map[uint64]*model.Ch)
 	if internal.Chan != nil {
@@ -617,11 +605,11 @@ func (m *MistralModel) convertToModelRespModel(internal *RespModel) *model.RespM
 	}
 }
 
-func (m *MistralModel) closeResponderChannels(respModel *RespModel) {
+func (m *Model) closeResponderChannels(respModel *RespModel) {
 	model.CloseResponderChannelsUniversal(respModel)
 }
 
-func (m *MistralModel) cleanupAllResponders() {
+func (m *Model) cleanupAllResponders() {
 	model.CleanupAllRespondersUniversal(
 		&m.responders,
 		func(val interface{}) {
@@ -637,7 +625,7 @@ func (m *MistralModel) cleanupAllResponders() {
 	)
 }
 
-func (m *MistralModel) cleanupWaitChannels() {
+func (m *Model) cleanupWaitChannels() {
 	deletedCount := model.CleanupWaitChannelsUniversal(&m.waitChannels, &m.responders)
 	if deletedCount > 0 {
 		//logger.Debug("Очищено %d wait channels", deletedCount)
@@ -645,13 +633,13 @@ func (m *MistralModel) cleanupWaitChannels() {
 }
 
 // SetUniversalModel устанавливает UniversalModel для доступа к DecompressModelData
-func (m *MistralModel) SetUniversalModel(um *create.UniversalModel) {
+func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
 }
 
 // GetRealUserID получает реальный userId через ModelRouter
 // Использует единый метод для всех провайдеров (OpenAI, Mistral)
-func (m *MistralModel) GetRealUserID(userId uint32) (uint64, error) {
+func (m *Model) GetRealUserID(userId uint32) (uint64, error) {
 	if m.router == nil {
 		return 0, fmt.Errorf("router не инициализирован")
 	}
@@ -659,7 +647,7 @@ func (m *MistralModel) GetRealUserID(userId uint32) (uint64, error) {
 }
 
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
-func (m *MistralModel) InvalidateUserAgentConfigCache(userId uint32) {
+func (m *Model) InvalidateUserAgentConfigCache(userId uint32) {
 	var invalidatedCount int
 	m.responders.Range(func(key, value interface{}) bool {
 		respModel := value.(*RespModel)

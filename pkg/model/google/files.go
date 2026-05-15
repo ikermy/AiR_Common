@@ -10,13 +10,13 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
-// ============================================================================
+// DeleteTempFile ============================================================================
 // GOOGLE EMBEDDINGS + MARIADB VECTOR STORAGE
 // - Embedding API: генерация эмбеддингов через Google (gemini-embedding-001, 768 dim)
 // - Vector Storage: хранение эмбеддингов в MariaDB 12
 // - Similarity Search: поиск по косинусному сходству в БД
 // ============================================================================
-func (m *GoogleModel) DeleteTempFile(fileID string) error {
+func (m *Model) DeleteTempFile(fileID string) error {
 	if m.client == nil {
 		return fmt.Errorf("google клиент не инициализирован")
 	}
@@ -31,7 +31,7 @@ func (m *GoogleModel) DeleteTempFile(fileID string) error {
 	return nil
 }
 
-func (m *GoogleModel) GetFileAsReader(_ uint32, url string) (io.Reader, error) {
+func (m *Model) GetFileAsReader(url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла")
 	}
@@ -58,7 +58,7 @@ func (m *GoogleModel) GetFileAsReader(_ uint32, url string) (io.Reader, error) {
 	return resp.Body, nil
 }
 
-func (m *GoogleModel) downloadFileFromGoogle(fileURI string) ([]byte, error) {
+func (m *Model) downloadFileFromGoogle(fileURI string) ([]byte, error) {
 	if m.client == nil {
 		return nil, fmt.Errorf("google client не инициализирован")
 	}
@@ -98,7 +98,7 @@ func (m *GoogleModel) downloadFileFromGoogle(fileURI string) ([]byte, error) {
 // для избежания дублирования кода с GoogleAgentClient.GenerateEmbedding()
 //
 // Используется внутри UploadDocumentWithEmbedding, SearchSimilarDocuments и других публичных методов GoogleModel
-func (m *GoogleModel) GenerateEmbedding(text string) ([]float32, error) {
+func (m *Model) GenerateEmbedding(text string) ([]float32, error) {
 	// Проверяем кэш
 	if cached, found := m.getCachedEmbedding(text); found {
 		return cached, nil
@@ -120,18 +120,18 @@ func (m *GoogleModel) GenerateEmbedding(text string) ([]float32, error) {
 // VECTOR STORAGE - Работа с эмбеддингами в MariaDB
 // ============================================================================
 
-func (m *GoogleModel) deleteDocument(modelId uint64, docID string) error {
+func (m *Model) deleteDocument(modelId uint64, docID string) error {
 	return m.db.DeleteEmbedding(modelId, docID)
 }
 
-func (m *GoogleModel) listModelDocuments(modelId uint64) ([]create.VectorDocument, error) {
+func (m *Model) listModelDocuments(modelId uint64) ([]create.VectorDocument, error) {
 	return m.db.ListModelEmbeddings(modelId, create.ProviderGoogle)
 }
 
-func (m *GoogleModel) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]create.VectorDocument, error) {
+func (m *Model) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]create.VectorDocument, error) {
 	return m.db.SearchSimilarEmbeddings(modelId, create.ProviderGoogle, queryEmbedding, limit)
 }
 
-func (m *GoogleModel) saveEmbedding(userId uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
+func (m *Model) saveEmbedding(userId uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
 	return m.db.SaveEmbedding(userId, modelId, create.ProviderGoogle, docID, docName, content, embedding, metadata)
 }

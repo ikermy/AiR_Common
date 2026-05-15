@@ -21,8 +21,8 @@ import (
 
 type DB = comdb.Exterior
 
-// OpenAIModel управляет OpenAI моделями и респондентами
-type OpenAIModel struct {
+// Model управляет OpenAI моделями и респондентами
+type Model struct {
 	ctx              context.Context
 	cancel           context.CancelFunc
 	client           *create.OpenAIAgentClient // HTTP клиент для работы с OpenAI API
@@ -49,7 +49,7 @@ type RespModel struct {
 	Services Services
 	Haunter  bool // Модель используется для поиска лидов
 	// Кэш конфигурации агента для быстрого доступа
-	AgentConfig *OpenAIAgentConfig
+	AgentConfig *AgentConfig
 }
 
 // GetChannel реализует интерфейс model.ChannelProvider
@@ -62,9 +62,9 @@ func (r *RespModel) GetChannelMap() map[uint64]*model.Ch {
 	return r.ChanMap
 }
 
-// OpenAIAgentConfig хранит конфигурацию агента для OpenAI модели
+// AgentConfig хранит конфигурацию агента для OpenAI модели
 // В отличие от Assistants API, конфигурация хранится в БД и передается с каждым запросом
-type OpenAIAgentConfig struct {
+type AgentConfig struct {
 	ModelId        uint64                 `json:"model_id"`   // ID модели в БД
 	ModelName      string                 `json:"model_name"` // Имя модели OpenAI (gpt-4o-mini и т.д.)
 	SystemPrompt   string                 `json:"system_prompt"`
@@ -74,13 +74,13 @@ type OpenAIAgentConfig struct {
 	FileIds        []interface{}          `json:"file_ids,omitempty"`
 
 	// Дополнительные возможности
-	Search      bool   `json:"search"`       // Поиск по векторному хранилищу
-	Interpreter bool   `json:"interpreter"`  // Code Interpreter
-	Haunter     bool   `json:"haunter"`      // Модель для поиска лидов
-	Operator    bool   `json:"operator"`     // Вызов оператора
-	MetaAction  string `json:"meta_action"`  // Целевое действие
-	WebSearch   bool   `json:"web_search"`   // Веб-поиск
-	Image       bool   `json:"image"`        // Генерация изображений
+	Search      bool   `json:"search"`      // Поиск по векторному хранилищу
+	Interpreter bool   `json:"interpreter"` // Code Interpreter
+	Haunter     bool   `json:"haunter"`     // Модель для поиска лидов
+	Operator    bool   `json:"operator"`    // Вызов оператора
+	MetaAction  string `json:"meta_action"` // Целевое действие
+	WebSearch   bool   `json:"web_search"`  // Веб-поиск
+	Image       bool   `json:"image"`       // Генерация изображений
 
 	// Голосовой режим реального времени (OpenAI Realtime API)
 	RealtimeEnabled bool                `json:"realtime_enabled"`       // Голосовой режим включён для этой модели
@@ -124,13 +124,13 @@ type Services struct {
 }
 
 // New создаёт новый экземпляр OpenAIModel
-func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.ActionHandler) *OpenAIModel {
+func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.ActionHandler) *Model {
 	ctx, cancel := context.WithCancel(parent)
 
 	// Создаём OpenAI клиент с API ключом через конструктор
 	openaiClient := create.NewOpenAIAgentClient(ctx, conf.GPT.OpenAIKey)
 
-	m := &OpenAIModel{
+	m := &Model{
 		ctx:           ctx,
 		cancel:        cancel,
 		client:        openaiClient,
@@ -151,7 +151,7 @@ func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.Acti
 // NewAsRouterOption создаёт OpenAI модель и возвращает её как опцию для ModelRouter
 // Использование: router := model.NewModelRouter(ctx, conf, db, openai.NewAsRouterOption())
 func NewAsRouterOption() model.RouterOption {
-	return func(r *model.ModelRouter, ctx context.Context, cfg *conf.Conf, db model.DB) error {
+	return func(r *model.Router, ctx context.Context, cfg *conf.Conf, db model.DB) error {
 		openaiDB, ok := db.(DB)
 		if !ok {
 			return fmt.Errorf("DB не соответствует интерфейсу openai.DB")
@@ -175,12 +175,12 @@ func NewAsRouterOption() model.RouterOption {
 }
 
 // SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID
-func (m *OpenAIModel) SetUniversalModel(um *create.UniversalModel) {
+func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
 }
 
 // Реализация интерфейса model.Inter
-func (m *OpenAIModel) NewMessage(operator model.Operator, msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message {
+func (m *Model) NewMessage(operator model.Operator, msgType string, content *model.AssistResponse, name *string, files ...model.FileUpload) model.Message {
 	var nameStr string
 	if name != nil {
 		nameStr = *name
@@ -196,14 +196,14 @@ func (m *OpenAIModel) NewMessage(operator model.Operator, msgType string, conten
 	}
 }
 
-func (m *OpenAIModel) GetFileAsReader(userId uint32, url string) (io.Reader, error) {
+func (m *Model) GetFileAsReader(url string) (io.Reader, error) {
 	if url == "" {
 		return nil, fmt.Errorf("не указан источник файла: отсутствуют URL")
 	}
 
 	if strings.HasPrefix(url, "openai_file:") {
 		fileID := strings.TrimPrefix(url, "openai_file:")
-		content, err := m.client.DownloadFileContent(m.ctx, fileID, userId)
+		content, err := m.client.DownloadFileContent(m.ctx, fileID)
 		if err != nil {
 			return nil, fmt.Errorf("ошибка получения файла из OpenAI: %w", err)
 		}
@@ -227,7 +227,7 @@ func (m *OpenAIModel) GetFileAsReader(userId uint32, url string) (io.Reader, err
 	return resp.Body, nil
 }
 
-func (m *OpenAIModel) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64, respName string) (*model.RespModel, error) {
+func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64, respName string) (*model.RespModel, error) {
 	// Сначала проверяем кэш
 	// Используем respId как ключ
 	if val, ok := m.responders.Load(respId); ok {
@@ -275,7 +275,7 @@ func (m *OpenAIModel) GetOrSetRespGPT(assist model.Assistant, dialogID, respId u
 	return m.convertToModelRespModel(user), nil
 }
 
-func (m *OpenAIModel) GetCh(respId uint64) (*model.Ch, error) {
+func (m *Model) GetCh(respId uint64) (*model.Ch, error) {
 	return model.GetChannel(
 		respId,
 		m.ctx,
@@ -288,20 +288,8 @@ func (m *OpenAIModel) GetCh(respId uint64) (*model.Ch, error) {
 	)
 }
 
-func (m *OpenAIModel) getTryCh(respId uint64) (*model.Ch, error) {
-	return model.GetChannel(
-		respId,
-		m.ctx,
-		&m.waitChannels,
-		&m.responders,
-		func(val interface{}) (*model.Ch, error) {
-			respModel := val.(*RespModel)
-			return model.ExtractChannelWithPriority(respModel)
-		},
-	)
-}
 
-func (m *OpenAIModel) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
+func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
 	return model.GetRespIdBydialogIDUniversal(dialogID, &m.responders)
 }
 
@@ -312,7 +300,7 @@ func (m *OpenAIModel) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
 // loadAgentConfig загружает конфигурацию агента для OpenAI модели из БД
 // По образцу Google провайдера - конфигурация хранится в БД, а не в OpenAI API
 // Возвращает конфигурацию агента и haunter флаг явно
-func (m *OpenAIModel) loadAgentConfig(userId uint32, _ *RespModel) (*OpenAIAgentConfig, bool, error) {
+func (m *Model) loadAgentConfig(userId uint32, _ *RespModel) (*AgentConfig, bool, error) {
 	// Получаем все модели пользователя
 	userModels, err := m.db.GetAllUserModels(userId)
 	if err != nil {
@@ -335,7 +323,7 @@ func (m *OpenAIModel) loadAgentConfig(userId uint32, _ *RespModel) (*OpenAIAgent
 	// Инициализируем базовую конфигурацию
 	// ModelName берем из AssistId (имя GPT-модели OpenAI, например "gpt-4o-mini")
 	// По аналогии с Google провайдером
-	agentConfig := &OpenAIAgentConfig{
+	agentConfig := &AgentConfig{
 		ModelId:   found.ModelId,
 		ModelName: found.AssistId,
 	}
@@ -401,7 +389,7 @@ func (m *OpenAIModel) loadAgentConfig(userId uint32, _ *RespModel) (*OpenAIAgent
 // Если MCP доступен: system_prompt = modelData.Prompt + hint от MCP, function-tools от MCP.
 // Если MCP недоступен: system_prompt = modelData.Prompt (без инструкций), function-tools не добавляются.
 // Нативные OpenAI инструменты (code_interpreter, web_search) добавляются всегда локально.
-func (m *OpenAIModel) buildAgentConfiguration(userId uint32, config *OpenAIAgentConfig, compressedData []byte) error {
+func (m *Model) buildAgentConfiguration(userId uint32, config *AgentConfig, compressedData []byte) error {
 	// Распаковываем данные модели
 	modelData, err := m.universalModel.DecompressModelData(compressedData, nil)
 	if err != nil {
@@ -483,7 +471,7 @@ func (m *OpenAIModel) buildAgentConfiguration(userId uint32, config *OpenAIAgent
 		},
 	}
 
-	config.RealtimeModel = create.RealtimeDefaultModel
+	config.RealtimeModel = create.RealtimeOpenAIModel
 
 	// Передаём RealtimeVAD конфигурацию из распакованных данных модели
 	// (с уже применёнными дефолтными значениями из DecompressModelData)
@@ -498,7 +486,7 @@ func (m *OpenAIModel) buildAgentConfiguration(userId uint32, config *OpenAIAgent
 // ============================================================================
 
 // periodicFlush периодически очищает истекшие записи из dialogCache
-func (m *OpenAIModel) periodicFlush() {
+func (m *Model) periodicFlush() {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
@@ -527,7 +515,7 @@ func (m *OpenAIModel) periodicFlush() {
 }
 
 // getOrCreateDialogCache получает или создаёт кэш для диалога
-func (m *OpenAIModel) getOrCreateDialogCache(dialogID uint64) *DialogCache {
+func (m *Model) getOrCreateDialogCache(dialogID uint64) *DialogCache {
 	if val, ok := m.dialogCache.Load(dialogID); ok {
 		cache := val.(*DialogCache)
 		// Продлеваем срок жизни кэша
@@ -545,7 +533,7 @@ func (m *OpenAIModel) getOrCreateDialogCache(dialogID uint64) *DialogCache {
 }
 
 // getDialogHistoryFromCache получает историю диалога из кэша
-func (m *OpenAIModel) getDialogHistoryFromCache(dialogID uint64) ([]ChatMessage, bool) {
+func (m *Model) getDialogHistoryFromCache(dialogID uint64) ([]ChatMessage, bool) {
 	if val, ok := m.dialogCache.Load(dialogID); ok {
 		cache := val.(*DialogCache)
 		// Проверяем что кэш не истёк
@@ -561,7 +549,7 @@ func (m *OpenAIModel) getDialogHistoryFromCache(dialogID uint64) ([]ChatMessage,
 }
 
 // addMessageToCache добавляет сообщение в кэш диалога
-func (m *OpenAIModel) addMessageToCache(dialogID uint64, message ChatMessage) {
+func (m *Model) addMessageToCache(dialogID uint64, message ChatMessage) {
 	cache := m.getOrCreateDialogCache(dialogID)
 	cache.Messages = append(cache.Messages, message)
 
@@ -574,7 +562,7 @@ func (m *OpenAIModel) addMessageToCache(dialogID uint64, message ChatMessage) {
 
 // preloadDialogHistoryIfNeeded автоматически загружает историю диалога если кэш пустой
 // Вызывается неявно в GetOrSetRespGPT для обеспечения контекста с первого сообщения
-func (m *OpenAIModel) preloadDialogHistoryIfNeeded(dialogID uint64, _ uint32) {
+func (m *Model) preloadDialogHistoryIfNeeded(dialogID uint64, _ uint32) {
 	// Проверяем наличие кэша
 	if _, found := m.getDialogHistoryFromCache(dialogID); found {
 		// Кэш уже есть - ничего не делаем
@@ -612,12 +600,12 @@ func (m *OpenAIModel) preloadDialogHistoryIfNeeded(dialogID uint64, _ uint32) {
 // EXISTING METHODS
 // ============================================================================
 
-func (m *OpenAIModel) SaveAllContextDuringExit() {
+func (m *Model) SaveAllContextDuringExit() {
 	// В новом подходе с Chat Completions API история сохраняется автоматически через БД
 	//logger.Info("SaveAllContextDuringExit: пропускаем (Chat Completions API не требует сохранения контекста)")
 }
 
-func (m *OpenAIModel) CleanDialogData(dialogID uint64) {
+func (m *Model) CleanDialogData(dialogID uint64) {
 	// Получаем respId по dialogID
 	respId, err := m.GetRespIdBydialogID(dialogID)
 	if err != nil {
@@ -641,7 +629,7 @@ func (m *OpenAIModel) CleanDialogData(dialogID uint64) {
 	m.dialogCache.Delete(dialogID)
 }
 
-func (m *OpenAIModel) DeleteTempFile(fileID string) error {
+func (m *Model) DeleteTempFile(fileID string) error {
 	// Удаляем временный файл из OpenAI
 	if err := m.client.DeleteFile(m.ctx, fileID); err != nil {
 		return fmt.Errorf("ошибка удаления временного файла: %w", err)
@@ -649,13 +637,13 @@ func (m *OpenAIModel) DeleteTempFile(fileID string) error {
 	return nil
 }
 
-func (m *OpenAIModel) TranscribeAudio(userId uint32, audioData []byte, fileName string) (string, error) {
+func (m *Model) TranscribeAudio(audioData []byte, fileName string) (string, error) {
 	// Используем существующий метод OpenAIAgentClient.TranscribeAudio
 	if m.client == nil {
 		return "", fmt.Errorf("OpenAI клиент не инициализирован")
 	}
 
-	text, err := m.client.TranscribeAudio(m.ctx, audioData, fileName, userId)
+	text, err := m.client.TranscribeAudio(m.ctx, audioData, fileName)
 	if err != nil {
 		return "", fmt.Errorf("ошибка транскрипции аудио: %w", err)
 	}
@@ -663,7 +651,7 @@ func (m *OpenAIModel) TranscribeAudio(userId uint32, audioData []byte, fileName 
 	return text, nil
 }
 
-func (m *OpenAIModel) Shutdown(shutCh chan<- com.LogMsg) {
+func (m *Model) Shutdown(shutCh chan<- com.LogMsg) {
 	var shutdownErrors []string
 
 	m.shutdownOnce.Do(func() {
@@ -731,7 +719,7 @@ func (m *OpenAIModel) Shutdown(shutCh chan<- com.LogMsg) {
 }
 
 // Вспомогательная функция для конвертации внутреннего RespModel в model.RespModel
-func (m *OpenAIModel) convertToModelRespModel(internal *RespModel) *model.RespModel {
+func (m *Model) convertToModelRespModel(internal *RespModel) *model.RespModel {
 	// Используем существующий ChanMap или создаем новый
 	chanMap := internal.ChanMap
 	if chanMap == nil {
@@ -765,7 +753,7 @@ func (m *OpenAIModel) convertToModelRespModel(internal *RespModel) *model.RespMo
 // ============================================================================
 
 // CleanUp периодически очищает просроченные RespModel
-func (m *OpenAIModel) CleanUp() {
+func (m *Model) CleanUp() {
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
 
@@ -810,18 +798,18 @@ func (m *OpenAIModel) CleanUp() {
 	}
 }
 
-func (m *OpenAIModel) closeResponderChannels(respModel *RespModel) {
+func (m *Model) closeResponderChannels(respModel *RespModel) {
 	model.CloseResponderChannelsUniversal(respModel)
 }
 
-func (m *OpenAIModel) cleanupWaitChannels() {
+func (m *Model) cleanupWaitChannels() {
 	deletedCount := model.CleanupWaitChannelsUniversal(&m.waitChannels, &m.responders)
 	if deletedCount > 0 {
 		//logger.Debug("Очищено %d wait channels", deletedCount)
 	}
 }
 
-func (m *OpenAIModel) cleanupAllResponders() {
+func (m *Model) cleanupAllResponders() {
 	model.CleanupAllRespondersUniversal(
 		&m.responders,
 		func(val interface{}) {
@@ -844,7 +832,7 @@ func (m *OpenAIModel) cleanupAllResponders() {
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
 // Вызывается при обновлении модели чтобы новые сессии получили актуальные настройки
 // Удаляет все кэшированные респондентов пользователя из m.responders
-func (m *OpenAIModel) InvalidateUserAgentConfigCache(userId uint32) {
+func (m *Model) InvalidateUserAgentConfigCache(userId uint32) {
 	var invalidatedCount int
 	m.responders.Range(func(key, value interface{}) bool {
 		respModel := value.(*RespModel)
@@ -865,7 +853,7 @@ func (m *OpenAIModel) InvalidateUserAgentConfigCache(userId uint32) {
 // NEW METHOD
 // ============================================================================
 
-func (m *OpenAIModel) saveAllContextsGracefullyCtx(_ context.Context) error {
+func (m *Model) saveAllContextsGracefullyCtx(_ context.Context) error {
 	// В новом подходе с Chat Completions API нет thread_id для сохранения
 	// История диалога сохраняется через dialog.Dialog в БД автоматически
 	// Этот метод оставлен для совместимости, но не выполняет действий

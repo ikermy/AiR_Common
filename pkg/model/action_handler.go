@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
@@ -16,9 +17,10 @@ import (
 
 // UniversalActionHandler универсальный обработчик функций для всех провайдеров
 type UniversalActionHandler struct {
-	port string // Порт для внутренних HTTP запросов (MCP сервер)
-	db   comdb.Exterior
-	ctx  context.Context
+	port       string // Порт для внутренних HTTP запросов (MCP сервер)
+	db         comdb.Exterior
+	ctx        context.Context
+	httpClient *http.Client // shared client с таймаутом
 }
 
 // NewUniversalActionHandler создаёт новый action handler с доступом к БД
@@ -27,7 +29,18 @@ func NewUniversalActionHandler(ctx context.Context, db comdb.Exterior, cfg *conf
 		db:   db,
 		ctx:  ctx,
 		port: cfg.WEB.Land,
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
+}
+
+// mcpURL возвращает URL MCP сервера в зависимости от режима (Production/Dev)
+func (h *UniversalActionHandler) mcpURL() string {
+	if mode.ProductionMode {
+		return fmt.Sprintf("http://localhost:%s/mcp", h.port)
+	}
+	return fmt.Sprintf("https://localhost:%s/mcp", h.port)
 }
 
 // callMCP отправляет единый JSON-RPC запрос к MCP серверу (POST /mcp).
@@ -62,14 +75,7 @@ func (h *UniversalActionHandler) callMCP(ctx context.Context, toolName, argument
 		return string(result)
 	}
 
-	var url string
-	if mode.ProductionMode {
-		url = fmt.Sprintf("http://localhost:%s/mcp", h.port)
-	} else {
-		url = fmt.Sprintf("https://localhost:%s/mcp", h.port)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.mcpURL(), bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": "failed to create MCP request"})
 		return string(result)
@@ -78,8 +84,7 @@ func (h *UniversalActionHandler) callMCP(ctx context.Context, toolName, argument
 	// Идентификация пользователя и провайдера — реальный userId без кодирования
 	req.Header.Set("X-Session-ID", fmt.Sprintf("%d:%d", userId, provider))
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := h.httpClient.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
 			result, _ := json.Marshal(map[string]string{"error": "запрос отменён по таймауту"})
@@ -88,7 +93,7 @@ func (h *UniversalActionHandler) callMCP(ctx context.Context, toolName, argument
 		result, _ := json.Marshal(map[string]string{"error": "MCP request failed: " + err.Error()})
 		return string(result)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -145,26 +150,18 @@ func (h *UniversalActionHandler) callMCPMethod(ctx context.Context, method strin
 		return nil, fmt.Errorf("failed to marshal MCP request: %w", err)
 	}
 
-	var url string
-	if mode.ProductionMode {
-		url = fmt.Sprintf("http://localhost:%s/mcp", h.port)
-	} else {
-		url = fmt.Sprintf("https://localhost:%s/mcp", h.port)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.mcpURL(), bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MCP request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Session-ID", fmt.Sprintf("%d:%d", userId, provider))
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	resp, err := h.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("MCP request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -1,6 +1,7 @@
 package create
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -8,6 +9,36 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+// IntOrInf хранит значение max_response_output_tokens: 0 → "inf", >0 → число.
+// Используется в OpenAI Realtime API — поле принимает либо целое число, либо строку "inf".
+type IntOrInf struct {
+	Value int // 0 означает "inf"
+}
+
+func (v IntOrInf) MarshalJSON() ([]byte, error) {
+	if v.Value == 0 {
+		return []byte(`"inf"`), nil
+	}
+	return json.Marshal(v.Value)
+}
+
+func (v *IntOrInf) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		if s == "inf" {
+			v.Value = 0
+			return nil
+		}
+		return fmt.Errorf("IntOrInf: неизвестная строка %q", s)
+	}
+	var n int
+	if err := json.Unmarshal(data, &n); err != nil {
+		return fmt.Errorf("IntOrInf: ожидалось число или \"inf\": %w", err)
+	}
+	v.Value = n
+	return nil
+}
 
 // DialRealtimeSession устанавливает WebSocket соединение к OpenAI Realtime API.
 // Возвращает готовое *websocket.Conn для отправки/приёма событий.
@@ -20,7 +51,7 @@ func DialRealtimeSession(apiKey, model string) (*websocket.Conn, error) {
 		return nil, fmt.Errorf("DialRealtimeSession: apiKey не может быть пустым")
 	}
 	if model == "" {
-		model = RealtimeDefaultModel
+		model = RealtimeOpenAIModel
 	}
 
 	// Формируем URL с параметрами сессии

@@ -9,7 +9,7 @@ import (
 
 // CreateModel создаёт новую модель OpenAI
 // Делегирует вызов к UniversalModel из пакета create
-func (m *OpenAIModel) CreateModel(userId uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error) {
+func (m *Model) CreateModel(userId uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error) {
 	// Создаем экземпляр UniversalModel для делегирования
 	modelsManager := &create.UniversalModel{}
 
@@ -21,7 +21,7 @@ func (m *OpenAIModel) CreateModel(userId uint32, provider create.ProviderType, m
 // ============================================================================
 
 // UploadDocumentWithEmbedding загружает документ с генерацией эмбеддинга
-func (m *OpenAIModel) UploadDocumentWithEmbedding(userId uint32, docName, content string, metadata create.DocumentMetadata) (string, error) {
+func (m *Model) UploadDocumentWithEmbedding(userId uint32, docName, content string, metadata create.DocumentMetadata) (string, error) {
 	// Получаем modelId из БД
 	modelId, err := m.getModelId(userId)
 	if err != nil {
@@ -51,7 +51,7 @@ func (m *OpenAIModel) UploadDocumentWithEmbedding(userId uint32, docName, conten
 }
 
 // DeleteDocument удаляет документ из БД по docID
-func (m *OpenAIModel) DeleteDocument(userId uint32, docID string) error {
+func (m *Model) DeleteDocument(userId uint32, docID string) error {
 	modelId, err := m.getModelId(userId)
 	if err != nil {
 		return fmt.Errorf("ошибка получения modelId: %w", err)
@@ -62,7 +62,7 @@ func (m *OpenAIModel) DeleteDocument(userId uint32, docID string) error {
 }
 
 // ListUserDocuments возвращает список документов модели из БД
-func (m *OpenAIModel) ListUserDocuments(userId uint32) ([]create.VectorDocument, error) {
+func (m *Model) ListUserDocuments(userId uint32) ([]create.VectorDocument, error) {
 	modelId, err := m.getModelId(userId)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения modelId: %w", err)
@@ -78,7 +78,7 @@ func (m *OpenAIModel) ListUserDocuments(userId uint32) ([]create.VectorDocument,
 }
 
 // SearchSimilarDocuments ищет похожие документы используя семантический поиск
-func (m *OpenAIModel) SearchSimilarDocuments(userId uint32, query string, limit int) ([]create.VectorDocument, error) {
+func (m *Model) SearchSimilarDocuments(userId uint32, query string, limit int) ([]create.VectorDocument, error) {
 	modelId, err := m.getModelId(userId)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения modelId: %w", err)
@@ -102,7 +102,7 @@ func (m *OpenAIModel) SearchSimilarDocuments(userId uint32, query string, limit 
 }
 
 // getModelId получает modelId пользователя из БД (для работы с vector_embeddings)
-func (m *OpenAIModel) getModelId(userId uint32) (uint64, error) {
+func (m *Model) getModelId(userId uint32) (uint64, error) {
 	// Получаем запись модели OpenAI для пользователя из БД
 	record, err := m.db.GetModelByProviderAnyStatus(userId, create.ProviderOpenAI)
 	if err != nil {

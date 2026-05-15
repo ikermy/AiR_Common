@@ -19,7 +19,7 @@ import (
 //   - VAD             → rs.DrainPlayback (сигнал callAudioBridge сбросить очередь)
 // ============================================================================
 
-func (m *OpenAIModel) pumpFromOpenAI(rs *RealtimeSession) {
+func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 	defer func() {
 		rs.publishEvent(RealtimeEvent{Type: "error", Text: "realtime session closed", Err: fmt.Errorf("session closed")})
 		rs.cancel()
@@ -490,7 +490,7 @@ func (m *OpenAIModel) pumpFromOpenAI(rs *RealtimeSession) {
 // Накапливает 100ms чанки (4800 байт @ 24kHz PCM16) перед отправкой.
 // ============================================================================
 
-func (m *OpenAIModel) pumpToOpenAI(rs *RealtimeSession) {
+func (m *Model) pumpToOpenAI(rs *RealtimeSession) {
 	var sentChunks int
 	const accumulateBytes = 4800 // 100ms @ 24kHz PCM16
 	var accumBuf []byte
@@ -539,7 +539,7 @@ func (m *OpenAIModel) pumpToOpenAI(rs *RealtimeSession) {
 // saveRealtimeTranscript — сохраняет транскрипцию в DialogCache и БД
 // ============================================================================
 
-func (m *OpenAIModel) saveRealtimeTranscript(rs *RealtimeSession, userText, assistText string) {
+func (m *Model) saveRealtimeTranscript(rs *RealtimeSession, userText, assistText string) {
 	dialogID := rs.dialogID
 	//userId := rs.userId
 	now := time.Now()

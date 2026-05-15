@@ -11,11 +11,58 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
+// createConversationInputs создаёт структуру inputs для Mistral Conversations API StartConversation
+// Консолидирует повторяющийся код инициализации inputs для разных случаев ошибок
+func createConversationInputs(content interface{}) []map[string]interface{} {
+	return []map[string]interface{}{
+		{
+			"role":    "user",
+			"content": content,
+			"object":  "entry",
+			"type":    "message.input",
+		},
+	}
+}
+
+// prepareUserContent подготавливает userContent для отправки в Mistral API
+// Возвращает либо простой текст, либо структурированный контент с изображениями
+// Консолидирует дублирующееся преобразование text+files в userContent
+func prepareUserContent(text string, files []model.FileUpload) interface{} {
+	// Проверяем наличие изображений с URL
+	var hasImageURLs bool
+	for _, file := range files {
+		if file.HasURL() && file.IsImageMimeType() {
+			hasImageURLs = true
+			break
+		}
+	}
+
+	// Если есть изображения - формируем content с parts, иначе только текст
+	if hasImageURLs {
+		// Формируем content как массив parts (text + image_url)
+		contentParts := []map[string]interface{}{
+			{"type": "text", "text": text},
+		}
+		for _, file := range files {
+			if file.HasURL() && file.IsImageMimeType() {
+				contentParts = append(contentParts, map[string]interface{}{
+					"type":      "image_url",
+					"image_url": file.URL,
+				})
+				//logger.Debug("Добавлено изображение по URL: %s", file.URL, userId)
+			}
+		}
+		return contentParts
+	}
+	// Простой текстовый контент
+	return text
+}
+
 // Request выполняет запрос к Mistral модели, используя историю диалога как контекст
-func (m *MistralModel) Request(_ uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 
-	if text != "" && len(files) > 0 {
+	if text == "" && len(files) == 0 {
 		return emptyResponse, fmt.Errorf("пустое сообщение и нет файлов")
 	}
 
@@ -52,46 +99,8 @@ func (m *MistralModel) Request(_ uint32, dialogID uint64, text string, files ...
 	respModel.Context.Messages = append(respModel.Context.Messages, userMessage)
 	respModel.Context.LastUsed = time.Now()
 
-	// Вызываем Mistral API через Conversations API (поддерживает встроенные tools)
-	// ВАЖНО: Conversations API НЕ поддерживает file_ids в inputs!
-	// - Аудио файлы: уже транскрибированы через TranscribeAudio (текст в userContent)
-	// - Документы: должны быть добавлены в document_library агента заранее
-	// - Изображения: передаются через content parts с image_url (если поддерживается API)
-
-	// Проверяем наличие изображений с URL
-	var hasImageURLs bool
-	for _, file := range files {
-		if file.HasURL() && file.IsImageMimeType() {
-			hasImageURLs = true
-			break
-		}
-	}
-
-	// Если есть изображения - формируем content с parts, иначе только текст
-	var userContent interface{}
-	if hasImageURLs {
-		// Формируем content как массив parts (text + image_url)
-		contentParts := []map[string]interface{}{
-			{"type": "text", "text": text},
-		}
-		for _, file := range files {
-			if file.HasURL() && file.IsImageMimeType() {
-				contentParts = append(contentParts, map[string]interface{}{
-					"type":      "image_url",
-					"image_url": file.URL,
-				})
-				//logger.Debug("Добавлено изображение по URL: %s", file.URL, userId)
-			}
-		}
-		userContent = contentParts
-	} else {
-		// Простой текстовый контент
-		userContent = text
-		// Логируем только если были файлы, но не изображения с URL
-		//if len(files) > 0 {
-		//	logger.Debug("Получено %d файлов, но они не являются изображениями с URL (Conversations API поддерживает только image_url)", len(files), userId)
-		//}
-	}
+	// Формируем userContent для отправки в API
+	userContent := prepareUserContent(text, files)
 
 	// Используем Conversations API для всех запросов
 	var convResp ConversationResponse
@@ -99,14 +108,7 @@ func (m *MistralModel) Request(_ uint32, dialogID uint64, text string, files ...
 
 	if respModel.ConversationId == "" {
 		// Первый запрос - создаём новый conversation
-		inputs := []map[string]interface{}{
-			{
-				"role":    "user",
-				"content": userContent,
-				"object":  "entry",
-				"type":    "message.input",
-			},
-		}
+		inputs := createConversationInputs(userContent)
 
 		//logger.Debug("Создание нового conversation для агента %s", respModel.Assist.AssistId, userId)
 		convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs)
@@ -134,14 +136,7 @@ func (m *MistralModel) Request(_ uint32, dialogID uint64, text string, files ...
 				m.saveConversationId(respModel.Chan.DialogID, "")
 
 				// Создаём новый conversation с текущим сообщением пользователя
-				inputs := []map[string]interface{}{
-					{
-						"role":    "user",
-						"content": userContent,
-						"object":  "entry",
-						"type":    "message.input",
-					},
-				}
+				inputs := createConversationInputs(userContent)
 
 				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs)
 				if err != nil {
@@ -159,14 +154,7 @@ func (m *MistralModel) Request(_ uint32, dialogID uint64, text string, files ...
 				respModel.ConversationId = ""
 
 				// Создаём новый conversation с текущим сообщением
-				inputs := []map[string]interface{}{
-					{
-						"role":    "user",
-						"content": userContent,
-						"object":  "entry",
-						"type":    "message.input",
-					},
-				}
+				inputs := createConversationInputs(userContent)
 
 				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs)
 				if err != nil {
@@ -186,14 +174,7 @@ func (m *MistralModel) Request(_ uint32, dialogID uint64, text string, files ...
 				respModel.ConversationId = ""
 
 				// Создаём новый conversation с текущим сообщением
-				inputs := []map[string]interface{}{
-					{
-						"role":    "user",
-						"content": userContent,
-						"object":  "entry",
-						"type":    "message.input",
-					},
-				}
+				inputs := createConversationInputs(userContent)
 
 				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs)
 				if err != nil {
@@ -291,14 +272,7 @@ func (m *MistralModel) Request(_ uint32, dialogID uint64, text string, files ...
 					m.saveConversationId(respModel.Chan.DialogID, "")
 
 					// Создаём новый conversation с контекстом последнего сообщения пользователя
-					inputs := []map[string]interface{}{
-						{
-							"role":    "user",
-							"content": fmt.Sprintf("Результат выполнения функции %s: %s", response.FuncName, funcResult),
-							"object":  "entry",
-							"type":    "message.input",
-						},
-					}
+					inputs := createConversationInputs(fmt.Sprintf("Результат выполнения функции %s: %s", response.FuncName, funcResult))
 
 					newConvResp, newErr := m.client.StartConversation(respModel.Assist.AssistId, inputs)
 					if newErr != nil {
@@ -320,33 +294,26 @@ func (m *MistralModel) Request(_ uint32, dialogID uint64, text string, files ...
 
 					// Возвращаем ошибку для повторной попытки
 					return emptyResponse, fmt.Errorf("conversation сломан (503): %w", err)
-				} else {
-					// Другие ошибки - логируем и возвращаем
-					return emptyResponse, fmt.Errorf("ошибка отправки результата функции %s: %w", response.FuncName, err)
 				}
-			} else {
-				// Обновляем conversation_id (может измениться)
-				if convResp.ConversationID != respModel.ConversationId {
-					respModel.ConversationId = convResp.ConversationID
-					//logger.Debug("Conversation ID обновлён после функции: %s", respModel.ConversationId, userId)
-					// Сохраняем обновлённый conversation_id в БД
-					m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
-				}
-				finalResponse = ParseConversationResponse(convResp)
+
+				// Другие ошибки - логируем и возвращаем
+				return emptyResponse, fmt.Errorf("ошибка отправки результата функции %s: %w", response.FuncName, err)
 			}
+
+			// Обновляем conversation_id (может измениться)
+			if convResp.ConversationID != respModel.ConversationId {
+				respModel.ConversationId = convResp.ConversationID
+				//logger.Debug("Conversation ID обновлён после функции: %s", respModel.ConversationId, userId)
+				// Сохраняем обновлённый conversation_id в БД
+				m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
+			}
+			finalResponse = ParseConversationResponse(convResp)
 		} else {
 			// conversation_id был сброшен (после ошибки 503), создаём НОВЫЙ conversation
 			//logger.Warn("conversation_id пустой после ошибки, создаём новый conversation для отправки результата функции", userId)
 
 			// Создаём новый conversation с результатом функции
-			inputs := []map[string]interface{}{
-				{
-					"role":    "user",
-					"content": fmt.Sprintf("Результат выполнения функции %s: %s", response.FuncName, funcResult),
-					"object":  "entry",
-					"type":    "message.input",
-				},
-			}
+			inputs := createConversationInputs(fmt.Sprintf("Результат выполнения функции %s: %s", response.FuncName, funcResult))
 
 			newConvResp, err := m.client.StartConversation(respModel.Assist.AssistId, inputs)
 			if err != nil {
@@ -405,7 +372,7 @@ func (m *MistralModel) Request(_ uint32, dialogID uint64, text string, files ...
 }
 
 // processResponse обрабатывает ответ от Mistral
-func (m *MistralModel) processResponse(response Response, realUserId uint64, provider create.ProviderType) model.AssistResponse {
+func (m *Model) processResponse(response Response, realUserId uint64, provider create.ProviderType) model.AssistResponse {
 	messageText := strings.TrimSpace(response.Message)
 
 	// СНАЧАЛА парсим JSON из ответа (если есть) чтобы получить красивые имена файлов
@@ -660,7 +627,7 @@ func base64Encode(data []byte) string {
 // RequestStreaming выполняет запрос с потоковой передачей (TRUE STREAMING)
 // Использует Mistral Conversations API в streaming режиме с Server-Sent Events (SSE)
 // Поддерживает вызов функций и подсчет токенов
-func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
+func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
 	if text == "" && len(files) == 0 {
 		return fmt.Errorf("пустое сообщение и нет файлов")
 	}
@@ -687,6 +654,12 @@ func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, 
 	// Обновляем TTL респондера при каждом запросе
 	respModel.TTL = time.Now().Add(m.UserModelTTl)
 
+	// Синхронизируем инструменты агента один раз за сессию.
+	// PATCHит агент актуальными MCP-tools и сбрасывает ConversationId если конфигурация изменилась.
+	if !respModel.ToolsSynced {
+		m.syncAgentTools(respModel)
+	}
+
 	// Добавляем текущее сообщение в локальный контекст
 	userMessage := Message{
 		Type:      "user",
@@ -696,34 +669,8 @@ func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, 
 	respModel.Context.Messages = append(respModel.Context.Messages, userMessage)
 	respModel.Context.LastUsed = time.Now()
 
-	// Проверяем наличие изображений с URL
-	var hasImageURLs bool
-	for _, file := range files {
-		if file.HasURL() && file.IsImageMimeType() {
-			hasImageURLs = true
-			break
-		}
-	}
-
-	// Формируем userContent
-	var userContent interface{}
-	if hasImageURLs {
-		contentParts := []map[string]interface{}{
-			{"type": "text", "text": text},
-		}
-		for _, file := range files {
-			if file.HasURL() && file.IsImageMimeType() {
-				contentParts = append(contentParts, map[string]interface{}{
-					"type":      "image_url",
-					"image_url": file.URL,
-				})
-				//logger.Debug("Добавлено изображение по URL: %s", file.URL, userId)
-			}
-		}
-		userContent = contentParts
-	} else {
-		userContent = text
-	}
+	// Формируем userContent для отправки в API
+	userContent := prepareUserContent(text, files)
 
 	// Wrapper для onDelta - обрабатывает как текстовые дельты, так и JSON события function calls
 	wrappedOnDelta := func(delta string) error {
@@ -752,14 +699,7 @@ func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, 
 
 	if respModel.ConversationId == "" {
 		// Первый запрос - создаём новый conversation
-		inputs := []map[string]interface{}{
-			{
-				"role":    "user",
-				"content": userContent,
-				"object":  "entry",
-				"type":    "message.input",
-			},
-		}
+		inputs := createConversationInputs(userContent)
 
 		convResp, err = m.client.StartConversationStreaming(respModel.Assist.AssistId, inputs, wrappedOnDelta)
 		if err != nil {
@@ -782,14 +722,7 @@ func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, 
 				m.saveConversationId(respModel.Chan.DialogID, "")
 
 				// Создаём новый conversation
-				inputs := []map[string]interface{}{
-					{
-						"role":    "user",
-						"content": userContent,
-						"object":  "entry",
-						"type":    "message.input",
-					},
-				}
+				inputs := createConversationInputs(userContent)
 
 				convResp, err = m.client.StartConversationStreaming(respModel.Assist.AssistId, inputs, wrappedOnDelta)
 				if err != nil {
@@ -808,6 +741,28 @@ func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, 
 	if convResp.ConversationID != "" && convResp.ConversationID != respModel.ConversationId {
 		respModel.ConversationId = convResp.ConversationID
 		m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
+	}
+
+	// Накапливаем суммарное использование токенов по всем HTTP-стримам
+	totalUsage := convResp.Usage
+
+	// sendTotalUsage отправляет итоговое событие token_usage один раз
+	sendTotalUsage := func() {
+		if totalUsage == nil || onDelta == nil {
+			return
+		}
+		tokenUsage := map[string]interface{}{
+			"type": "token_usage",
+			"usage": map[string]interface{}{
+				"prompt_tokens":     totalUsage.PromptTokens,
+				"completion_tokens": totalUsage.CompletionTokens,
+				"total_tokens":      totalUsage.TotalTokens,
+			},
+		}
+		if usageJSON, err := json.Marshal(tokenUsage); err == nil {
+			//nolint:errcheck
+			onDelta(string(usageJSON), false)
+		}
 	}
 
 	// Проверяем есть ли вызовы функций в outputs
@@ -834,6 +789,8 @@ func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, 
 		if err != nil {
 			return fmt.Errorf("ошибка сериализации ответа: %w", err)
 		}
+
+		sendTotalUsage()
 
 		if onDelta != nil {
 			if err := onDelta(string(responseJSON), true); err != nil {
@@ -901,6 +858,16 @@ func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, 
 				}
 			}
 
+			// Накапливаем использование токенов из этого раунда
+			if finalConvResp.Usage != nil {
+				if totalUsage == nil {
+					totalUsage = &TokenUsage{}
+				}
+				totalUsage.PromptTokens += finalConvResp.Usage.PromptTokens
+				totalUsage.CompletionTokens += finalConvResp.Usage.CompletionTokens
+				totalUsage.TotalTokens += finalConvResp.Usage.TotalTokens
+			}
+
 			// Обновляем conversation_id
 			if finalConvResp.ConversationID != respModel.ConversationId {
 				respModel.ConversationId = finalConvResp.ConversationID
@@ -936,6 +903,8 @@ func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, 
 					return fmt.Errorf("ошибка сериализации ответа: %w", err)
 				}
 
+				sendTotalUsage()
+
 				if onDelta != nil {
 					if err := onDelta(string(responseJSON), true); err != nil {
 						//logger.Warn("Ошибка в onDelta callback: %v", err, userId)
@@ -963,11 +932,92 @@ func (m *MistralModel) RequestStreaming(_ uint32, dialogID uint64, text string, 
 
 	emptyResponse := m.processResponse(Response{}, respModel.RealUserId, respModel.Assist.Provider)
 	responseJSON, _ := json.Marshal(emptyResponse)
+
+	sendTotalUsage()
+
 	if onDelta != nil {
-		onDelta(string(responseJSON), true)
+		if err := onDelta(string(responseJSON), true); err != nil {
+			//logger.Warn("Ошибка в onDelta callback (fallback): %v", err, userId)
+		}
 	}
 
 	return nil
+}
+
+// syncAgentTools синхронизирует набор инструментов Mistral Agent с текущим MCP-сервером.
+// Вызывается один раз за сессию (ToolsSynced == false) перед первым запросом.
+// Если инструменты изменились — вызывает PATCH /v1/agents/{id} и сбрасывает ConversationId,
+// чтобы следующий разговор начался с обновлённой конфигурацией агента.
+func (m *Model) syncAgentTools(respModel *RespModel) {
+	defer func() { respModel.ToolsSynced = true }()
+
+	if m.actionHandler == nil || m.client == nil || respModel.Assist.AssistId == "" {
+		return
+	}
+
+	mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider)
+	if !ok {
+		return
+	}
+
+	var tools []map[string]interface{}
+
+	// MCP function tools — основной источник runtime-инструментов
+	if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, respModel.Assist.UserId, create.ProviderMistral); err == nil {
+		for _, t := range mcpTools {
+			tools = append(tools, map[string]interface{}{
+				"type": "function",
+				"function": map[string]interface{}{
+					"name":        t.Name,
+					"description": t.Description,
+					"parameters":  t.InputSchema,
+				},
+			})
+		}
+	}
+
+	// Нативные built-in инструменты агента (code_interpreter, image_generation, web_search, document_library)
+	if m.universalModel != nil {
+		if compressedData, _, err := m.db.ReadUserModelByProvider(respModel.Assist.UserId, create.ProviderMistral); err == nil && compressedData != nil {
+			if modelData, err := m.universalModel.DecompressModelData(compressedData, nil); err == nil {
+				if modelData.Interpreter {
+					tools = append(tools, map[string]interface{}{"type": "code_interpreter"})
+				}
+				if modelData.Image {
+					tools = append(tools, map[string]interface{}{"type": "image_generation"})
+				}
+				if modelData.WebSearch {
+					tools = append(tools, map[string]interface{}{"type": "web_search"})
+				}
+				if modelData.Search || len(modelData.VecIds.VectorId) > 0 {
+					documentLibraryTool := map[string]interface{}{
+						"type": "document_library",
+					}
+					if len(modelData.VecIds.VectorId) > 0 {
+						documentLibraryTool["library_ids"] = modelData.VecIds.VectorId
+					}
+					tools = append(tools, documentLibraryTool)
+				}
+			}
+		}
+	}
+
+	if len(tools) == 0 {
+		return
+	}
+
+	// Обновляем агент на стороне Mistral — теперь он знает об актуальных инструментах
+	if err := m.client.PatchAgent(respModel.Assist.AssistId, tools); err != nil {
+		// Не критично: логируем и продолжаем работу со старой конфигурацией
+		return
+	}
+
+	// Сбрасываем ConversationId: старая беседа была создана с прежней конфигурацией агента
+	// (без tools). Новая беседа автоматически подхватит обновлённые инструменты.
+	if respModel.ConversationId != "" {
+		respModel.ConversationId = ""
+		m.saveConversationId(respModel.Chan.DialogID, "")
+	}
 }
 
 // extractFunctionCalls извлекает все вызовы функций из outputs

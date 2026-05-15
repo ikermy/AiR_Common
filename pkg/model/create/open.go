@@ -25,6 +25,7 @@ func GenerateOpenAIEmbedding(ctx context.Context, apiKey, text string) ([]float3
 	return generateOpenAIEmbedding(ctx, apiKey, text, "text-embedding-3-small", 512)
 }
 
+// TODO метод на будущее: GenerateOpenAIEmbeddingMedium - эмбеддинги средней точности (1536 dimensions)
 // GenerateOpenAIEmbeddingLarge - генерация эмбеддингов высокой точности (3072 dimensions)
 // Используется когда требуется максимальная точность семантического поиска
 func GenerateOpenAIEmbeddingLarge(ctx context.Context, apiKey, text string) ([]float32, error) {
@@ -157,7 +158,7 @@ func (c *OpenAIAgentClient) GetAPIKey() string {
 }
 
 // doRequest выполняет HTTP запрос к OpenAI API
-func (c *OpenAIAgentClient) doRequest(method, path string, body interface{}, userId uint32) (*http.Response, error) {
+func (c *OpenAIAgentClient) doRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
 	url := c.url + path
 
 	var reqBody io.Reader
@@ -169,7 +170,7 @@ func (c *OpenAIAgentClient) doRequest(method, path string, body interface{}, use
 		reqBody = bytes.NewReader(jsonData)
 	}
 
-	req, err := http.NewRequestWithContext(c.ctx, method, url, reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -185,8 +186,7 @@ func (c *OpenAIAgentClient) doRequest(method, path string, body interface{}, use
 
 	if resp.StatusCode >= 400 {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		//logger.Debug("OpenAI API error: HTTP %d, body: %s", resp.StatusCode, string(bodyBytes), userId)
+		func() { _ = resp.Body.Close() }()
 		return nil, fmt.Errorf("OpenAI API error: HTTP %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -195,7 +195,7 @@ func (c *OpenAIAgentClient) doRequest(method, path string, body interface{}, use
 
 // DeleteFile удаляет файл
 func (c *OpenAIAgentClient) DeleteFile(ctx context.Context, fileID string) error {
-	resp, err := c.doRequest("DELETE", fmt.Sprintf("/files/%s", fileID), nil, 0)
+	resp, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/files/%s", fileID), nil)
 	if err != nil {
 		return err
 	}
@@ -205,8 +205,8 @@ func (c *OpenAIAgentClient) DeleteFile(ctx context.Context, fileID string) error
 }
 
 // DownloadFileContent скачивает содержимое файла
-func (c *OpenAIAgentClient) DownloadFileContent(ctx context.Context, fileID string, userId uint32) ([]byte, error) {
-	resp, err := c.doRequest("GET", fmt.Sprintf("/files/%s/content", fileID), nil, userId)
+func (c *OpenAIAgentClient) DownloadFileContent(ctx context.Context, fileID string) ([]byte, error) {
+	resp, err := c.doRequest(ctx, "GET", fmt.Sprintf("/files/%s/content", fileID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +216,7 @@ func (c *OpenAIAgentClient) DownloadFileContent(ctx context.Context, fileID stri
 }
 
 // TranscribeAudio транскрибирует аудио в текст
-func (c *OpenAIAgentClient) TranscribeAudio(ctx context.Context, audioData []byte, fileName string, userId uint32) (string, error) {
+func (c *OpenAIAgentClient) TranscribeAudio(ctx context.Context, audioData []byte, fileName string) (string, error) {
 	// Создаём multipart запрос для Whisper API
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -235,7 +235,9 @@ func (c *OpenAIAgentClient) TranscribeAudio(ctx context.Context, audioData []byt
 		return "", fmt.Errorf("failed to write model field: %w", err)
 	}
 
-	writer.Close()
+	if err := writer.Close(); err != nil {
+		return "", fmt.Errorf("failed to close multipart writer: %w", err)
+	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.url+"/audio/transcriptions", &buf)
 	if err != nil {
@@ -310,7 +312,7 @@ func (c *OpenAIAgentClient) CreateResponse(
 }
 
 func (c *OpenAIAgentClient) createResponseInternal(
-	_ context.Context,
+	ctx context.Context,
 	input string,
 	agentConfig interface{}, // *OpenAIAgentConfig
 	onDelta func(string) error,
@@ -344,10 +346,9 @@ func (c *OpenAIAgentClient) createResponseInternal(
 
 	// Формируем payload для Responses API
 	payload := map[string]interface{}{
-		"model":               configMap["model_name"],
-		"input":               input,
-		"stream":              true,  // КРИТИЧНО: Включаем streaming
-		"parallel_tool_calls": false, // TODO пока не работает, наверное нет подходящих функций
+		"model":  configMap["model_name"],
+		"input":  input,
+		"stream": true, // КРИТИЧНО: Включаем streaming
 	}
 
 	// Добавляем instructions (system prompt)
@@ -414,14 +415,19 @@ func (c *OpenAIAgentClient) createResponseInternal(
 			// Извлекаем name и schema из json_schema
 			name, _ := jsonSchema["name"].(string)
 			schema, _ := jsonSchema["schema"].(map[string]interface{})
-			strict, _ := jsonSchema["strict"].(bool)
+
+			// strict=false когда в запросе есть tools (function-инструменты из MCP/calendar/sheets
+			// могут иметь схемы без additionalProperties:false, что несовместимо с strict=true).
+			// OpenAI возвращает HTTP 400 если strict=true + non-strict function tool schemas.
+			_, hasTools := payload["tools"]
+			strictMode := !hasTools
 
 			payload["text"] = map[string]interface{}{
 				"format": map[string]interface{}{
 					"type":   "json_schema",
 					"name":   name,
 					"schema": schema,
-					"strict": strict,
+					"strict": strictMode,
 				},
 			}
 		}
@@ -443,7 +449,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 	//logger.Debug("[CreateResponse] Используется service_tier: %s", SERVICE_TIER, userId)
 
 	// Выполняем streaming запрос к /responses
-	resp, err := c.doRequest("POST", "/responses", payload, userId)
+	resp, err := c.doRequest(ctx, "POST", "/responses", payload)
 	if err != nil {
 		return nil, "", fmt.Errorf("responses API request failed: %w", err)
 	}
@@ -775,7 +781,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		newInput := input + toolResultsContext.String()
 
 		// Рекурсивный вызов с результатами функций (увеличиваем глубину)
-		return c.createResponseInternal(c.ctx, newInput, agentConfig, onDelta, onToolCall, userId, depth+1)
+		return c.createResponseInternal(ctx, newInput, agentConfig, onDelta, onToolCall, userId, depth+1)
 	}
 
 	// Отправляем информацию о токенах клиенту в финальной дельте
@@ -788,20 +794,20 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		if usageJSON, err := json.Marshal(tokenUsage); err == nil {
 			if streamErr := onDelta(string(usageJSON)); streamErr != nil {
 				//logger.Warn("[CreateResponse] Ошибка при отправке token_usage: %v", streamErr, userId)
-			} else {
-				// Проверяем наличие cached_tokens для логирования
-				//hasCachedTokens := false
-				//if inputDetails, ok := tokenUsageData["input_tokens_details"].(map[string]interface{}); ok {
-				//	if cached, ok := inputDetails["cached_tokens"].(float64); ok && cached > 0 {
-				//		hasCachedTokens = true
-				//	}
-				//}
-
-				//if hasCachedTokens {
-				//	logger.Debug("[CreateResponse] Отправлена информация о расходе токенов клиенту (с cached_tokens): %s", string(usageJSON), userId)
 				//} else {
-				//	logger.Debug("[CreateResponse] Отправлена информация о расходе токенов клиенту: %s", string(usageJSON), userId)
-				//}
+				//	// Проверяем наличие cached_tokens для логирования
+				//	hasCachedTokens := false
+				//	if inputDetails, ok := tokenUsageData["input_tokens_details"].(map[string]interface{}); ok {
+				//		if cached, ok := inputDetails["cached_tokens"].(float64); ok && cached > 0 {
+				//			hasCachedTokens = true
+				//		}
+				//	}
+				//
+				//	if hasCachedTokens {
+				//		logger.Debug("[CreateResponse] Отправлена информация о расходе токенов клиенту (с cached_tokens): %s", string(usageJSON), userId)
+				//	} else {
+				//		logger.Debug("[CreateResponse] Отправлена информация о расходе токенов клиенту: %s", string(usageJSON), userId)
+				//	}
 			}
 		}
 	}
@@ -888,7 +894,7 @@ func GenerateModelSchema(hasMetaAction bool, hasOperator bool) map[string]interf
 }
 
 // createModel Создаю новую модель OpenAI Assistant
-func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
+func (m *UniversalModel) createModel(_ uint32, modelData *UniversalModelData, _ []Ids) (UMCR, error) {
 	// modelData уже распарсена и типизирована, используем напрямую
 
 	// НОВЫЙ ПОДХОД: Генерируем эмбеддинги локально вместо использования Vector Store API
@@ -922,7 +928,7 @@ func (m *UniversalModel) createModel(userId uint32, modelData *UniversalModelDat
 }
 
 // deleteModel удаляет модель OpenAI и связанные ресурсы
-func (m *UniversalModel) deleteModel(userId uint32, modelRecord *UserModelRecord, deleteFiles bool, progressCallback func(string)) error {
+func (m *UniversalModel) deleteModel(_ uint32, modelRecord *UserModelRecord, _ bool, progressCallback func(string)) error {
 	if progressCallback != nil {
 		progressCallback("🔄 Удаление модели OpenAI...")
 	}
@@ -956,7 +962,7 @@ func (m *UniversalModel) deleteModel(userId uint32, modelRecord *UserModelRecord
 }
 
 // updateOpenAIModelInPlace обновляет OpenAI Assistant
-func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, existing, updated *UniversalModelData) error {
+func (m *UniversalModel) updateOpenAIModelInPlace(userId uint32, _, updated *UniversalModelData) error {
 
 	// ВАЖНО: В новом подходе с Chat Completions API НЕ создаётся Assistant в OpenAI.
 	// AssistId в БД хранит имя модели (например "gpt-4o-mini"), а не ID ассистента.

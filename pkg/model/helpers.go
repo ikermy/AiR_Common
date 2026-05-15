@@ -2,10 +2,51 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
+
+// StreamingToSync буферизирует вызов RequestStreaming и возвращает AssistResponse.
+// Устраняет дублирование одинаковой реализации метода Request у всех провайдеров.
+//
+// Использование:
+//
+//	func (m *MyModel) Request(userId uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+//	    return model.StreamingToSync(text, files, func(onDelta func(string, bool) error, files ...model.FileUpload) error {
+//	        return m.RequestStreaming(userId, dialogID, text, onDelta, files...)
+//	    })
+//	}
+func StreamingToSync(
+	text string,
+	files []FileUpload,
+	streaming func(onDelta func(delta string, done bool) error, files ...FileUpload) error,
+) (AssistResponse, error) {
+	var empty AssistResponse
+
+	if text == "" && len(files) == 0 {
+		return empty, fmt.Errorf("пустое сообщение и нет файлов")
+	}
+
+	var buf strings.Builder
+	if err := streaming(func(delta string, done bool) error {
+		if !done {
+			buf.WriteString(delta)
+		}
+		return nil
+	}, files...); err != nil {
+		return empty, err
+	}
+
+	var resp AssistResponse
+	if err := json.Unmarshal([]byte(buf.String()), &resp); err != nil {
+		return empty, fmt.Errorf("ошибка парсинга ответа: %w", err)
+	}
+
+	return resp, nil
+}
 
 // ============================================================================
 // CHANNEL PROVIDER INTERFACE
@@ -88,34 +129,13 @@ func getTryChannel(
 // CHANNEL EXTRACTION HELPERS
 // ============================================================================
 
-// ExtractChannelWithPriority извлекает канал с приоритетом ChanMap над Chan
-// Используется для OpenAI и Google провайдеров
-// ПРИОРИТЕТ: ChanMap (установленный через TestSession для TRUE STREAMING)
-// Fallback: возвращаем основной канал если ChanMap пуст
+// ExtractChannelWithPriority извлекает канал с приоритетом ChanMap над Chan.
+// Используется всеми провайдерами (OpenAI, Mistral, Google).
+// Приоритет: ChanMap (True Streaming) → основной Chan (Fallback).
 func ExtractChannelWithPriority(provider ChannelProvider) (*Ch, error) {
 	chanMap := provider.GetChannelMap()
 
 	// ПРИОРИТЕТ: ChanMap (установленный через TestSession для TRUE STREAMING)
-	if chanMap != nil && len(chanMap) > 0 {
-		for _, ch := range chanMap {
-			return ch, nil
-		}
-	}
-
-	// Fallback: возвращаем основной канал если ChanMap пуст
-	mainChan := provider.GetChannel()
-	if mainChan == nil {
-		return nil, fmt.Errorf("канал не найден")
-	}
-
-	return mainChan, nil
-}
-
-// ExtractChannelSimple извлекает только основной канал
-// Используется для Mistral провайдера (если не используется ChanMap)
-func ExtractChannelSimple(provider ChannelProvider) (*Ch, error) {
-	// Сначала проверяем ChanMap (для унификации)
-	chanMap := provider.GetChannelMap()
 	if chanMap != nil && len(chanMap) > 0 {
 		for _, ch := range chanMap {
 			return ch, nil
@@ -246,4 +266,98 @@ func CleanupAllRespondersUniversal(
 
 		return true
 	})
+}
+
+// ============================================================================
+// DIALOG PARSING HELPERS
+// ============================================================================
+
+// DialogMessageBase общая структура для парсинга истории диалога из БД
+type DialogMessageBase struct {
+	Creator   interface{} `json:"creator"`
+	Message   interface{} `json:"message"`
+	Timestamp string      `json:"timestamp"`
+}
+
+// ParseDialogHistory парсит историю диалога из БД JSON в структурированный формат
+// Поддерживает множество форматов данных, которые БД может вернуть
+// Возвращает: []DialogMessageBase с распарсенными сообщениями
+func ParseDialogHistory(rawData []byte) ([]DialogMessageBase, error) {
+	if len(rawData) == 0 {
+		return []DialogMessageBase{}, nil
+	}
+
+	var result []DialogMessageBase
+
+	// Структуры-обёртки для разных форматов данных
+	type DataWrapperArray struct {
+		Data []string `json:"Data"` // Массив JSON строк
+	}
+
+	type DataWrapperString struct {
+		Data string `json:"Data"` // Строка JSON (с двойной экранизацией)
+	}
+
+	type DataWrapperDirect struct {
+		Dialog []DialogMessageBase `json:"dialog"` // Прямой массив с полем "dialog"
+	}
+
+	// Попытка 1: Парсим как структуру с полем Data (массив строк JSON)
+	var wrapperArray DataWrapperArray
+	if err := json.Unmarshal(rawData, &wrapperArray); err == nil && len(wrapperArray.Data) > 0 {
+		for _, jsonStr := range wrapperArray.Data {
+			var msg DialogMessageBase
+			if err := json.Unmarshal([]byte(jsonStr), &msg); err == nil {
+				result = append(result, msg)
+			}
+		}
+		if len(result) > 0 {
+			return result, nil
+		}
+	}
+
+	// Попытка 2: Парсим как структуру с полем Data (строка JSON)
+	var wrapperString DataWrapperString
+	if err := json.Unmarshal(rawData, &wrapperString); err == nil && len(wrapperString.Data) > 0 {
+		var stringArray []string
+		if err := json.Unmarshal([]byte(wrapperString.Data), &stringArray); err == nil && len(stringArray) > 0 {
+			for _, jsonStr := range stringArray {
+				var msg DialogMessageBase
+				if err := json.Unmarshal([]byte(jsonStr), &msg); err == nil {
+					result = append(result, msg)
+				}
+			}
+			if len(result) > 0 {
+				return result, nil
+			}
+		}
+	}
+
+	// Попытка 3: Парсим как структуру с полем "dialog"
+	var wrapperDirect DataWrapperDirect
+	if err := json.Unmarshal(rawData, &wrapperDirect); err == nil && len(wrapperDirect.Dialog) > 0 {
+		return wrapperDirect.Dialog, nil
+	}
+
+	// Попытка 4: Парсим как массив строк напрямую
+	var stringArray []string
+	if err := json.Unmarshal(rawData, &stringArray); err == nil && len(stringArray) > 0 {
+		for _, jsonStr := range stringArray {
+			var msg DialogMessageBase
+			if err := json.Unmarshal([]byte(jsonStr), &msg); err == nil {
+				result = append(result, msg)
+			}
+		}
+		if len(result) > 0 {
+			return result, nil
+		}
+	}
+
+	// Попытка 5: Парсим как прямой массив объектов
+	if err := json.Unmarshal(rawData, &result); err == nil && len(result) > 0 {
+		return result, nil
+	}
+
+	// Все попытки провалились - возвращаем пустой результат
+	return []DialogMessageBase{}, nil
 }
