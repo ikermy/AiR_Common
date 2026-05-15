@@ -279,9 +279,21 @@ type GptType struct {
 	ID   uint8  `json:"id"`
 }
 
+// GOAuth хранит флаги доступа к Google OAuth сервисам (Calendar, Sheets).
+// Используется MCP-сервером для определения доступных инструментов.
+// Провайдеры (OpenAI/Mistral/Google) не используют эти флаги напрямую —
+// инструменты и инструкции приходят через FetchToolsList/FetchSystemPrompt.
+type GOAuth struct {
+	Calendar bool `json:"calendar"`
+	Sheets   bool `json:"sheets"`
+}
+
+// Enabled возвращает true если хотя бы один GOAuth сервис доступен
+func (g GOAuth) Enabled() bool {
+	return g.Calendar || g.Sheets
+}
+
 // UniversalModelData универсальная структура хранения данных моделей
-// Примечание: Calendar/Sheets (ранее GOAuth) теперь управляются исключительно MCP сервером —
-// клиент не хранит эти флаги, инструменты и инструкции приходят через FetchToolsList/FetchSystemPrompt.
 type UniversalModelData struct {
 	Name        string       `json:"name"`                   // Имя модели только для удобства идентификации
 	Prompt      string       `json:"prompt"`                 // Промпт модели
@@ -300,6 +312,9 @@ type UniversalModelData struct {
 	RealtimeVAD *RealtimeVAD `json:"realtime_vad,omitempty"` // Параметры VAD и генерации для Realtime режима
 	// Google-специфичные возможности
 	Video bool `json:"video"` // Генерация видео (Google Veo/Imagen 3) — нативный инструмент провайдера
+	// GOAuth — флаги доступа к Google OAuth сервисам (Calendar, Sheets).
+	// Используется MCP-сервером. Провайдеры получают инструменты только через FetchToolsList.
+	GOAuth GOAuth `json:"g_oauth"`
 	//////////////////////////////////
 	Espero   EsperoConfig `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
 	GptType  *GptType     `json:"gpttype"`
@@ -992,8 +1007,17 @@ func (m *UniversalModel) DecompressModelData(compressedData []byte, vecIds *VecI
 	if prov, ok := rawData["provider"].(float64); ok {
 		modelData.Provider = ProviderType(prov)
 	}
-	// g_oauth (GOAuth) удалён: Calendar/Sheets теперь управляются исключительно MCP сервером.
-	// Поле намеренно игнорируется при десериализации для обратной совместимости с уже сохранёнными данными.
+	// g_oauth — флаги доступа к Google OAuth (Calendar, Sheets).
+	// Используется MCP-сервером при формировании tools/list.
+	// Провайдеры (OpenAI/Mistral/Google) эти флаги не используют напрямую.
+	if goauthMap, ok := rawData["g_oauth"].(map[string]interface{}); ok {
+		if calendar, ok := goauthMap["calendar"].(bool); ok {
+			modelData.GOAuth.Calendar = calendar
+		}
+		if sheets, ok := goauthMap["sheets"].(bool); ok {
+			modelData.GOAuth.Sheets = sheets
+		}
+	}
 	if esperoMap, ok := rawData["espero"].(map[string]interface{}); ok {
 		espero := EsperoConfig{}
 		if limit, ok := esperoMap["limit"].(float64); ok {

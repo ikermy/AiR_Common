@@ -266,6 +266,10 @@ func (c *OpenAIAgentClient) TranscribeAudio(ctx context.Context, audioData []byt
 	return result.Text, nil
 }
 
+// maxToolCallDepth — максимальная глубина рекурсии при вызове инструментов.
+// Ограничивает бесконечные циклы когда модель навязчиво вызывает инструменты.
+const maxToolCallDepth = 5
+
 // CreateResponse выполняет запрос к Responses API
 // Поддерживает file_search, code_interpreter, web_search в отличие от Chat Completions
 // Поддерживает вызов функций (function calls) в streaming режиме
@@ -295,13 +299,30 @@ func (c *OpenAIAgentClient) TranscribeAudio(ctx context.Context, audioData []byt
 //   - In-memory caching: все модели с Prompt Caching
 //   - Extended caching (24h): gpt-5.2, gpt-5.1, gpt-5, gpt-4.1
 func (c *OpenAIAgentClient) CreateResponse(
+	ctx context.Context,
+	input string,
+	agentConfig interface{},
+	onDelta func(string) error,
+	onToolCall func([]interface{}) ([]interface{}, error),
+	userId uint32,
+) (interface{}, string, error) {
+	return c.createResponseInternal(ctx, input, agentConfig, onDelta, onToolCall, userId, 0)
+}
+
+func (c *OpenAIAgentClient) createResponseInternal(
 	_ context.Context,
 	input string,
 	agentConfig interface{}, // *OpenAIAgentConfig
 	onDelta func(string) error,
 	onToolCall func([]interface{}) ([]interface{}, error),
 	userId uint32,
+	depth int,
 ) (interface{}, string, error) {
+	// Защита от бесконечной рекурсии при многократных вызовах инструментов
+	if depth >= maxToolCallDepth {
+		return nil, "", fmt.Errorf("превышен лимит вложенных вызовов инструментов (%d)", maxToolCallDepth)
+	}
+
 	// КРИТИЧНО: НЕ используем json.Marshal/Unmarshal для agentConfig,
 	// так как это уничтожает custom MarshalJSON для FunctionTool!
 	// Вместо этого используем type assertion напрямую
@@ -753,8 +774,8 @@ func (c *OpenAIAgentClient) CreateResponse(
 		// Модифицируем input чтобы включить контекст результатов
 		newInput := input + toolResultsContext.String()
 
-		// Рекурсивный вызов с результатами функций
-		return c.CreateResponse(c.ctx, newInput, agentConfig, onDelta, onToolCall, userId)
+		// Рекурсивный вызов с результатами функций (увеличиваем глубину)
+		return c.createResponseInternal(c.ctx, newInput, agentConfig, onDelta, onToolCall, userId, depth+1)
 	}
 
 	// Отправляем информацию о токенах клиенту в финальной дельте
