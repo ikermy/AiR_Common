@@ -69,10 +69,17 @@ func (m *Model) ConvertDialogToGoogleFormat(dialogID uint64) ([]GoogleContent, e
 	// Конвертируем парсенные сообщения в формат Google
 	var contents []GoogleContent
 	for _, msg := range parsedMessages {
-		// Нормализуем creator (1 = "assistant", 2 = "user")
+		// Нормализуем creator:
+		//   1 = AI (text)          → "model"
+		//   2 = User (text)        → "user"
+		//   3 = UserVoice          → "user"
+		//   4 = Operator           → "model"
+		//   5 = SpeechRealTimeAI   → "model"
+		//   6 = SpeechRealTimeUser → "user"
 		role := "user"
 		if creator, ok := msg.Creator.(float64); ok {
-			if creator == 1 {
+			switch int(creator) {
+			case 1, 4, 5: // AI, Operator, SpeechRealTimeAI
 				role = "model"
 			}
 		} else if creator, ok := msg.Creator.(string); ok {

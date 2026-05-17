@@ -3,11 +3,14 @@ package google
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
@@ -47,8 +50,14 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 
 		_, msg, err := rs.googleConn.ReadMessage()
 		if err != nil {
-			if !strings.Contains(err.Error(), "use of closed network connection") &&
-				!strings.Contains(err.Error(), "websocket: close") {
+			// Извлекаем реальный код и причину закрытия от Google
+			var closeErr *websocket.CloseError
+			if errors.As(err, &closeErr) {
+				// Google закрыл сессию с кодом: публикуем полную причину (видна в логах и клиенту)
+				text := fmt.Sprintf("google close code=%d: %s", closeErr.Code, closeErr.Text)
+				//logger.Error("pumpFromGoogle: Google закрыл сессию respId=%d code=%d reason=%q", rs.respId, closeErr.Code, closeErr.Text, rs.userID)
+				rs.publishEvent(model.RealtimeEvent{Type: "error", Text: text, Err: err})
+			} else if !strings.Contains(err.Error(), "use of closed network connection") {
 				//logger.Error("pumpFromGoogle: ошибка чтения WS respId=%d: %v", rs.respId, err, rs.userID)
 				rs.publishEvent(model.RealtimeEvent{Type: "error", Text: err.Error(), Err: err})
 			}
@@ -60,11 +69,18 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 			//logger.Warn("pumpFromGoogle: ошибка парсинга события: %v raw=%s", err, string(msg), rs.userID)
 			continue
 		}
-
-		// ── setupComplete — отправляем приветствие ────────────────────────────
+		// ── setupComplete — инжектируем историю + приветствие одним сообщением ──
 		if _, ok := event["setupComplete"]; ok {
-			//logger.Debug("pumpFromGoogle: setupComplete respId=%d", rs.respId, rs.userID)
-			m.sendGoogleInitialGreeting(rs)
+			//log.Printf("[pumpFromGoogle] setupComplete respId=%d — инжект истории + приветствие", rs.respId)
+			select {
+			case <-rs.setupCompleteCh:
+			default:
+				close(rs.setupCompleteCh)
+			}
+
+			// Отправляем историю диалога + приветствие одним clientContent (turnComplete=true).
+			// Раздельный инжект истории с turnComplete=false вызывает 1007 "invalid argument".
+			m.sendHistoryAndGreeting(rs)
 			continue
 		}
 
@@ -118,14 +134,28 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 
 		// interrupted — пользователь перебил модель (barge-in)
 		if interrupted, _ := serverContent["interrupted"].(bool); interrupted {
-			//logger.Debug("pumpFromGoogle: interrupted respId=%d", rs.respId, rs.userID)
+			log.Printf("[pumpFromGoogle] *** INTERRUPTED *** respId=%d audioOutBuf=%d", rs.respId, len(rs.AudioOut))
 			rs.IsGenerating.Store(false)
-			assistTextBuf.Reset() // Сбрасываем незавершённый транскрипт
+			assistTextBuf.Reset()
+
+			// Дренируем буфер AudioOut — иначе оставшиеся чанки продолжат воспроизводиться
+			drained := 0
+			for len(rs.AudioOut) > 0 {
+				<-rs.AudioOut
+				drained++
+			}
+			if drained > 0 {
+				log.Printf("[pumpFromGoogle] interrupted: дренировано %d чанков из AudioOut respId=%d", drained, rs.respId)
+			}
+
 			select {
 			case rs.DrainPlayback <- struct{}{}:
 			default:
 			}
-			rs.publishEvent(model.RealtimeEvent{Type: "response_done"})
+			// "interrupted" — отдельный тип события, чтобы хэндлер мог отличить
+			// barge-in прерывание от нормального turnComplete и немедленно
+			// остановить воспроизведение на клиенте (очистить буфер WebAudio и т.п.)
+			rs.publishEvent(model.RealtimeEvent{Type: "interrupted"})
 			continue
 		}
 
@@ -148,7 +178,6 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 					}
 					pcm16, err := base64.StdEncoding.DecodeString(data)
 					if err != nil {
-						//logger.Warn("pumpFromGoogle: ошибка декодирования audio delta: %v", err, rs.userID)
 						continue
 					}
 					select {
@@ -156,7 +185,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 					case <-rs.ctx.Done():
 						return
 					default:
-						//logger.Warn("pumpFromGoogle: AudioOut переполнен — дроп delta len=%d respId=%d", len(pcm16), rs.respId, rs.userID)
+						log.Printf("[pumpFromGoogle] AudioOut overflow, дроп %d байт respId=%d", len(pcm16), rs.respId)
 					}
 					continue
 				}
@@ -183,8 +212,8 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 
 		// turnComplete — ход модели завершён
 		if turnComplete, _ := serverContent["turnComplete"].(bool); turnComplete {
-			//logger.Debug("pumpFromGoogle: turnComplete respId=%d", rs.respId, rs.userID)
 			rs.IsGenerating.Store(false)
+			log.Printf("[pumpFromGoogle] turnComplete respId=%d assistTextLen=%d", rs.respId, assistTextBuf.Len())
 
 			// Сохраняем накопленный транскрипт ответа ассистента в историю диалога
 			if assistText := assistTextBuf.String(); assistText != "" {
@@ -349,11 +378,22 @@ func (m *Model) execGoogleTool(rs *GoogleRealtimeSession, name, argsJSON, callID
 // ============================================================================
 
 func (m *Model) pumpToGoogle(rs *GoogleRealtimeSession) {
+	// Ждем setupComplete перед отправкой аудио, иначе API вернет 1011 (Internal Server Error)
+	select {
+	case <-rs.ctx.Done():
+		return
+	case <-rs.setupCompleteCh:
+		// Setup завершен, можно начинать стримить аудио
+	}
+
 	// 100ms @ 16kHz PCM16 mono = 16000 * 0.1 * 2 = 3200 байт
 	const accumulateBytes = 3200
 	var accumBuf []byte
 
 	mimeType := fmt.Sprintf("audio/pcm;rate=%d", create.GoogleRealtimeInputSampleRate)
+
+	// Для отладки barge-in: считаем фреймы пока модель генерирует
+	var audioWhileGenerating int
 
 	flush := func() {
 		if len(accumBuf) == 0 {
@@ -363,17 +403,14 @@ func (m *Model) pumpToGoogle(rs *GoogleRealtimeSession) {
 		accumBuf = accumBuf[:0]
 		msg := map[string]interface{}{
 			"realtimeInput": map[string]interface{}{
-				"mediaChunks": []map[string]interface{}{
-					{
-						"mimeType": mimeType,
-						"data":     encoded,
-					},
+				"audio": map[string]interface{}{
+					"mimeType": mimeType,
+					"data":     encoded,
 				},
 			},
 		}
 		if err := rs.writeJSON(msg); err != nil {
 			if !strings.Contains(err.Error(), "use of closed network connection") {
-				//logger.Error("pumpToGoogle: ошибка отправки audio chunk respId=%d: %v", rs.respId, err, rs.userID)
 			}
 		}
 	}
@@ -382,7 +419,6 @@ func (m *Model) pumpToGoogle(rs *GoogleRealtimeSession) {
 		select {
 		case <-rs.ctx.Done():
 			flush()
-			//logger.Debug("pumpToGoogle: завершён respId=%d", rs.respId, rs.userID)
 			return
 		case pcm16, ok := <-rs.AudioIn:
 			if !ok {
@@ -391,6 +427,18 @@ func (m *Model) pumpToGoogle(rs *GoogleRealtimeSession) {
 			}
 			if len(pcm16) == 0 {
 				continue
+			}
+			// Отладка: считаем аудио пока модель генерирует
+			if rs.IsGenerating.Load() {
+				audioWhileGenerating++
+				if audioWhileGenerating == 1 || audioWhileGenerating%50 == 0 {
+					log.Printf("[pumpToGoogle] аудио от клиента ВО ВРЕМЯ генерации модели: фрейм #%d len=%d respId=%d", audioWhileGenerating, len(pcm16), rs.respId)
+				}
+			} else {
+				if audioWhileGenerating > 0 {
+					log.Printf("[pumpToGoogle] модель перестала генерировать, всего аудио во время генерации: %d фреймов respId=%d", audioWhileGenerating, rs.respId)
+					audioWhileGenerating = 0
+				}
 			}
 			accumBuf = append(accumBuf, pcm16...)
 			if len(accumBuf) >= accumulateBytes {
@@ -541,4 +589,3 @@ func googleRealtimeFileType(url string) string {
 		return "doc"
 	}
 }
-

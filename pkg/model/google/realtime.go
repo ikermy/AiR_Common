@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -19,8 +21,8 @@ import (
 // GoogleRealtimeSession — голосовая сессия через Google Multimodal Live API.
 // Работает параллельно с текстовым режимом (RequestStreaming), не мешая ему.
 type GoogleRealtimeSession struct {
-	googleConn  *websocket.Conn    // WSS-соединение к Google Multimodal Live API
-	ctx         context.Context    // Контекст сессии — отменяется при CloseRealtimeSession
+	googleConn  *websocket.Conn // WSS-соединение к Google Multimodal Live API
+	ctx         context.Context // Контекст сессии — отменяется при CloseRealtimeSession
 	cancel      context.CancelFunc
 	agentConfig *GoogleAgentConfig // Ссылка на конфиг агента (не копируется)
 	userID      uint32
@@ -42,7 +44,8 @@ type GoogleRealtimeSession struct {
 	// IsGenerating: true пока Google генерирует ответ (modelTurn → turnComplete).
 	IsGenerating atomic.Bool
 	// greetingSent: true — приветствие при старте сессии уже отправлено
-	greetingSent atomic.Bool
+	greetingSent    atomic.Bool
+	setupCompleteCh chan struct{} // signaled when setupComplete is received
 
 	// OnDisconnect — опциональный callback при аварийном закрытии сессии.
 	OnDisconnect       func(respId uint64)
@@ -95,6 +98,20 @@ func (m *Model) SubscribeEvents(respId uint64) (<-chan model.RealtimeEvent, erro
 	rs.eventSubsMu.Lock()
 	rs.eventSubs = append(rs.eventSubs, ch)
 	rs.eventSubsMu.Unlock()
+
+	// Race-guard: pump мог уже завершиться до подписки — отправляем синтетическую ошибку.
+	select {
+	case <-rs.ctx.Done():
+		go func() {
+			ch <- model.RealtimeEvent{
+				Type: "error",
+				Text: "google session terminated before subscription",
+				Err:  fmt.Errorf("session terminated before subscription"),
+			}
+		}()
+	default:
+	}
+
 	return ch, nil
 }
 
@@ -169,7 +186,7 @@ func (m *Model) StartRealtimeSession(userID uint32, dialogID, respId uint64) err
 		return fmt.Errorf("StartRealtimeSession: Realtime не включён для userID=%d (установите флаг Realtime в настройках модели)", userID)
 	}
 
-	conn, err := create.DialGoogleRealtimeSession(m.client.GetAPIKey(), rm.AgentConfig.ModelName)
+	conn, err := create.DialGoogleRealtimeSession(m.client.GetAPIKey(), rm.AgentConfig.RealtimeModel)
 	if err != nil {
 		return fmt.Errorf("StartRealtimeSession: ошибка подключения к Google Live API: %w", err)
 	}
@@ -177,16 +194,17 @@ func (m *Model) StartRealtimeSession(userID uint32, dialogID, respId uint64) err
 	ctx, cancel := context.WithCancel(m.ctx)
 
 	rs := &GoogleRealtimeSession{
-		googleConn:    conn,
-		ctx:           ctx,
-		cancel:        cancel,
-		agentConfig:   rm.AgentConfig,
-		userID:        userID,
-		dialogID:      dialogID,
-		respId:        respId,
-		AudioIn:       make(chan []byte, 256),
-		AudioOut:      make(chan []byte, 256),
-		DrainPlayback: make(chan struct{}, 1),
+		googleConn:      conn,
+		ctx:             ctx,
+		cancel:          cancel,
+		agentConfig:     rm.AgentConfig,
+		userID:          userID,
+		dialogID:        dialogID,
+		respId:          respId,
+		AudioIn:         make(chan []byte, 256),
+		AudioOut:        make(chan []byte, 256),
+		DrainPlayback:   make(chan struct{}, 1),
+		setupCompleteCh: make(chan struct{}),
 	}
 
 	// Отправляем setup-сообщение (первое сообщение в сессии Google Live API)
@@ -194,12 +212,6 @@ func (m *Model) StartRealtimeSession(userID uint32, dialogID, respId uint64) err
 		cancel()
 		_ = conn.Close()
 		return fmt.Errorf("StartRealtimeSession: ошибка setup: %w", err)
-	}
-
-	// Инжектируем историю диалога — агент знает контекст предыдущих разговоров.
-	if err := m.injectGoogleDialogHistory(rs, dialogID); err != nil {
-		//logger.Warn("StartRealtimeSession: не удалось инжектировать историю диалога: %v respId=%d", err, respId, userID)
-		// Не критично — продолжаем без истории
 	}
 
 	m.realtimeSessions.Store(respId, rs)
@@ -279,6 +291,75 @@ func (m *Model) SetRealtimeDisconnectCallback(respId uint64, callback func(respI
 // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
 // ============================================================================
 
+// normalizeLiveAPIToolKeys конвертирует snake_case ключи инструментов в camelCase
+// для WebSocket Live API. REST API принимает оба варианта, WebSocket — только camelCase.
+// Источник: google.golang.org/genai types.go — Tool struct использует json:"functionDeclarations","googleSearch" и т.д.
+func normalizeLiveAPIToolKeys(tools []map[string]interface{}) []map[string]interface{} {
+	if len(tools) == 0 {
+		return tools
+	}
+
+	// Вспомогательная функция для перевода type в UPPERCASE 
+	// (gRPC/Protobuf strict enum JSON pb parser требует "OBJECT" вместо "object").
+	var uppercaseSchemaTypes func(interface{})
+	uppercaseSchemaTypes = func(v interface{}) {
+		if m, ok := v.(map[string]interface{}); ok {
+			// type in UPPERCASE
+			if t, ok := m["type"].(string); ok {
+				m["type"] = strings.ToUpper(t)
+			}
+			// Clean empty 'required' array (can cause 1011 if empty in strict parsers)
+			if req, ok := m["required"].([]interface{}); ok && len(req) == 0 {
+				delete(m, "required")
+			}
+			if req, ok := m["required"].([]string); ok && len(req) == 0 {
+				delete(m, "required")
+			}
+
+			if props, ok := m["properties"].(map[string]interface{}); ok {
+				for _, prop := range props {
+					uppercaseSchemaTypes(prop)
+				}
+			}
+			if items, ok := m["items"]; ok {
+				uppercaseSchemaTypes(items)
+			}
+		}
+	}
+
+	snakeToCamel := map[string]string{
+		"function_declarations":   "functionDeclarations",
+		"google_search":           "googleSearch",
+		"code_execution":          "codeExecution",
+		"google_search_retrieval": "googleSearchRetrieval",
+	}
+	normalized := make([]map[string]interface{}, len(tools))
+	for i, tool := range tools {
+		newTool := make(map[string]interface{}, len(tool))
+		for k, v := range tool {
+			camelKey := k
+			if camel, ok := snakeToCamel[k]; ok {
+				camelKey = camel
+			}
+
+			// Если это functionDeclarations, обязательно исправляем type в schema на UPPERCASE
+			if camelKey == "functionDeclarations" {
+				if fds, ok := v.([]map[string]interface{}); ok {
+					for _, fd := range fds {
+						if params, ok := fd["parameters"]; ok {
+							uppercaseSchemaTypes(params)
+						}
+					}
+				}
+			}
+
+			newTool[camelKey] = v
+		}
+		normalized[i] = newTool
+	}
+	return normalized
+}
+
 // sendGoogleSetup отправляет setup-сообщение Google Multimodal Live API.
 // Это первое и единственное системное сообщение в начале сессии.
 //
@@ -288,7 +369,7 @@ func (m *Model) SetRealtimeDisconnectCallback(respId uint64, callback func(respI
 //  3. Глобальные константы (GoogleRealtimeDefaultVoice, GoogleRealtimeSilenceDurationMs, ...)
 func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 	cfg := rs.agentConfig
-	vad := cfg.RealtimeVAD      // может быть nil
+	vad := cfg.RealtimeVAD             // может быть nil
 	var gvad *create.GoogleRealtimeVAD // Google-специфичный блок, может быть nil
 	if vad != nil {
 		gvad = vad.Google
@@ -307,6 +388,7 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 	if gvad != nil && gvad.LanguageCode != nil {
 		languageCode = *gvad.LanguageCode
 	}
+	_ = languageCode
 
 	// ── Температура: Google нет своего → берём общий ─────────────────────
 	temperature := create.RealtimeTemperature
@@ -324,13 +406,10 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 	speechConfig := map[string]interface{}{
 		"voiceConfig": voiceConfig,
 	}
-	if languageCode != "" {
-		speechConfig["languageCode"] = languageCode
-	}
 
 	generationConfig := map[string]interface{}{
 		// TEXT + AUDIO: модель возвращает аудио (воспроизведение) и текст (история диалога).
-		"responseModalities": []string{"TEXT", "AUDIO"},
+		"responseModalities": []string{"AUDIO"},
 		"temperature":        temperature,
 		"speechConfig":       speechConfig,
 	}
@@ -357,23 +436,40 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 		autoVAD = *gvad.AutomaticActivityDetection
 	}
 
+	// Формируем realtimeInputConfig.
+	//
+	// activityHandling — управляет прерыванием генерации (barge-in):
+	//   "START_OF_ACTIVITY_INTERRUPTS" → barge-in включён (дефолт Google)
+	//   "NO_INTERRUPTION"              → barge-in выключен
+	//
+	// automaticActivityDetection.disabled — управляет режимом VAD:
+	//   false (дефолт) → Google сам детектит речь (авто-VAD)
+	//   true           → push-to-talk (пользователь вручную сигнализирует activityStart/End)
+	//
+	// ВАЖНО: disabled в automaticActivityDetection НЕ влияет на прерывание генерации —
+	// это разные ортогональные настройки.
+	activityHandling := "START_OF_ACTIVITY_INTERRUPTS"
+	if !bargeIn {
+		activityHandling = "NO_INTERRUPTION"
+	}
+
 	var realtimeInputConfig map[string]interface{}
 	if autoVAD {
 		realtimeInputConfig = map[string]interface{}{
 			"automaticActivityDetection": map[string]interface{}{
 				"silenceDurationMs": silenceDurationMs,
-				"disabled":          !bargeIn,
 			},
+			"activityHandling": activityHandling,
 		}
 	} else {
-		// Push-to-talk: VAD полностью отключён
+		// Push-to-talk: автодетект речи выключен, но activityHandling всё равно применяется
 		realtimeInputConfig = map[string]interface{}{
 			"automaticActivityDetection": map[string]interface{}{
 				"disabled": true,
 			},
+			"activityHandling": activityHandling,
 		}
 	}
-
 	// ── Транскрипция входящей речи: Google.InputAudioTranscription > InputAudioTranscription > true ──
 	inputTranscription := true
 	if gvad != nil && gvad.InputAudioTranscription != nil {
@@ -383,38 +479,52 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 	}
 
 	// ── Транскрипция исходящей речи (только Google): Google.OutputAudioTranscription > false ──
-	// ВАЖНО: outputAudioTranscription включается всегда — нужен для сохранения текста
-	// ответа модели в историю диалога. outputAudioTranscription=false отключает
-	// отдельные события, но для сохранения в БД мы уже используем TEXT modality.
 	outputTranscription := false
 	if gvad != nil && gvad.OutputAudioTranscription != nil {
 		outputTranscription = *gvad.OutputAudioTranscription
 	}
 
+	// Определяем realtime-модель: используем RealtimeModel (напр. gemini-2.0-flash-lite),
+	// а не ModelName (который является обычной текстовой моделью пользователя).
+	// ЗАЩИТА: если RealtimeModel совпадает с текстовой ModelName — принудительно используем константу.
+	realtimeModel := cfg.RealtimeModel
+	if realtimeModel == "" || realtimeModel == cfg.ModelName || realtimeModel == "gemini-3.1-flash-live-preview" {
+		realtimeModel = create.RealtimeGoogleModel
+	}
+
 	setup := map[string]interface{}{
-		"model":               fmt.Sprintf("models/%s", cfg.ModelName),
-		"generationConfig":    generationConfig,
+		"model":              fmt.Sprintf("models/%s", realtimeModel),
+		"generationConfig":   generationConfig,
 		"realtimeInputConfig": realtimeInputConfig,
 	}
 
-	// inputAudioTranscription — включаем если нужна STT для пользователя
+	// Транскрипция входящей речи
 	if inputTranscription {
 		setup["inputAudioTranscription"] = map[string]interface{}{}
 	}
-
-	// outputAudioTranscription — включаем только если явно запрошено (субтитры)
+	// Транскрипция исходящей речи (нужна для сохранения текста ответа в историю)
 	if outputTranscription {
 		setup["outputAudioTranscription"] = map[string]interface{}{}
 	}
 
-	// System instruction из конфига агента
 	if cfg.SystemInstruction != nil {
-		setup["systemInstruction"] = cfg.SystemInstruction
+		// Convert to map to remove "role" field which might cause strict parser errors
+		if b, err := json.Marshal(cfg.SystemInstruction); err == nil {
+			var sysInst map[string]interface{}
+			if err := json.Unmarshal(b, &sysInst); err == nil {
+				delete(sysInst, "role")
+				setup["systemInstruction"] = sysInst
+			} else {
+				setup["systemInstruction"] = cfg.SystemInstruction
+			}
+		} else {
+			setup["systemInstruction"] = cfg.SystemInstruction
+		}
 	}
 
-	// Tools (function_declarations, google_search и т.д.)
 	if len(cfg.Tools) > 0 {
-		setup["tools"] = cfg.Tools
+		normalizedTools := normalizeLiveAPIToolKeys(cfg.Tools)
+		setup["tools"] = normalizedTools
 	}
 
 	msg := map[string]interface{}{"setup": setup}
@@ -424,25 +534,107 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 		return fmt.Errorf("sendGoogleSetup: ошибка сериализации: %w", err)
 	}
 
+	// Логируем setup для отладки VAD/barge-in
+	preview := string(data)
+	if len(preview) > 800 {
+		preview = preview[:800] + "..."
+	}
+	log.Printf("[sendGoogleSetup] respId=%d setup=%s", rs.respId, preview)
+
 	rs.writeMu.Lock()
 	writeErr := rs.googleConn.WriteMessage(websocket.TextMessage, data)
 	rs.writeMu.Unlock()
 
-	//logger.Info("sendGoogleSetup: отправлено respId=%d model=%s voice=%s lang=%s autoVAD=%v bargeIn=%v tools=%d",
-	//	rs.respId, cfg.ModelName, voice, languageCode, autoVAD, bargeIn, len(cfg.Tools), rs.userID)
 	return writeErr
 }
 
-// injectGoogleDialogHistory загружает историю диалога и отправляет её как clientContent
-// до первого голосового сообщения. Лимит: DialogHistoryLimit/2.
-func (m *Model) injectGoogleDialogHistory(rs *GoogleRealtimeSession, dialogID uint64) error {
+// sendHistoryAndGreeting объединяет историю диалога и приветствие в ОДНО
+// сообщение clientContent (один user-turn, turnComplete=true).
+//
+// Google Live API НЕ поддерживает clientContent.turns с несколькими элементами
+// (user+model) — возвращает 1007 "invalid argument". Единственный надёжный
+// способ: вся история как текстовый префикс + приветствие в одном user-turn.
+func (m *Model) sendHistoryAndGreeting(rs *GoogleRealtimeSession) {
+	if !rs.greetingSent.CompareAndSwap(false, true) {
+		return
+	}
+
+	// ── 1. Строим текст приветствия ──────────────────────────────────────────
+	sendGreeting := true
+	if rs.agentConfig.RealtimeVAD != nil &&
+		rs.agentConfig.RealtimeVAD.InitialGreeting != nil &&
+		!*rs.agentConfig.RealtimeVAD.InitialGreeting {
+		sendGreeting = false
+	}
+
+	var greetingText string
+	if sendGreeting {
+		if rs.agentConfig.RealtimeVAD != nil &&
+			rs.agentConfig.RealtimeVAD.Greeting != nil &&
+			*rs.agentConfig.RealtimeVAD.Greeting != "" {
+			greetingText = "Your ONLY output is this exact phrase, nothing else, no commentary: " +
+				*rs.agentConfig.RealtimeVAD.Greeting
+		} else {
+			greetingText = "Greet the user warmly and briefly (1-2 sentences). " +
+				"Introduce yourself by name if you have one. " +
+				"Ask how you can help. Speak naturally, no JSON."
+		}
+	}
+
+	// ── 2. Строим текстовое представление истории ────────────────────────────
+	historyText := m.buildHistoryAsText(rs.dialogID)
+	if historyText != "" {
+		//log.Printf("[sendHistoryAndGreeting] история загружена dialogID=%d respId=%d", rs.dialogID, rs.respId)
+	}
+
+	// ── 3. Собираем финальный текст user-turn ────────────────────────────────
+	var fullText string
+	if historyText != "" {
+		fullText = "Context from our previous conversation:\n" + historyText
+		if greetingText != "" {
+			fullText += "\n\n" + greetingText
+		}
+	} else {
+		fullText = greetingText
+	}
+
+	if fullText == "" {
+		return // нечего отправлять
+	}
+
+	// ── 4. Один user-turn, turnComplete=true ─────────────────────────────────
+	msg := map[string]interface{}{
+		"clientContent": map[string]interface{}{
+			"turns": []map[string]interface{}{
+				{
+					"role":  "user",
+					"parts": []map[string]interface{}{{"text": fullText}},
+				},
+			},
+			"turnComplete": true,
+		},
+	}
+
+	//if dbg, err2 := json.Marshal(msg); err2 == nil {
+	//	log.Printf("[sendHistoryAndGreeting] отправка %d байт respId=%d", len(dbg), rs.respId)
+	//}
+
+	if err := rs.writeJSON(msg); err != nil {
+		log.Printf("[sendHistoryAndGreeting] ERROR respId=%d: %v", rs.respId, err)
+		rs.greetingSent.Store(false)
+	}
+}
+
+// buildHistoryAsText загружает историю диалога и возвращает её в виде текста
+// формата "User: ...\nAssistant: ...\n" для вставки в системный контекст.
+func (m *Model) buildHistoryAsText(dialogID uint64) string {
 	maxInject := int(create.DialogHistoryLimit) / 2
 
 	history, found := m.getDialogHistoryFromCache(dialogID)
 	if !found || len(history) == 0 {
 		dbHistory, err := m.ConvertDialogToGoogleFormat(dialogID)
 		if err != nil || len(dbHistory) == 0 {
-			return nil
+			return ""
 		}
 		if len(dbHistory) > int(create.DialogHistoryLimit) {
 			dbHistory = dbHistory[len(dbHistory)-int(create.DialogHistoryLimit):]
@@ -453,94 +645,39 @@ func (m *Model) injectGoogleDialogHistory(rs *GoogleRealtimeSession, dialogID ui
 	}
 
 	if len(history) == 0 {
-		return nil
+		return ""
 	}
 
 	if len(history) > maxInject {
 		history = history[len(history)-maxInject:]
 	}
 
-	//logger.Info("injectGoogleDialogHistory: инжектируем %d сообщений dialogID=%d respId=%d",
-	//	len(history), dialogID, rs.respId, rs.userID)
-
-	var turns []map[string]interface{}
+	var sb strings.Builder
 	for _, msg := range history {
-		if len(msg.Parts) == 0 {
-			continue
-		}
 		role := msg.Role
 		if role != "user" && role != "model" {
 			continue
 		}
-		turns = append(turns, map[string]interface{}{
-			"role":  role,
-			"parts": msg.Parts,
-		})
+		var partText strings.Builder
+		for _, p := range msg.Parts {
+			if t, ok := p["text"].(string); ok && t != "" {
+				if partText.Len() > 0 {
+					partText.WriteString(" ")
+				}
+				partText.WriteString(t)
+			}
+		}
+		if partText.Len() == 0 {
+			continue
+		}
+		prefix := "User"
+		if role == "model" {
+			prefix = "Assistant"
+		}
+		sb.WriteString(prefix)
+		sb.WriteString(": ")
+		sb.WriteString(partText.String())
+		sb.WriteString("\n")
 	}
-
-	if len(turns) == 0 {
-		return nil
-	}
-
-	inject := map[string]interface{}{
-		"clientContent": map[string]interface{}{
-			"turns":        turns,
-			"turnComplete": false, // false = только контекст, не начинать генерацию
-		},
-	}
-
-	return rs.writeJSON(inject)
+	return sb.String()
 }
-
-// sendGoogleInitialGreeting отправляет приветствие сразу после setupComplete.
-// Модель произносит приветственную фразу, не дожидаясь голоса пользователя.
-func (m *Model) sendGoogleInitialGreeting(rs *GoogleRealtimeSession) {
-	if !rs.greetingSent.CompareAndSwap(false, true) {
-		return // уже отправлено
-	}
-
-	// Проверяем параметр InitialGreeting из конфига
-	if rs.agentConfig.RealtimeVAD != nil &&
-		rs.agentConfig.RealtimeVAD.InitialGreeting != nil &&
-		!*rs.agentConfig.RealtimeVAD.InitialGreeting {
-		//logger.Debug("sendGoogleInitialGreeting: приветствие отключено в конфиге respId=%d", rs.respId, rs.userID)
-		return
-	}
-
-	var greetingText string
-	hasExplicitGreeting := rs.agentConfig.RealtimeVAD != nil &&
-		rs.agentConfig.RealtimeVAD.Greeting != nil &&
-		*rs.agentConfig.RealtimeVAD.Greeting != ""
-
-	if hasExplicitGreeting {
-		// Явная фраза — передаём как инструкцию
-		greetingText = "Your ONLY output is this exact phrase, nothing else, no commentary: " +
-			*rs.agentConfig.RealtimeVAD.Greeting
-	} else {
-		// Авто-генерация приветствия
-		greetingText = "Greet the user warmly and briefly (1-2 sentences). " +
-			"Introduce yourself by name if you have one. " +
-			"Ask how you can help. Speak naturally, no JSON."
-	}
-
-	msg := map[string]interface{}{
-		"clientContent": map[string]interface{}{
-			"turns": []map[string]interface{}{
-				{
-					"role":  "user",
-					"parts": []map[string]interface{}{{"text": greetingText}},
-				},
-			},
-			"turnComplete": true,
-		},
-	}
-
-	if err := rs.writeJSON(msg); err != nil {
-		//logger.Warn("sendGoogleInitialGreeting: ошибка отправки: %v respId=%d", err, rs.respId, rs.userID)
-		rs.greetingSent.Store(false)
-		//} else {
-		//	logger.Info("sendGoogleInitialGreeting: приветствие отправлено respId=%d", rs.respId, rs.userID)
-	}
-}
-
-

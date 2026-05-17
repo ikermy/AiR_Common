@@ -36,13 +36,15 @@ const (
 	RealtimeOpenAIModel = "gpt-realtime-mini"
 	//RealtimeOpenAIModel = "gpt-realtime"
 
-	RealtimeGoogleModel = "gemini-2.0-flash-lite"
-	//RealtimeGoogleModel = "gemini-2.0-flash"
+	// RealtimeGoogleModel — Live-модель для Google Live API (AI Studio).
+	RealtimeGoogleModel = "gemini-3.1-flash-live-preview"
+	//RealtimeGoogleModel = "gemini-3.1-flash-live-preview"
 
 	// RealtimeOpenAIURL базовый WebSocket URL для OpenAI Realtime API
 	RealtimeOpenAIURL = "wss://api.openai.com/v1/realtime"
 
-	RealtimeGoogleURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
+	// RealtimeGoogleURL — WebSocket endpoint Google Live API.
+	RealtimeGoogleURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
 	// Параметры сессии Realtime API
 	RealtimeTemperature  = 0.7
@@ -350,9 +352,9 @@ type RealtimeVAD struct {
 	Voice *string `json:"voice,omitempty"` // имя голоса, дефолт зависит от провайдера
 
 	// ── OpenAI-специфичные параметры ────────────────────────────────────────
-	Threshold               *float64  `json:"threshold,omitempty"`                    // VAD порог, дефолт 0.5
-	PrefixPaddingMs         *int      `json:"prefix_padding_ms,omitempty"`            // мс перед речью, дефолт 200
-	MaxResponseOutputTokens *IntOrInf `json:"max_response_output_tokens,omitempty"`   // число или "inf"
+	Threshold               *float64  `json:"threshold,omitempty"`                  // VAD порог, дефолт 0.5
+	PrefixPaddingMs         *int      `json:"prefix_padding_ms,omitempty"`          // мс перед речью, дефолт 200
+	MaxResponseOutputTokens *IntOrInf `json:"max_response_output_tokens,omitempty"` // число или "inf"
 
 	// ── Google-специфичные параметры ────────────────────────────────────────
 	// При наличии переопределяют соответствующие общие поля для Google провайдера.
@@ -373,8 +375,8 @@ type GoogleRealtimeVAD struct {
 
 	// VAD
 	AutomaticActivityDetection *bool `json:"automatic_activity_detection,omitempty"` // авто-VAD, дефолт true
-	BargeIn                    *bool `json:"barge_in,omitempty"`                      // перебивание модели, дефолт true
-	SilenceDurationMs          *int  `json:"silence_duration_ms,omitempty"`           // мс тишины, дефолт 500
+	BargeIn                    *bool `json:"barge_in,omitempty"`                     // перебивание модели, дефолт true
+	SilenceDurationMs          *int  `json:"silence_duration_ms,omitempty"`          // мс тишины, дефолт 500
 }
 
 // EsperoConfig представляет настройки ожидания из ModelDataRequest

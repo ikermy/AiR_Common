@@ -92,6 +92,7 @@ type GoogleAgentConfig struct {
 
 	// Голосовой режим реального времени (Google Multimodal Live API)
 	RealtimeEnabled bool                `json:"realtime_enabled"`       // Голосовой режим включён
+	RealtimeModel   string              `json:"realtime_model"`         // Имя realtime-модели (gemini-2.0-flash-lite)
 	RealtimeVAD     *create.RealtimeVAD `json:"realtime_vad,omitempty"` // Параметры VAD и голоса
 }
 
@@ -237,11 +238,15 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 		return fmt.Errorf("модель Google не найдена для userID %d", userID)
 	}
 
-	// Инициализируем базовую конфигурацию
+	// Инициализируем базовую конфигурацию.
+	// RealtimeModel выставляется сразу в константу — НЕ в found.AssistId (это текстовая модель).
+	// Это гарантирует что realtime-сессия не получит обычную модель (gemini-2.5-flash и т.п.),
+	// которая не поддерживает v1alpha BidiGenerateContent.
 	agentConfig := GoogleAgentConfig{
-		ModelId:   found.ModelId,
-		ModelName: found.AssistId,
-		HasVector: false,
+		ModelId:       found.ModelId,
+		ModelName:     found.AssistId, // текстовая модель (напр. gemini-2.5-flash)
+		HasVector:     false,
+		RealtimeModel: create.RealtimeGoogleModel, // всегда realtime-модель (gemini-2.0-flash-lite)
 	}
 
 	// Загружаем полные данные модели из БД для получения всех параметров
@@ -284,8 +289,11 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 				agentConfig.MetaAction = modelData.MetaAction
 				agentConfig.S3 = modelData.S3
 				agentConfig.Interpreter = modelData.Interpreter
-				agentConfig.RealtimeEnabled = modelData.Realtime
-				agentConfig.RealtimeVAD = modelData.RealtimeVAD
+			agentConfig.RealtimeEnabled = modelData.Realtime
+			agentConfig.RealtimeVAD = modelData.RealtimeVAD
+			// RealtimeModel: берём из RealtimeVAD.Google.VoiceName нет — это фиксированная модель.
+			// Используем константу RealtimeGoogleModel, если в данных не переопределена.
+			agentConfig.RealtimeModel = create.RealtimeGoogleModel
 			}
 		} else {
 			return fmt.Errorf("UniversalModel не установлен, невозможно загрузить данные модели для пользователя %d", userID)

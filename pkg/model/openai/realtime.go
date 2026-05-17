@@ -102,6 +102,22 @@ func (m *Model) SubscribeEvents(respId uint64) (<-chan model.RealtimeEvent, erro
 	rs.eventSubsMu.Lock()
 	rs.eventSubs = append(rs.eventSubs, ch)
 	rs.eventSubsMu.Unlock()
+
+	// Race-guard: pump мог уже завершиться (и rs.cancel() вызван) до того как мы подписались.
+	// В этом случае "error" событие было опубликовано в пустой eventSubs и дропнуто.
+	// Отправляем синтетическое событие чтобы горутина-получатель нормально завершилась.
+	select {
+	case <-rs.ctx.Done():
+		go func() {
+			ch <- model.RealtimeEvent{
+				Type: "error",
+				Text: "openai session terminated before subscription",
+				Err:  fmt.Errorf("session terminated before subscription"),
+			}
+		}()
+	default:
+	}
+
 	return ch, nil
 }
 

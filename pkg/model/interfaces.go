@@ -86,10 +86,17 @@ type MCPConfigProvider interface {
 	FetchSystemPrompt(ctx context.Context, userID uint32, provider create.ProviderType) (string, error)
 }
 
-// RealtimeEvent — событие голосовой сессии OpenAI Realtime API.
-// Type: "audio_delta" | "transcript_delta" | "input_transcript_done" |
-//
-//	"response_done" | "function_result" | "error"
+// RealtimeEvent — событие голосовой сессии Realtime API (OpenAI / Google Live).
+// Type:
+//   "audio_delta"           — дельта аудио (не используется, аудио идёт через AudioOut канал)
+//   "transcript_delta"      — частичный текст ответа модели
+//   "input_transcript_done" — транскрипт речи пользователя готов
+//   "response_done"         — нормальное завершение хода модели (turnComplete)
+//   "interrupted"           — пользователь перебил модель (barge-in); клиент ДОЛЖЕН
+//                             немедленно остановить воспроизведение и очистить буфер
+//   "function_result"       — результат вызова инструмента
+//   "token_usage"           — статистика токенов
+//   "error"                 — ошибка сессии
 type RealtimeEvent struct {
 	Type  string
 	Text  string

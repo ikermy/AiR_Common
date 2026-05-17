@@ -45,9 +45,6 @@ func (v *IntOrInf) UnmarshalJSON(data []byte) error {
 // ============================================================================
 
 const (
-	// GoogleRealtimeBaseURL WebSocket URL для Google Multimodal Live API
-	GoogleRealtimeBaseURL = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
-
 	// GoogleRealtimeDefaultVoice голос по умолчанию для Google Live API
 	GoogleRealtimeDefaultVoice = "Puck"
 
@@ -64,8 +61,6 @@ const (
 
 // DialGoogleRealtimeSession устанавливает WebSocket соединение к Google Multimodal Live API.
 // Возвращает готовое *websocket.Conn. После установки соединения необходимо отправить setup-сообщение.
-//
-// API ключ передаётся как query-параметр (стандарт для Google AI API).
 func DialGoogleRealtimeSession(apiKey, model string) (*websocket.Conn, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("DialGoogleRealtimeSession: apiKey не может быть пустым")
@@ -74,16 +69,19 @@ func DialGoogleRealtimeSession(apiKey, model string) (*websocket.Conn, error) {
 		model = RealtimeGoogleModel
 	}
 
-	wsURL := fmt.Sprintf("%s?key=%s", GoogleRealtimeBaseURL, apiKey)
+	// API key передаётся как заголовок x-goog-api-key (НЕ ?key= в URL!)
+	// Источник: googleapis/go-genai live.go → header.Set("x-goog-api-key", apiKey)
+	headers := http.Header{}
+	headers.Set("x-goog-api-key", apiKey)
 
 	dialer := websocket.Dialer{}
-	conn, resp, err := dialer.Dial(wsURL, http.Header{})
+	conn, resp, err := dialer.Dial(RealtimeGoogleURL, headers)
 	if err != nil {
 		if resp != nil {
 			return nil, fmt.Errorf("DialGoogleRealtimeSession: ошибка подключения (HTTP %d): %w",
 				resp.StatusCode, err)
 		}
-		return nil, fmt.Errorf("DialGoogleRealtimeSession: ошибка подключения к %s: %w", GoogleRealtimeBaseURL, err)
+		return nil, fmt.Errorf("DialGoogleRealtimeSession: ошибка подключения к %s: %w", RealtimeGoogleURL, err)
 	}
 
 	return conn, nil

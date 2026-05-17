@@ -3,11 +3,13 @@ package openai
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/model"
 )
@@ -113,15 +115,20 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 	for {
 		select {
 		case <-rs.ctx.Done():
+			// Контекст отменён — логируем причину для диагностики
+			fmt.Printf("pumpFromOpenAI: ctx.Done() respId=%d cause=%v userID=%d\n", rs.respId, rs.ctx.Err(), rs.userID)
 			return
 		default:
 		}
 
 		_, msg, err := rs.openaiConn.ReadMessage()
 		if err != nil {
-			if !strings.Contains(err.Error(), "use of closed network connection") &&
-				!strings.Contains(err.Error(), "websocket: close") {
-				//logger.Error("pumpFromOpenAI: ошибка чтения WS respId=%d: %v", rs.respId, err, rs.userID)
+			var closeErr *websocket.CloseError
+			if errors.As(err, &closeErr) {
+				// OpenAI закрыл сессию с кодом: публикуем полную причину
+				text := fmt.Sprintf("openai close code=%d: %s", closeErr.Code, closeErr.Text)
+				rs.publishEvent(RealtimeEvent{Type: "error", Text: text, Err: err})
+			} else if !strings.Contains(err.Error(), "use of closed network connection") {
 				rs.publishEvent(RealtimeEvent{Type: "error", Text: err.Error(), Err: err})
 			}
 			return
@@ -229,15 +236,14 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			usage, _ := resp["usage"].(map[string]interface{})
 
 			if status != "completed" {
-				//statusDetails, _ := resp["status_details"].(map[string]interface{})
-				//reason, _ := statusDetails["reason"].(string)
-				//logger.Debug("pumpFromOpenAI: response.done status=%s reason=%s audioDelta=%d respId=%d",
-				//	status, reason, audioDeltaCount, rs.respId, rs.userID)
+				// status="cancelled" → пользователь перебил модель (barge-in).
+				// Публикуем "interrupted" чтобы хэндлер мог отличить от нормального завершения
+				// и немедленно остановить воспроизведение на клиенте.
 				audioDeltaCount = 0
 				pendingFuncResults = pendingFuncResults[:0]
 				rs.IsGenerating.Store(false)
 				stopWatchdog()
-				rs.publishEvent(RealtimeEvent{Type: "response_done"})
+				rs.publishEvent(RealtimeEvent{Type: "interrupted"})
 				continue
 			}
 
