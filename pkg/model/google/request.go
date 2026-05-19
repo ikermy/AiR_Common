@@ -172,14 +172,14 @@ func (m *Model) createModelMessage(assistResponse model.AssistResponse) GoogleCo
 
 // sendToGeminiAPI отправляет запрос к Google Gemini API
 // Автоматически обрабатывает ошибку 429 (quota exceeded) с retry логикой
-func (m *Model) sendToGeminiAPI(modelName string, payload map[string]interface{}) ([]byte, error) {
+func (m *Model) sendToGeminiAPI(modelName string, payload map[string]interface{}, userID uint32) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка сериализации запроса: %v", err)
 	}
 
 	url := fmt.Sprintf("%s/models/%s:generateContent?key=%s",
-		m.client.GetUrl(), modelName, m.client.GetAPIKey())
+		m.client.GetUrl(), modelName, m.client.GetAPIKeyForUser(userID))
 
 	// Попытка запроса с автоматическим retry для ошибки 429
 	maxRetries := 2
@@ -249,7 +249,7 @@ func (m *Model) sendToGeminiAPI(modelName string, payload map[string]interface{}
 // Использует endpoint streamGenerateContent для получения ответа в режиме реального времени
 // onDelta вызывается для каждого delta-события, onComplete - для финального ответа с токенами
 // Возвращает: fullText, usageMetadata, functionCalls, error
-func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]interface{}, onDelta func(delta string) error, _ uint32) (string, map[string]interface{}, []map[string]interface{}, error) {
+func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]interface{}, onDelta func(delta string) error, userID uint32) (string, map[string]interface{}, []map[string]interface{}, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("ошибка сериализации запроса: %v", err)
@@ -258,7 +258,7 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 	// Используем streamGenerateContent для SSE
 	// m.client.GetUrl() уже содержит версию API (v1beta), поэтому не добавляем её повторно
 	url := fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse&key=%s",
-		m.client.GetUrl(), modelName, m.client.GetAPIKey())
+		m.client.GetUrl(), modelName, m.client.GetAPIKeyForUser(userID))
 
 	// Попытка запроса с автоматическим retry для ошибки 429
 	maxRetries := 2
@@ -528,7 +528,7 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 
 		// Отправляем обновленный payload с результатами
 		payload["contents"] = history
-		response, err := m.sendToGeminiAPI(modelName, payload)
+		response, err := m.sendToGeminiAPI(modelName, payload, userID)
 		if err != nil {
 			return emptyResponse, fmt.Errorf("ошибка повторного запроса к Gemini API: %w", err)
 		}

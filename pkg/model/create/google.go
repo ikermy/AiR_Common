@@ -76,6 +76,7 @@ type GoogleAgentClient struct {
 	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealUserID
 	promptFetcher  GooglePromptHintFetcher
 	toolsFetcher   GoogleFunctionDeclarationsFetcher
+	keyResolver    func(userID uint32) string // Резолвер персональных ключей; nil → глобальный apiKey
 }
 
 // GooglePromptHintFetcher опционально получает prompt hint от внешнего MCP-источника.
@@ -130,6 +131,26 @@ func NewGoogleAgentClient(ctx context.Context, apiKey string) *GoogleAgentClient
 func (m *GoogleAgentClient) SetMCPConfigFetchers(promptFetcher GooglePromptHintFetcher, toolsFetcher GoogleFunctionDeclarationsFetcher) {
 	m.promptFetcher = promptFetcher
 	m.toolsFetcher = toolsFetcher
+}
+
+// SetKeyResolver устанавливает функцию-резолвер персонального API-ключа пользователя.
+func (m *GoogleAgentClient) SetKeyResolver(fn func(userID uint32) string) {
+	m.keyResolver = fn
+}
+
+// resolveKey возвращает API-ключ: персональный для userID (если задан) или глобальный.
+func (m *GoogleAgentClient) resolveKey(userID uint32) string {
+	if m.keyResolver != nil && userID != 0 {
+		if key := m.keyResolver(userID); key != "" {
+			return key
+		}
+	}
+	return m.apiKey
+}
+
+// GetAPIKeyForUser возвращает эффективный API-ключ для пользователя (персональный или глобальный).
+func (m *GoogleAgentClient) GetAPIKeyForUser(userID uint32) string {
+	return m.resolveKey(userID)
 }
 
 // SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID в create-time операциях.
@@ -338,7 +359,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	agentID := fmt.Sprintf("models/%s", modelData.GptType.Name)
 
 	// Проверяем доступность модели через тестовый запрос
-	testURL := fmt.Sprintf("%s/%s:generateContent?key=%s", m.url, agentID, m.apiKey)
+	testURL := fmt.Sprintf("%s/%s:generateContent?key=%s", m.url, agentID, m.resolveKey(userID))
 
 	// Формируем тестовый payload для проверки конфигурации
 	testPayload := map[string]interface{}{
@@ -876,9 +897,9 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 						continue
 					}
 
-					// fileID.ID это URI файла в Google Files API
-					fileURI := fileID.ID
-					downloadURL := fmt.Sprintf("%s?key=%s", fileURI, m.googleClient.apiKey)
+				// fileID.ID это URI файла в Google Files API
+				fileURI := fileID.ID
+				downloadURL := fmt.Sprintf("%s?key=%s", fileURI, m.googleClient.resolveKey(userID))
 
 					fileReq, err := http.NewRequestWithContext(m.ctx, http.MethodGet, downloadURL, nil)
 					if err != nil {
@@ -920,8 +941,8 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 
 					content := string(fileContent)
 
-					// Генерируем эмбеддинг через функцию GenerateGoogleEmbedding
-					embedding, err := GenerateGoogleEmbedding(m.ctx, m.googleClient.apiKey, content)
+				// Генерируем эмбеддинг через функцию GenerateGoogleEmbedding
+				embedding, err := GenerateGoogleEmbedding(m.ctx, m.googleClient.resolveKey(userID), content)
 					if err != nil {
 						//logger.Warn("Не удалось сгенерировать эмбеддинг для файла %s: %v", docName, err)
 						continue

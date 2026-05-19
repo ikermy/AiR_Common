@@ -86,10 +86,20 @@ type Services struct {
 func New(parent context.Context, conf *conf.Conf, actionHandler model.ActionHandler, db DB, router model.RouterInterface) *Model {
 	ctx, cancel := context.WithCancel(parent)
 
+	mistralClient := NewMistralAgentClient(parent, conf)
+
+	// Резолвер персональных ключей Mistral: возвращаем только ключ из БД или пустую строку.
+	mistralClient.SetKeyResolver(func(userID uint32) string {
+		if key, err := db.GetUserAPIKey(userID, create.ProviderMistral); err == nil {
+			return key
+		}
+		return ""
+	})
+
 	return &Model{
 		ctx:           ctx,
 		cancel:        cancel,
-		client:        NewMistralAgentClient(parent, conf),
+		client:        mistralClient,
 		db:            db,
 		responders:    sync.Map{},
 		waitChannels:  sync.Map{},

@@ -8,7 +8,8 @@ import (
 	"io"
 	"net/http"
 	"slices"
-	"strings"
+
+	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
 // MistralSchemaJSON - JSON Schema для структурированных ответов Mistral Agent
@@ -79,6 +80,22 @@ type MistralAgentClient struct {
 	universalModel *UniversalModel // Ссылка на UniversalModel для доступа к GetRealUserID
 	promptFetcher  GooglePromptHintFetcher
 	toolsFetcher   GoogleFunctionDeclarationsFetcher
+	keyResolver    func(userID uint32) string // Резолвер персональных ключей; nil → глобальный apiKey
+}
+
+// SetKeyResolver устанавливает функцию-резолвер персонального API-ключа пользователя.
+func (m *MistralAgentClient) SetKeyResolver(fn func(userID uint32) string) {
+	m.keyResolver = fn
+}
+
+// resolveKey возвращает API-ключ: персональный для userID (если задан) или глобальный.
+func (m *MistralAgentClient) resolveKey(userID uint32) string {
+	if m.keyResolver != nil && userID != 0 {
+		if key := m.keyResolver(userID); key != "" {
+			return key
+		}
+	}
+	return m.apiKey
 }
 
 // SetMCPConfigFetchers устанавливает внешние fetchers для prompt hint и function declarations.
@@ -168,9 +185,7 @@ func (m *UniversalModel) deleteMistralModel(userID uint32, modelData *UserModelR
 
 // deleteAgent удаляет Mistral Agent по ID
 func (m *MistralAgentClient) deleteAgent(agentID string) error {
-	// Убираем /completions из URL
-	baseURL := strings.Replace(m.url, "/completions", "", 1)
-	deleteURL := fmt.Sprintf("%s/%s", baseURL, agentID)
+	deleteURL := fmt.Sprintf("%s/%s", mode.MistralAgentsBaseURL, agentID)
 
 	return m.executeMistralDeleteRequest(deleteURL)
 }
@@ -264,8 +279,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 		return UMCR{}, fmt.Errorf("modelData не может быть nil")
 	}
 
-	// Убираем /completions из URL для endpoint создания агента
-	baseURL := strings.Replace(m.url, "/completions", "", 1)
+	baseURL := mode.MistralAgentsBaseURL
 
 	description := fmt.Sprintf("Agent for user %d", userID)
 
@@ -382,7 +396,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 		return UMCR{}, fmt.Errorf("ошибка создания POST запроса: %v", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Authorization", "Bearer "+m.resolveKey(userID))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -440,7 +454,8 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 // url: полный URL запроса
 // body: тело запроса (может быть nil)
 // successStatuses: список допустимых статус-кодов (если nil, то только OK)
-func (m *MistralAgentClient) executeMistralRequest(method, url string, body []byte, successStatuses []int) ([]byte, error) {
+// userID: ID пользователя для резолвинга персонального API-ключа (0 = глобальный ключ)
+func (m *MistralAgentClient) executeMistralRequest(method, url string, body []byte, successStatuses []int, userID uint32) ([]byte, error) {
 	var req *http.Request
 	var err error
 
@@ -454,7 +469,7 @@ func (m *MistralAgentClient) executeMistralRequest(method, url string, body []by
 		return nil, fmt.Errorf("ошибка создания %s запроса: %w", method, err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Authorization", "Bearer "+m.resolveKey(userID))
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -495,13 +510,13 @@ func (m *MistralAgentClient) executeMistralRequest(method, url string, body []by
 // Допускает статусы OK, NoContent и NotFound как успешные
 func (m *MistralAgentClient) executeMistralDeleteRequest(url string) error {
 	_, err := m.executeMistralRequest(http.MethodDelete, url, nil,
-		[]int{http.StatusOK, http.StatusNoContent, http.StatusNotFound})
+		[]int{http.StatusOK, http.StatusNoContent, http.StatusNotFound}, 0)
 	return err
 }
 
 // executeMistralGetRequest получает данные через общий API (GET)
 func (m *MistralAgentClient) executeMistralGetRequest(url string) ([]byte, error) {
-	return m.executeMistralRequest(http.MethodGet, url, nil, nil)
+	return m.executeMistralRequest(http.MethodGet, url, nil, nil, 0)
 }
 
 // ListLibraries получает список всех библиотек

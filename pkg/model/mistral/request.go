@@ -111,7 +111,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 		inputs := createConversationInputs(userContent)
 
 		//logger.Debug("Создание нового conversation для агента %s", respModel.Assist.AssistId, userID)
-		convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs)
+		convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs, respModel.Assist.UserID)
 		if err != nil {
 			return emptyResponse, fmt.Errorf("ошибка создания conversation: %w", err)
 		}
@@ -125,7 +125,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 	} else {
 		// Продолжаем существующий conversation
 		// Отправляем userContent (может содержать изображения)
-		convResp, err = m.client.ContinueConversation(respModel.ConversationId, userContent)
+		convResp, err = m.client.ContinueConversation(respModel.ConversationId, userContent, respModel.Assist.UserID)
 		if err != nil {
 			// Проверяем на ошибку 400 с кодом 3230 - рассинхронизация вызовов функций
 			if strings.Contains(err.Error(), "400") && strings.Contains(err.Error(), "Not the same number of function calls and responses") {
@@ -138,7 +138,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 				// Создаём новый conversation с текущим сообщением пользователя
 				inputs := createConversationInputs(userContent)
 
-				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs)
+				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs, respModel.Assist.UserID)
 				if err != nil {
 					return emptyResponse, fmt.Errorf("ошибка создания нового conversation после 400/3230: %w", err)
 				}
@@ -156,7 +156,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 				// Создаём новый conversation с текущим сообщением
 				inputs := createConversationInputs(userContent)
 
-				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs)
+				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs, respModel.Assist.UserID)
 				if err != nil {
 					return emptyResponse, fmt.Errorf("ошибка создания нового conversation после 404: %w", err)
 				}
@@ -176,7 +176,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 				// Создаём новый conversation с текущим сообщением
 				inputs := createConversationInputs(userContent)
 
-				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs)
+				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs, respModel.Assist.UserID)
 				if err != nil {
 					return emptyResponse, fmt.Errorf("ошибка создания нового conversation после 503: %w", err)
 				}
@@ -201,7 +201,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 					},
 				}
 
-				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs)
+				convResp, err = m.client.StartConversation(respModel.Assist.AssistId, inputs, respModel.Assist.UserID)
 				if err != nil {
 					return emptyResponse, fmt.Errorf("ошибка создания нового conversation после 500: %w", err)
 				}
@@ -261,7 +261,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 		if respModel.ConversationId != "" {
 			// Используем Conversations API с правильным форматом для function result
 			// Отправляем результат с type: "function.result" и tool_call_id согласно документации Mistral
-			convResp, err := m.client.SendFunctionResult(respModel.ConversationId, response.ToolCallID, funcResult)
+			convResp, err := m.client.SendFunctionResult(respModel.ConversationId, response.ToolCallID, funcResult, respModel.Assist.UserID)
 			if err != nil {
 				// Проверяем на ошибку 400 - невалидный tool_call_id или рассинхронизация вызовов функций
 				if strings.Contains(err.Error(), "400") && (strings.Contains(err.Error(), "Unexpected tool call id") || strings.Contains(err.Error(), "Not the same number of function calls and responses")) {
@@ -274,7 +274,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 					// Создаём новый conversation с контекстом последнего сообщения пользователя
 					inputs := createConversationInputs(fmt.Sprintf("Результат выполнения функции %s: %s", response.FuncName, funcResult))
 
-					newConvResp, newErr := m.client.StartConversation(respModel.Assist.AssistId, inputs)
+					newConvResp, newErr := m.client.StartConversation(respModel.Assist.AssistId, inputs, respModel.Assist.UserID)
 					if newErr != nil {
 						return emptyResponse, fmt.Errorf("ошибка восстановления после рассинхронизации функций: %w", newErr)
 					}
@@ -315,7 +315,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 			// Создаём новый conversation с результатом функции
 			inputs := createConversationInputs(fmt.Sprintf("Результат выполнения функции %s: %s", response.FuncName, funcResult))
 
-			newConvResp, err := m.client.StartConversation(respModel.Assist.AssistId, inputs)
+			newConvResp, err := m.client.StartConversation(respModel.Assist.AssistId, inputs, respModel.Assist.UserID)
 			if err != nil {
 				//logger.Error("Ошибка создания нового conversation после функции: %v", err, userID)
 				// Оставляем текущий assistResponse
@@ -701,7 +701,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 		// Первый запрос - создаём новый conversation
 		inputs := createConversationInputs(userContent)
 
-		convResp, err = m.client.StartConversationStreaming(respModel.Assist.AssistId, inputs, wrappedOnDelta)
+		convResp, err = m.client.StartConversationStreaming(respModel.Assist.AssistId, inputs, wrappedOnDelta, respModel.Assist.UserID)
 		if err != nil {
 			return fmt.Errorf("ошибка создания streaming conversation: %w", err)
 		}
@@ -711,7 +711,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 		m.saveConversationId(respModel.Chan.DialogID, respModel.ConversationId)
 	} else {
 		// Продолжаем существующий conversation
-		convResp, err = m.client.ContinueConversationStreaming(respModel.ConversationId, userContent, wrappedOnDelta)
+		convResp, err = m.client.ContinueConversationStreaming(respModel.ConversationId, userContent, wrappedOnDelta, respModel.Assist.UserID)
 		if err != nil {
 			// Обработка ошибок - сброс и пересоздание conversation
 			if strings.Contains(err.Error(), "400") || strings.Contains(err.Error(), "404") ||
@@ -724,7 +724,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 				// Создаём новый conversation
 				inputs := createConversationInputs(userContent)
 
-				convResp, err = m.client.StartConversationStreaming(respModel.Assist.AssistId, inputs, wrappedOnDelta)
+				convResp, err = m.client.StartConversationStreaming(respModel.Assist.AssistId, inputs, wrappedOnDelta, respModel.Assist.UserID)
 				if err != nil {
 					return fmt.Errorf("ошибка создания нового streaming conversation: %w", err)
 				}
@@ -843,6 +843,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 				respModel.ConversationId,
 				functionResults,
 				wrappedOnDelta,
+				respModel.Assist.UserID,
 			)
 			if err != nil {
 				// Проверяем на ошибки рассинхронизации или сломанного conversation

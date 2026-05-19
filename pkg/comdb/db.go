@@ -76,6 +76,12 @@ type Exterior interface {
 
 	// UserInfo методы
 	UserTimeZone(userID uint32) (string, error)
+
+	// UserAPIKey — персональные API-ключи провайдеров для каждого пользователя.
+	// Возвращает пустую строку (без ошибки) если ключ не задан — caller должен использовать глобальный ключ.
+	GetUserAPIKey(userID uint32, provider ProviderType) (string, error)
+	SetUserAPIKey(userID uint32, provider ProviderType, key string) error
+	DeleteUserAPIKey(userID uint32, provider ProviderType) error
 }
 
 // ChatType определяет тип чата (используется в БД)
@@ -1914,6 +1920,77 @@ func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remainin
 	totalLimit = uint64(vLimit)
 
 	return remaining, totalLimit, nil
+}
+
+// GetUserAPIKey возвращает персональный API-ключ пользователя для указанного провайдера.
+// Возвращает ("", nil) если ключ не задан — caller должен использовать глобальный ключ из конфига.
+func (d *DB) GetUserAPIKey(userID uint32, provider ProviderType) (string, error) {
+	if userID == 0 {
+		return "", nil
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	var key sql.NullString
+	err := d.conn.QueryRowContext(ctx,
+		`SELECT ApiKey FROM user_api_keys WHERE UserId = ? AND Provider = ?`,
+		userID, provider.String(),
+	).Scan(&key)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("ошибка получения API ключа пользователя %d (%s): %w", userID, provider, err)
+	}
+	if !key.Valid {
+		return "", nil
+	}
+	return key.String, nil
+}
+
+// SetUserAPIKey сохраняет (или обновляет) персональный API-ключ пользователя для провайдера.
+func (d *DB) SetUserAPIKey(userID uint32, provider ProviderType, key string) error {
+	if userID == 0 {
+		return fmt.Errorf("некорректный userID")
+	}
+	if key == "" {
+		return fmt.Errorf("ключ не может быть пустым")
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	_, err := d.conn.ExecContext(ctx,
+		`INSERT INTO user_api_keys (UserId, Provider, ApiKey)
+		 VALUES (?, ?, ?)
+		 ON DUPLICATE KEY UPDATE ApiKey = VALUES(ApiKey), UpdatedAt = CURRENT_TIMESTAMP`,
+		userID, provider.String(), key,
+	)
+	if err != nil {
+		return fmt.Errorf("ошибка сохранения API ключа пользователя %d (%s): %w", userID, provider, err)
+	}
+	return nil
+}
+
+// DeleteUserAPIKey удаляет персональный API-ключ пользователя для провайдера.
+func (d *DB) DeleteUserAPIKey(userID uint32, provider ProviderType) error {
+	if userID == 0 {
+		return fmt.Errorf("некорректный userID")
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	_, err := d.conn.ExecContext(ctx,
+		`DELETE FROM user_api_keys WHERE UserId = ? AND Provider = ?`,
+		userID, provider.String(),
+	)
+	if err != nil {
+		return fmt.Errorf("ошибка удаления API ключа пользователя %d (%s): %w", userID, provider, err)
+	}
+	return nil
 }
 
 func (d *DB) UserTimeZone(userID uint32) (string, error) {

@@ -77,7 +77,7 @@ func TestIntegrationSendContacts(t *testing.T) {
 			},
 		},
 		Service: pb.TELEGRAM,
-		userID:  42,
+		UserID:  42,
 	}
 
 	// Сериализуем в JSON
@@ -97,7 +97,7 @@ func TestIntegrationSendContacts(t *testing.T) {
 	t.Logf("  - Групп: %d", len(testData.Groups))
 	t.Logf("  - Супергрупп: %d", len(testData.Supergroups))
 	t.Logf("  - Сервис: %v", testData.Service)
-	t.Logf("  - ID пользователя: %d", testData.userID)
+	t.Logf("  - ID пользователя: %d", testData.UserID)
 }
 
 // TestIntegrationBatchSendContacts проверяет отправку с повторами
@@ -166,7 +166,7 @@ func TestIntegrationBatchSendContacts(t *testing.T) {
 			},
 		},
 		Service: pb.WHATSAPP,
-		userID:  100,
+		UserID:  100,
 	}
 
 	jsonData, err := json.Marshal(testData)

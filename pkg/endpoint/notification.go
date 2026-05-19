@@ -210,7 +210,7 @@ func SendInstantNotification(uid uint32, event, userName, assistName, target str
 
 // PaymentInfo Структура для информации о инициации платежа
 type PaymentInfo struct {
-	userID    int    `json:"userID"`
+	UserID    int    `json:"userID"`
 	Currency  string `json:"currency"`
 	Amount    int    `json:"amount"`
 	AmountUsd int    `json:"amountUsd"`
@@ -222,7 +222,7 @@ type PaymentInfo struct {
 // PaymentStatus Структура для информации о статусе платежа
 type PaymentStatus struct {
 	OrderID        string  `json:"orderId"`
-	userID         uint32  `json:"userID"`
+	UserID         uint32  `json:"userID"`
 	Status         string  `json:"status"`
 	Currency       string  `json:"currency"`
 	Network        string  `json:"network"`

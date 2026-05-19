@@ -171,6 +171,12 @@ type DB interface {
 
 	// GetUserTimeZone получает часовой пояс пользователя из БД
 	UserTimeZone(userID uint32) (string, error)
+
+	// UserAPIKey — персональные API-ключи провайдеров для каждого пользователя.
+	// GetUserAPIKey возвращает ("", nil) если ключ не задан.
+	GetUserAPIKey(userID uint32, provider ProviderType) (string, error)
+	SetUserAPIKey(userID uint32, provider ProviderType, key string) error
+	DeleteUserAPIKey(userID uint32, provider ProviderType) error
 }
 
 // DocumentMetadata представляет метаданные документа с эмбеддингом
@@ -242,9 +248,11 @@ func New(ctx context.Context, db DB, conf *conf.Conf) *UniversalModel {
 		landingPort: conf.WEB.Land, // TODO нужно изменить правила Nginx и убрать порт
 	}
 
-	// Инициализируем OpenAI клиент, если ключ предоставлен
+	// Инициализируем OpenAI клиент БЕЗ глобального ключа — глобальные ключи из конфига
+	// должны игнорироваться полностью. Клиент получает пустой apiKey и резолвер
+	// будет возвращать только персональные ключи из БД (или пустую строку).
 	m.openaiClient = &OpenAIAgentClient{
-		apiKey: conf.GPT.OpenAIKey,
+		apiKey: "",
 		url:    mode.OpenAIAgentsURL,
 		ctx:    ctx,
 		httpClient: &http.Client{
@@ -252,22 +260,44 @@ func New(ctx context.Context, db DB, conf *conf.Conf) *UniversalModel {
 		},
 		universalModel: m, // Передаем ссылку на universalModel для доступа к GetRealUserID
 	}
+	m.openaiClient.SetKeyResolver(func(userID uint32) string {
+		if key, err := db.GetUserAPIKey(userID, ProviderOpenAI); err == nil {
+			return key
+		}
+		return ""
+	})
 
-	// Инициализируем Mistral клиент, если ключ предоставлен
+	// Инициализируем Mistral клиент БЕЗ глобального ключа — глобальные ключи из конфига
+	// должны игнорироваться полностью. Клиент получает пустой apiKey и резолвер
+	// будет возвращать только персональные ключи из БД (или пустую строку).
 	m.mistralClient = &MistralAgentClient{
-		apiKey:         conf.GPT.MistralKey,
+		apiKey:         "",
 		url:            mode.MistralAgentsURL,
 		ctx:            ctx,
 		universalModel: m,
 	}
+	m.mistralClient.SetKeyResolver(func(userID uint32) string {
+		if key, err := db.GetUserAPIKey(userID, ProviderMistral); err == nil {
+			return key
+		}
+		return ""
+	})
 
-	// Инициализируем google клиент, если ключ предоставлен
+	// Инициализируем google клиент БЕЗ глобального ключа — глобальные ключи из конфига
+	// должны игнорироваться полностью. Клиент получает пустой apiKey и резолвер
+	// будет возвращать только персональные ключи из БД (или пустую строку).
 	m.googleClient = &GoogleAgentClient{
-		apiKey:         conf.GPT.GoogleKey,
+		apiKey:         "",
 		url:            mode.GoogleAgentsURL,
 		ctx:            ctx,
 		universalModel: m,
 	}
+	m.googleClient.SetKeyResolver(func(userID uint32) string {
+		if key, err := db.GetUserAPIKey(userID, ProviderGoogle); err == nil {
+			return key
+		}
+		return ""
+	})
 
 	return m
 }
@@ -278,6 +308,25 @@ func (m *UniversalModel) SetMistralMCPFetchers(promptFetcher GooglePromptHintFet
 	if m.mistralClient != nil {
 		m.mistralClient.SetMCPConfigFetchers(promptFetcher, toolsFetcher)
 	}
+}
+
+// ============================================================================
+// USER API KEYS — персональные API-ключи провайдеров
+// ============================================================================
+
+// SetUserAPIKey сохраняет персональный API-ключ пользователя для указанного провайдера.
+func (m *UniversalModel) SetUserAPIKey(userID uint32, provider ProviderType, key string) error {
+	return m.db.SetUserAPIKey(userID, provider, key)
+}
+
+// GetUserAPIKey возвращает персональный API-ключ пользователя. Пустая строка — ключ не задан.
+func (m *UniversalModel) GetUserAPIKey(userID uint32, provider ProviderType) (string, error) {
+	return m.db.GetUserAPIKey(userID, provider)
+}
+
+// DeleteUserAPIKey удаляет персональный API-ключ пользователя для провайдера.
+func (m *UniversalModel) DeleteUserAPIKey(userID uint32, provider ProviderType) error {
+	return m.db.DeleteUserAPIKey(userID, provider)
 }
 
 type GptType struct {

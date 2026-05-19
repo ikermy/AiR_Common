@@ -201,7 +201,7 @@ func TestHandlerSendResult(t *testing.T) {
 			{Id: 1, FirstName: "John", LastName: "Doe"},
 		},
 		Service: pb.TELEGRAM,
-		userID:  42,
+		UserID:  42,
 	}
 
 	ctx := context.Background()

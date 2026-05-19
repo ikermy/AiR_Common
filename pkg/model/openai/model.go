@@ -127,8 +127,16 @@ type Services struct {
 func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.ActionHandler) *Model {
 	ctx, cancel := context.WithCancel(parent)
 
-	// Создаём OpenAI клиент с API ключом через конструктор
-	openaiClient := create.NewOpenAIAgentClient(ctx, conf.GPT.OpenAIKey)
+	// Клиент получает пустой apiKey и резолвер
+	// будет возвращать только персональные ключи из БД (или пустую строку).
+	openaiClient := create.NewOpenAIAgentClient(ctx, "")
+
+	openaiClient.SetKeyResolver(func(userID uint32) string {
+		if key, err := d.GetUserAPIKey(userID, create.ProviderOpenAI); err == nil {
+			return key
+		}
+		return ""
+	})
 
 	m := &Model{
 		ctx:           ctx,

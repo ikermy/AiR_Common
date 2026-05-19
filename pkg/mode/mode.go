@@ -17,7 +17,10 @@ const (
 	RetryMaxAttempts = 3 // Максимальное количество повторных попыток
 	RetryBaseDelay   = 1 // Базовая задержка между попытками в секундах
 	// Mistral API settings
-	MistralAgentsURL = "https://api.mistral.ai/v1/agents/completions"
+	MistralBaseURL          = "https://api.mistral.ai/v1"
+	MistralAgentsBaseURL    = MistralBaseURL + "/agents"
+	MistralAgentsURL        = MistralAgentsBaseURL + "/completions"
+	MistralConversationsURL = MistralBaseURL + "/conversations"
 	// Google API settings
 	GoogleAgentsURL = "https://generativelanguage.googleapis.com/v1beta"
 	// OpenAI API settings

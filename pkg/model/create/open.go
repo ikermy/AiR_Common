@@ -106,6 +106,7 @@ type OpenAIAgentClient struct {
 	ctx            context.Context
 	httpClient     *http.Client
 	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealUserID
+	keyResolver    func(userID uint32) string // Резолвер персональных ключей; nil → глобальный apiKey
 }
 
 // StreamingFunctionCall представляет накапливаемый function call для Realtime API
@@ -157,8 +158,28 @@ func (c *OpenAIAgentClient) GetAPIKey() string {
 	return c.apiKey
 }
 
+// SetKeyResolver устанавливает функцию-резолвер персонального API-ключа пользователя.
+func (c *OpenAIAgentClient) SetKeyResolver(fn func(userID uint32) string) {
+	c.keyResolver = fn
+}
+
+// resolveKey возвращает API-ключ: персональный для userID (если задан) или глобальный.
+func (c *OpenAIAgentClient) resolveKey(userID uint32) string {
+	if c.keyResolver != nil && userID != 0 {
+		if key := c.keyResolver(userID); key != "" {
+			return key
+		}
+	}
+	return c.apiKey
+}
+
+// GetAPIKeyForUser возвращает эффективный API-ключ для пользователя (персональный или глобальный).
+func (c *OpenAIAgentClient) GetAPIKeyForUser(userID uint32) string {
+	return c.resolveKey(userID)
+}
+
 // doRequest выполняет HTTP запрос к OpenAI API
-func (c *OpenAIAgentClient) doRequest(ctx context.Context, method, path string, body interface{}) (*http.Response, error) {
+func (c *OpenAIAgentClient) doRequest(ctx context.Context, method, path string, body interface{}, userID uint32) (*http.Response, error) {
 	url := c.url + path
 
 	var reqBody io.Reader
@@ -175,7 +196,7 @@ func (c *OpenAIAgentClient) doRequest(ctx context.Context, method, path string, 
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+c.resolveKey(userID))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("OpenAI-Beta", "assistants=v2")
 
@@ -195,7 +216,7 @@ func (c *OpenAIAgentClient) doRequest(ctx context.Context, method, path string, 
 
 // DeleteFile удаляет файл
 func (c *OpenAIAgentClient) DeleteFile(ctx context.Context, fileID string) error {
-	resp, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/files/%s", fileID), nil)
+	resp, err := c.doRequest(ctx, "DELETE", fmt.Sprintf("/files/%s", fileID), nil, 0)
 	if err != nil {
 		return err
 	}
@@ -206,7 +227,7 @@ func (c *OpenAIAgentClient) DeleteFile(ctx context.Context, fileID string) error
 
 // DownloadFileContent скачивает содержимое файла
 func (c *OpenAIAgentClient) DownloadFileContent(ctx context.Context, fileID string) ([]byte, error) {
-	resp, err := c.doRequest(ctx, "GET", fmt.Sprintf("/files/%s/content", fileID), nil)
+	resp, err := c.doRequest(ctx, "GET", fmt.Sprintf("/files/%s/content", fileID), nil, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +265,7 @@ func (c *OpenAIAgentClient) TranscribeAudio(ctx context.Context, audioData []byt
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Authorization", "Bearer "+c.resolveKey(0))
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	resp, err := c.httpClient.Do(req)
@@ -449,7 +470,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 	//logger.Debug("[CreateResponse] Используется service_tier: %s", SERVICE_TIER, userID)
 
 	// Выполняем streaming запрос к /responses
-	resp, err := c.doRequest(ctx, "POST", "/responses", payload)
+	resp, err := c.doRequest(ctx, "POST", "/responses", payload, userID)
 	if err != nil {
 		return nil, "", fmt.Errorf("responses API request failed: %w", err)
 	}

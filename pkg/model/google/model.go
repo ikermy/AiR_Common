@@ -125,8 +125,16 @@ type Services struct {
 func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.ActionHandler) *Model {
 	ctx, cancel := context.WithCancel(parent)
 
-	// Создаём Google клиент с API ключом через конструктор
-	googleClient := create.NewGoogleAgentClient(ctx, conf.GPT.GoogleKey)
+	// Клиент получает пустой apiKey и резолвер
+	// будет возвращать только персональные ключи из БД (или пустую строку).
+	googleClient := create.NewGoogleAgentClient(ctx, "")
+
+	googleClient.SetKeyResolver(func(userID uint32) string {
+		if key, err := d.GetUserAPIKey(userID, create.ProviderGoogle); err == nil {
+			return key
+		}
+		return ""
+	})
 	if mcpProvider, ok := actionHandler.(model.MCPConfigProvider); ok {
 		googleClient.SetMCPConfigFetchers(
 			func(fetchCtx context.Context, userID uint32, provider create.ProviderType) (string, error) {

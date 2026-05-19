@@ -17,10 +17,26 @@ import (
 
 // MistralAgentClient - обертка для работы с агентами и обычными моделями
 type MistralAgentClient struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	apiKey string
-	url    string
+	ctx         context.Context
+	cancel      context.CancelFunc
+	apiKey      string
+	url         string
+	keyResolver func(userID uint32) string // Резолвер персональных ключей; nil → глобальный apiKey
+}
+
+// SetKeyResolver устанавливает функцию-резолвер персонального API-ключа пользователя.
+func (m *MistralAgentClient) SetKeyResolver(fn func(userID uint32) string) {
+	m.keyResolver = fn
+}
+
+// resolveKey возвращает API-ключ: персональный для userID (если задан) или глобальный.
+func (m *MistralAgentClient) resolveKey(userID uint32) string {
+	if m.keyResolver != nil && userID != 0 {
+		if key := m.keyResolver(userID); key != "" {
+			return key
+		}
+	}
+	return m.apiKey
 }
 
 // NewMistralAgentClient создает новый клиент с поддержкой агентов
@@ -30,7 +46,7 @@ func NewMistralAgentClient(parent context.Context, conf *conf.Conf) *MistralAgen
 	return &MistralAgentClient{
 		ctx:    ctx,
 		cancel: cancel,
-		apiKey: conf.GPT.MistralKey,
+		apiKey: "",
 		url:    mode.MistralAgentsURL,
 	}
 }
@@ -334,8 +350,8 @@ type ConversationContent struct {
 
 // StartConversation начинает новый диалог с агентом через Conversations API
 // Документация: https://docs.mistral.ai/api/#tag/conversations
-func (m *MistralAgentClient) StartConversation(agentID string, inputs interface{}) (ConversationResponse, error) {
-	conversationsURL := "https://api.mistral.ai/v1/conversations"
+func (m *MistralAgentClient) StartConversation(agentID string, inputs interface{}, userID uint32) (ConversationResponse, error) {
+	conversationsURL := mode.MistralConversationsURL
 
 	// Формат payload согласно документации:
 	// inputs может быть строкой или массивом объектов с полями role, content, object, type
@@ -355,7 +371,7 @@ func (m *MistralAgentClient) StartConversation(agentID string, inputs interface{
 		return ConversationResponse{}, fmt.Errorf("ошибка создания запроса: %v", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Authorization", "Bearer "+m.resolveKey(userID))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -385,8 +401,8 @@ func (m *MistralAgentClient) StartConversation(agentID string, inputs interface{
 }
 
 // ContinueConversation продолжает существующий диалог через Conversations API
-func (m *MistralAgentClient) ContinueConversation(conversationID string, inputs interface{}) (ConversationResponse, error) {
-	conversationsURL := fmt.Sprintf("https://api.mistral.ai/v1/conversations/%s", conversationID)
+func (m *MistralAgentClient) ContinueConversation(conversationID string, inputs interface{}, userID uint32) (ConversationResponse, error) {
+	conversationsURL := fmt.Sprintf("%s/%s", mode.MistralConversationsURL, conversationID)
 
 	payload := map[string]interface{}{
 		"inputs": inputs,
@@ -404,7 +420,7 @@ func (m *MistralAgentClient) ContinueConversation(conversationID string, inputs 
 		return ConversationResponse{}, fmt.Errorf("ошибка создания запроса: %v", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Authorization", "Bearer "+m.resolveKey(userID))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -435,8 +451,8 @@ func (m *MistralAgentClient) ContinueConversation(conversationID string, inputs 
 
 // SendFunctionResult отправляет результат функции в conversation
 // Согласно документации Mistral Conversations API
-func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallID string, functionResult string) (ConversationResponse, error) {
-	conversationsURL := fmt.Sprintf("https://api.mistral.ai/v1/conversations/%s", conversationID)
+func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallID string, functionResult string, userID uint32) (ConversationResponse, error) {
+	conversationsURL := fmt.Sprintf("%s/%s", mode.MistralConversationsURL, conversationID)
 
 	inputs := []map[string]interface{}{
 		{
@@ -464,7 +480,7 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 		return ConversationResponse{}, fmt.Errorf("ошибка создания запроса: %v", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Authorization", "Bearer "+m.resolveKey(userID))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -500,8 +516,7 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 // PatchAgent обновляет конфигурацию Mistral Agent через PATCH /v1/agents/{agent_id}.
 // Используется для синхронизации инструментов (tools) с текущим набором MCP-функций.
 func (m *MistralAgentClient) PatchAgent(agentID string, tools []map[string]interface{}) error {
-	baseURL := strings.Replace(m.url, "/completions", "", 1)
-	patchURL := fmt.Sprintf("%s/%s", baseURL, agentID)
+	patchURL := fmt.Sprintf("%s/%s", mode.MistralAgentsBaseURL, agentID)
 
 	payload := map[string]interface{}{
 		"tools": tools,
@@ -537,8 +552,8 @@ func (m *MistralAgentClient) PatchAgent(agentID string, tools []map[string]inter
 // StartConversationStreaming начинает новый диалог с агентом в streaming режиме
 // onDelta вызывается для каждого delta события с текстом или JSON событиями function calls
 // Возвращает ConversationResponse с накопленными данными и usage токенов
-func (m *MistralAgentClient) StartConversationStreaming(agentID string, inputs interface{}, onDelta func(string) error) (ConversationResponse, error) {
-	conversationsURL := "https://api.mistral.ai/v1/conversations"
+func (m *MistralAgentClient) StartConversationStreaming(agentID string, inputs interface{}, onDelta func(string) error, userID uint32) (ConversationResponse, error) {
+	conversationsURL := mode.MistralConversationsURL
 
 	payload := map[string]interface{}{
 		"agent_id":          agentID,
@@ -557,7 +572,7 @@ func (m *MistralAgentClient) StartConversationStreaming(agentID string, inputs i
 		return ConversationResponse{}, fmt.Errorf("ошибка создания запроса: %v", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Authorization", "Bearer "+m.resolveKey(userID))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream") // SSE
 
@@ -577,8 +592,8 @@ func (m *MistralAgentClient) StartConversationStreaming(agentID string, inputs i
 }
 
 // ContinueConversationStreaming продолжает диалог в streaming режиме
-func (m *MistralAgentClient) ContinueConversationStreaming(conversationID string, inputs interface{}, onDelta func(string) error) (ConversationResponse, error) {
-	conversationsURL := fmt.Sprintf("https://api.mistral.ai/v1/conversations/%s", conversationID)
+func (m *MistralAgentClient) ContinueConversationStreaming(conversationID string, inputs interface{}, onDelta func(string) error, userID uint32) (ConversationResponse, error) {
+	conversationsURL := fmt.Sprintf("%s/%s", mode.MistralConversationsURL, conversationID)
 
 	payload := map[string]interface{}{
 		"inputs":            inputs,
@@ -597,7 +612,7 @@ func (m *MistralAgentClient) ContinueConversationStreaming(conversationID string
 		return ConversationResponse{}, fmt.Errorf("ошибка создания запроса: %v", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Authorization", "Bearer "+m.resolveKey(userID))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
@@ -617,8 +632,8 @@ func (m *MistralAgentClient) ContinueConversationStreaming(conversationID string
 
 // SendMultipleFunctionResultsStreaming отправляет результаты НЕСКОЛЬКИХ функций в streaming режиме
 // functionResults - массив объектов с полями: tool_call_id, result, object, type
-func (m *MistralAgentClient) SendMultipleFunctionResultsStreaming(conversationID string, functionResults []map[string]interface{}, onDelta func(string) error) (ConversationResponse, error) {
-	conversationsURL := fmt.Sprintf("https://api.mistral.ai/v1/conversations/%s", conversationID)
+func (m *MistralAgentClient) SendMultipleFunctionResultsStreaming(conversationID string, functionResults []map[string]interface{}, onDelta func(string) error, userID uint32) (ConversationResponse, error) {
+	conversationsURL := fmt.Sprintf("%s/%s", mode.MistralConversationsURL, conversationID)
 
 	payload := map[string]interface{}{
 		"inputs": functionResults,
@@ -640,7 +655,7 @@ func (m *MistralAgentClient) SendMultipleFunctionResultsStreaming(conversationID
 		return ConversationResponse{}, fmt.Errorf("ошибка создания запроса: %v", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Authorization", "Bearer "+m.resolveKey(userID))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
