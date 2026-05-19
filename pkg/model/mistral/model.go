@@ -104,7 +104,7 @@ func New(parent context.Context, conf *conf.Conf, actionHandler model.ActionHand
 func NewAsRouterOption() model.RouterOption {
 	return func(r *model.Router, ctx context.Context, cfg *conf.Conf, db model.DB) error {
 		// Создаём универсальный обработчик функций с Google OAuth конфигом
-		actionHandler := model.NewUniversalActionHandler(ctx, db, cfg)
+		actionHandler := model.NewUniversalActionHandler(ctx, cfg)
 
 		// Создаём Mistral модель с action handler и router
 		mistralModel := New(ctx, cfg, actionHandler, db, r)
@@ -253,7 +253,7 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 	}
 
 	// Загружаем RealuserID ОДИН РАЗ при создании (избегаем повторных HTTP запросов)
-	if realuserID, err := m.GetRealuserID(assist.UserID); err == nil {
+	if realuserID, err := m.GetRealUserID(assist.UserID); err == nil {
 		user.RealuserID = realuserID
 	} else {
 		//logger.Warn("Не удалось загрузить RealuserID: %v", err, assist.userID)
@@ -639,11 +639,11 @@ func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 
 // GetRealuserID получает реальный userID через ModelRouter
 // Использует единый метод для всех провайдеров (OpenAI, Mistral)
-func (m *Model) GetRealuserID(userID uint32) (uint64, error) {
+func (m *Model) GetRealUserID(userID uint32) (uint64, error) {
 	if m.router == nil {
 		return 0, fmt.Errorf("router не инициализирован")
 	}
-	return m.router.GetRealuserID(userID)
+	return m.router.GetRealUserID(userID)
 }
 
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя

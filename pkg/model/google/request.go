@@ -1065,7 +1065,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 	var realuserID uint64
 	if m.universalModel != nil {
 		var err error
-		realuserID, err = m.universalModel.GetRealuserID(userID)
+		realuserID, err = m.universalModel.GetRealUserID(userID)
 		if err != nil {
 			//logger.Warn("applyRAG: не удалось получить real_user_id: %v, используем userID", err, userID)
 			realuserID = uint64(userID)

@@ -104,10 +104,9 @@ func (m *Model) SubscribeEvents(respId uint64) (<-chan model.RealtimeEvent, erro
 	rs.eventSubsMu.Unlock()
 
 	// Race-guard: pump мог уже завершиться (и rs.cancel() вызван) до того как мы подписались.
-	// В этом случае "error" событие было опубликовано в пустой eventSubs и дропнуто.
-	// Отправляем синтетическое событие чтобы горутина-получатель нормально завершилась.
 	select {
 	case <-rs.ctx.Done():
+		//logger.Debug("[OpenAI SubscribeEvents] ctx ALREADY DONE respId=%d rs.ctx.Err=%v m.ctx.Err=%v", respId, rs.ctx.Err(), m.ctx.Err())
 		go func() {
 			ch <- model.RealtimeEvent{
 				Type: "error",
@@ -196,10 +195,12 @@ func (m *Model) StartRealtimeSession(userID uint32, dialogID, respId uint64) err
 		return fmt.Errorf("StartRealtimeSession: Realtime не включён для userID=%d (установите флаг Realtime в настройках модели)", userID)
 	}
 
+	//logger.Debug("[OpenAI StartRealtimeSession] respId=%d model=%q dial...", respId, rm.AgentConfig.RealtimeModel)
 	conn, err := create.DialRealtimeSession(m.client.GetAPIKey(), rm.AgentConfig.RealtimeModel)
 	if err != nil {
 		return fmt.Errorf("StartRealtimeSession: ошибка подключения к OpenAI Realtime API: %w", err)
 	}
+	//logger.Debug("[OpenAI StartRealtimeSession] respId=%d dial OK, m.ctx.Err=%v", respId, m.ctx.Err())
 
 	ctx, cancel := context.WithCancel(m.ctx)
 
@@ -221,12 +222,14 @@ func (m *Model) StartRealtimeSession(userID uint32, dialogID, respId uint64) err
 		_ = conn.Close()
 		return fmt.Errorf("StartRealtimeSession: ошибка session.update: %w", err)
 	}
+	//logger.Debug("[OpenAI StartRealtimeSession] respId=%d sendSessionUpdate OK, injectHistory...", respId)
 
 	// Инжектируем историю диалога — realtime-агент знает контекст предыдущих разговоров.
 	if err := m.injectDialogHistory(rs, dialogID); err != nil {
 		//logger.Warn("StartRealtimeSession: не удалось инжектировать историю диалога: %v respId=%d", err, respId, userID)
 		// Не критично — продолжаем без истории
 	}
+	//logger.Debug("[OpenAI StartRealtimeSession] respId=%d injectHistory OK, запуск горутин...", respId)
 
 	m.realtimeSessions.Store(respId, rs)
 	//logger.Info("StartRealtimeSession: голосовая сессия запущена respId=%d model=%s",
@@ -287,8 +290,8 @@ func (m *Model) injectDialogHistory(rs *RealtimeSession, dialogID uint64) error 
 		if role != "user" && role != "assistant" {
 			continue
 		}
-		// user → "input_text", assistant → "text"
-		contentType := "text"
+		// GA API: user → "input_text", assistant → "output_text" (в Beta было "text")
+		contentType := "output_text"
 		if role == "user" {
 			contentType = "input_text"
 		}
@@ -391,79 +394,58 @@ func (m *Model) SetRealtimeDisconnectCallback(respId uint64, callback func(respI
 // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
 // ============================================================================
 
-// sendSessionUpdate отправляет session.update в OpenAI Realtime API.
+// sendSessionUpdate отправляет session.update в OpenAI Realtime GA API.
+// Формат GA API (2025+): поля audio.input/output, output_modalities, semantic_vad.
 func (m *Model) sendSessionUpdate(rs *RealtimeSession) error {
-	// Промпт строится на лету из SystemPrompt
 	instructions := buildRealtimeSystemPrompt(rs.agentConfig)
-
-	//logger.Debug("sendSessionUpdate: agentConfig.Tools raw count=%d respId=%d", len(rs.agentConfig.Tools), rs.respId, rs.userID)
 	tools := buildRealtimeTools(rs.agentConfig.Tools)
-	//logger.Warn("sendSessionUpdate: Tools after convert count=%d list=%v respId=%d", len(tools), tools, rs.respId, rs.userID)
-	// Собираем turn_detection из RealtimeVAD или используем дефолты
+
+	// Параметры из RealtimeVAD (или дефолты)
 	vad := rs.agentConfig.RealtimeVAD
-	threshold := 0.5
-	prefixPaddingMs := 200
+	voice := "verse"
 	silenceDurationMs := 500
-	interruptResponse := true
-	voice := "verse" // дефолтный голос
 	if vad != nil {
-		if vad.Threshold != nil {
-			threshold = *vad.Threshold
-		}
-		if vad.PrefixPaddingMs != nil {
-			prefixPaddingMs = *vad.PrefixPaddingMs
+		if vad.Voice != nil && *vad.Voice != "" {
+			voice = *vad.Voice
 		}
 		if vad.SilenceDurationMs != nil {
 			silenceDurationMs = *vad.SilenceDurationMs
 		}
-		if vad.InterruptResponse != nil {
-			interruptResponse = *vad.InterruptResponse
-		}
-		if vad.Voice != nil && *vad.Voice != "" {
-			voice = *vad.Voice
-		}
 	}
 
-	// Собираем параметры сессии (ТОЛЬКО настройки среды)
-	// ВАЖНО: temperature и max_response_output_tokens передаются ТОЛЬКО здесь (session.update),
-	// их нельзя передавать в response.create — будет ошибка unknown_parameter.
+	// GA API: turn_detection теперь внутри audio.input
+	// ВАЖНО: gpt-realtime-mini не принимает silence_duration_ms в turn_detection (unknown_parameter)
+	turnDetection := map[string]interface{}{
+		"type": "semantic_vad",
+	}
+	_ = silenceDurationMs // резервируем для будущих версий API
+
+	// GA API: структура session полностью изменилась по сравнению с Beta
 	sessionMap := map[string]interface{}{
-		"modalities":          []string{"text", "audio"},
-		"instructions":        instructions,
-		"voice":               voice,
-		"input_audio_format":  "pcm16",
-		"output_audio_format": "pcm16",
-		"turn_detection": map[string]interface{}{
-			"type":                "server_vad",
-			"threshold":           threshold,
-			"prefix_padding_ms":   prefixPaddingMs,
-			"silence_duration_ms": silenceDurationMs,
-			"create_response":     true,
-			"interrupt_response":  interruptResponse,
+		"type":              "realtime",
+		"instructions":      instructions,
+		"output_modalities": []string{"audio"},
+		"audio": map[string]interface{}{
+			"input": map[string]interface{}{
+				"format": map[string]interface{}{
+					"type": "audio/pcm",
+					"rate": 24000,
+				},
+				"turn_detection": turnDetection,
+			},
+			"output": map[string]interface{}{
+				"format": map[string]interface{}{
+					"type": "audio/pcm",
+					"rate": 24000,
+				},
+				"voice": voice,
+			},
 		},
-		"tools":       tools,
-		"tool_choice": "auto",
 	}
 
-	// input_audio_transcription — транскрипция входящего аудио (дефолт true)
-	inputAudioTranscription := true
-	if vad != nil && vad.InputAudioTranscription != nil {
-		inputAudioTranscription = *vad.InputAudioTranscription
-	}
-	if inputAudioTranscription {
-		sessionMap["input_audio_transcription"] = map[string]interface{}{
-			"model": "whisper-1",
-		}
-	}
-
-	// Параметры генерации из RealtimeVAD (только если заданы)
-	if vad != nil {
-		if vad.Temperature != nil {
-			sessionMap["temperature"] = *vad.Temperature
-		}
-		if vad.MaxResponseOutputTokens != nil {
-			sessionMap["max_response_output_tokens"] = *vad.MaxResponseOutputTokens
-		}
+	// tools — добавляем если есть
+	if len(tools) > 0 {
+		sessionMap["tools"] = tools
 	}
 
 	event := map[string]interface{}{
@@ -476,6 +458,13 @@ func (m *Model) sendSessionUpdate(rs *RealtimeSession) error {
 		return fmt.Errorf("sendSessionUpdate: ошибка сериализации: %w", err)
 	}
 
+	// Диагностика: логируем первые 600 символов session.update
+	dataStr := string(data)
+	if len(dataStr) > 600 {
+		dataStr = dataStr[:600] + "..."
+	}
+	//logger.Debug("[sendSessionUpdate] respId=%d json=%s", rs.respId, dataStr)
+
 	rs.writeMu.Lock()
 	writeErr := rs.openaiConn.WriteMessage(websocket.TextMessage, data)
 	rs.writeMu.Unlock()
@@ -483,8 +472,6 @@ func (m *Model) sendSessionUpdate(rs *RealtimeSession) error {
 		return fmt.Errorf("sendSessionUpdate: ошибка отправки: %w", writeErr)
 	}
 
-	//logger.Info("sendSessionUpdate: отправлено respId=%d voice=%s tools=%d instructionsLen=%d threshold=%.2f silence=%dms",
-	//	rs.respId, voice, len(tools), len(instructions), threshold, silenceDurationMs, rs.userID)
 	return nil
 }
 
@@ -636,22 +623,17 @@ func (m *Model) sendInitialGreeting(rs *RealtimeSession) {
 
 	if hasExplicitGreeting {
 		greetingText := *rs.agentConfig.RealtimeVAD.Greeting
-		//logger.Debug("sendInitialGreeting: явная фраза %q respId=%d", greetingText, rs.respId, rs.userID)
-		// Передаём фразу как instructions — модель произносит её как свою первую реплику.
-		// НЕ используем input с командой "Say EXACTLY..." — иначе модель комментирует задание.
+		// GA API: modalities не принимается в response.create → только instructions
 		event = map[string]interface{}{
 			"type": "response.create",
 			"response": map[string]interface{}{
-				"modalities":   []string{"text", "audio"},
 				"instructions": "Your ONLY output is this exact phrase, nothing else, no commentary: " + greetingText,
 			},
 		}
 	} else {
-		// Нет явной фразы — модель генерирует приветствие сама по инструкции
 		event = map[string]interface{}{
 			"type": "response.create",
 			"response": map[string]interface{}{
-				"modalities": []string{"text", "audio"},
 				"instructions": "Greet the user warmly and briefly (1-2 sentences). " +
 					"Introduce yourself by name if you have one. " +
 					"Ask how you can help. Speak naturally, no JSON.",

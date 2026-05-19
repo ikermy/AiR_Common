@@ -23,6 +23,7 @@ import (
 
 func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 	defer func() {
+		//logger.Debug("[pumpFromOpenAI] горутина ЗАВЕРШАЕТСЯ respId=%d", rs.respId)
 		rs.publishEvent(RealtimeEvent{Type: "error", Text: "realtime session closed", Err: fmt.Errorf("session closed")})
 		rs.cancel()
 	}()
@@ -36,12 +37,12 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 	}
 	var pendingFuncResults []funcResult
 
-	// audioDeltaCount: счётчик audio.delta для текущего response — сбрасывается при response.done
+	// audioDeltaCount: счётчик output_audio.delta для текущего response — сбрасывается при response.done
 	var audioDeltaCount int
 
 	// watchdog детектирует зависший response на двух стадиях:
-	//   1) после response.created — нет audio.delta за 3s → response.cancel
-	//   2) после response.audio.done — нет response.done за 2s → response.cancel
+	//   1) после response.created — нет output_audio.delta за 3s → response.cancel
+	//   2) после response.output_audio.done — нет response.done за 2s → response.cancel
 	//   3) если response.cancel не помог (модель совсем не отвечает) — вызываем OnDisconnect callback
 	//      для завершения звонка (Telegram) или отключения WebSocket (API клиента)
 	var watchdogTimer *time.Timer
@@ -110,13 +111,12 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 		stopWatchdogPanic()
 	}()
 
-	//logger.Info("pumpFromOpenAI: горутина запущена respId=%d dialogID=%d", rs.respId, rs.dialogID, rs.userID)
+	//logger.Debug("[pumpFromOpenAI] старт горутины respId=%d dialogID=%d", rs.respId, rs.dialogID)
 
 	for {
 		select {
 		case <-rs.ctx.Done():
-			// Контекст отменён — логируем причину для диагностики
-			fmt.Printf("pumpFromOpenAI: ctx.Done() respId=%d cause=%v userID=%d\n", rs.respId, rs.ctx.Err(), rs.userID)
+			//logger.Debug("[pumpFromOpenAI] ctx.Done() respId=%d cause=%v", rs.respId, rs.ctx.Err())
 			return
 		default:
 		}
@@ -127,8 +127,10 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			if errors.As(err, &closeErr) {
 				// OpenAI закрыл сессию с кодом: публикуем полную причину
 				text := fmt.Sprintf("openai close code=%d: %s", closeErr.Code, closeErr.Text)
+				//logger.Debug("[pumpFromOpenAI] WS CLOSE respId=%d code=%d reason=%q", rs.respId, closeErr.Code, closeErr.Text)
 				rs.publishEvent(RealtimeEvent{Type: "error", Text: text, Err: err})
 			} else if !strings.Contains(err.Error(), "use of closed network connection") {
+				//logger.Debug("[pumpFromOpenAI] ReadMessage error respId=%d: %v", rs.respId, err)
 				rs.publishEvent(RealtimeEvent{Type: "error", Text: err.Error(), Err: err})
 			}
 			return
@@ -144,8 +146,8 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 
 		switch eventType {
 
-		// ── Аудио-дельта от ассистента ────────────────────────────────────────
-		case "response.audio.delta":
+		// ── Аудио-дельта от ассистента (GA API: response.output_audio.delta) ──
+		case "response.output_audio.delta":
 			delta, _ := event["delta"].(string)
 			if delta == "" {
 				continue
@@ -169,15 +171,15 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 				//	audioDeltaCount, len(pcm16), rs.respId, rs.userID)
 			}
 
-		// ── Транскрипция ответа ассистента (дельта) ──────────────────────────
-		case "response.audio_transcript.delta":
+		// ── Транскрипция ответа ассистента (дельта) (GA API: response.output_audio_transcript.delta) ──
+		case "response.output_audio_transcript.delta":
 			delta, _ := event["delta"].(string)
 			if delta != "" {
 				rs.publishEvent(RealtimeEvent{Type: "transcript_delta", Text: delta})
 			}
 
-		// ── Транскрипция ответа ассистента (финальная) ───────────────────────
-		case "response.audio_transcript.done":
+		// ── Транскрипция ответа ассистента (финальная) (GA API: response.output_audio_transcript.done) ──
+		case "response.output_audio_transcript.done":
 			transcript, _ := event["transcript"].(string)
 			itemId, _ := event["item_id"].(string)
 			if itemId != "" && transcript != "" {
@@ -270,14 +272,9 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 				//	len(pendingFuncResults), rs.respId, rs.userID)
 				pendingFuncResults = pendingFuncResults[:0]
 
-				// ВАЖНО: Realtime API не принимает temperature, max_output_tokens,
-				// response_format в теле response.create — вызывают fatal error unknown_parameter.
-				// Эти параметры задаются только через URL при DialRealtimeSession.
 				if err := rs.writeJSON(map[string]interface{}{
-					"type": "response.create",
-					"response": map[string]interface{}{
-						"modalities": []string{"text", "audio"},
-					},
+					"type":     "response.create",
+					"response": map[string]interface{}{},
 				}); err != nil {
 					//logger.Warn("response.done: ошибка отправки response.create: %v", err, rs.userID)
 				}
@@ -432,10 +429,10 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			// Отправляем приветствие сразу после того как сессия настроена
 			m.sendInitialGreeting(rs)
 
-		// ── Аудио завершено — ждём response.done ─────────────────────────────
-		case "response.audio.done":
+		// ── Аудио завершено — ждём response.done (GA API: response.output_audio.done) ──
+		case "response.output_audio.done":
 			audioDeltaCount = 0
-			fireWatchdog(2*time.Second, "нет response.done 2s после response.audio.done")
+			fireWatchdog(2*time.Second, "нет response.done 2s после response.output_audio.done")
 
 		// ── Rate limits ───────────────────────────────────────────────────────
 		//case "rate_limits.updated":
@@ -457,13 +454,11 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			errObj, _ := event["error"].(map[string]interface{})
 			errMsg := "unknown realtime error"
 			errCode := ""
-			//errParam := ""
 			if errObj != nil {
 				if m, ok := errObj["message"].(string); ok {
 					errMsg = m
 				}
 				errCode, _ = errObj["code"].(string)
-				//errParam, _ = errObj["param"].(string)
 			}
 			recoverableCodes := map[string]bool{
 				"conversation_already_has_active_response": true,
@@ -471,12 +466,10 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 				"input_audio_buffer_commit_empty":          true,
 			}
 			if recoverableCodes[errCode] {
-				//logger.Warn("pumpFromOpenAI: recoverable error respId=%d code=%s msg=%s",
-				//	rs.respId, errCode, errMsg, rs.userID)
 				continue
 			}
-			//logger.Error("pumpFromOpenAI: fatal error respId=%d code=%s param=%s msg=%s",
-			//	rs.respId, errCode, errParam, errMsg, rs.userID)
+			// FATAL: логируем всегда чтобы видеть причину обрыва сессии
+			//logger.Debug("[pumpFromOpenAI] FATAL ERROR from OpenAI respId=%d code=%q msg=%q", rs.respId, errCode, errMsg)
 			rs.publishEvent(RealtimeEvent{Type: "error", Text: errMsg, Err: fmt.Errorf("%s", errMsg)})
 			return
 

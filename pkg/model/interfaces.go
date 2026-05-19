@@ -33,7 +33,7 @@ type Inter interface {
 
 // RouterInterface минимальный интерфейс для доступа к методам роутера
 type RouterInterface interface {
-	GetRealuserID(userID uint32) (uint64, error)
+	GetRealUserID(userID uint32) (uint64, error)
 }
 
 // OpenAIManager расширяет Inter методами управления моделями OpenAI
@@ -88,15 +88,16 @@ type MCPConfigProvider interface {
 
 // RealtimeEvent — событие голосовой сессии Realtime API (OpenAI / Google Live).
 // Type:
-//   "audio_delta"           — дельта аудио (не используется, аудио идёт через AudioOut канал)
-//   "transcript_delta"      — частичный текст ответа модели
-//   "input_transcript_done" — транскрипт речи пользователя готов
-//   "response_done"         — нормальное завершение хода модели (turnComplete)
-//   "interrupted"           — пользователь перебил модель (barge-in); клиент ДОЛЖЕН
-//                             немедленно остановить воспроизведение и очистить буфер
-//   "function_result"       — результат вызова инструмента
-//   "token_usage"           — статистика токенов
-//   "error"                 — ошибка сессии
+//
+//	"audio_delta"           — дельта аудио (не используется, аудио идёт через AudioOut канал)
+//	"transcript_delta"      — частичный текст ответа модели
+//	"input_transcript_done" — транскрипт речи пользователя готов
+//	"response_done"         — нормальное завершение хода модели (turnComplete)
+//	"interrupted"           — пользователь перебил модель (barge-in); клиент ДОЛЖЕН
+//	                          немедленно остановить воспроизведение и очистить буфер
+//	"function_result"       — результат вызова инструмента
+//	"token_usage"           — статистика токенов
+//	"error"                 — ошибка сессии
 type RealtimeEvent struct {
 	Type  string
 	Text  string

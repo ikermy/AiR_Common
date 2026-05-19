@@ -33,7 +33,7 @@ type Model struct {
 	realtimeSessions sync.Map // respId -> *RealtimeSession (параллельные голосовые сессии)
 	UserModelTTl     time.Duration
 	actionHandler    model.ActionHandler
-	universalModel   *create.UniversalModel // Для доступа к GetRealuserID
+	universalModel   *create.UniversalModel // Для доступа к GetRealUserID
 	shutdownOnce     sync.Once
 }
 
@@ -158,7 +158,7 @@ func NewAsRouterOption() model.RouterOption {
 		}
 
 		// Создаём универсальный обработчик функций
-		actionHandler := model.NewUniversalActionHandler(ctx, openaiDB, cfg)
+		actionHandler := model.NewUniversalActionHandler(ctx, cfg)
 
 		// Создаём OpenAI модель (клиент уже инициализирован в New)
 		openaiModel := New(ctx, cfg, openaiDB, actionHandler)
@@ -174,7 +174,7 @@ func NewAsRouterOption() model.RouterOption {
 	}
 }
 
-// SetUniversalModel устанавливает UniversalModel для доступа к GetRealuserID
+// SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID
 func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
 }

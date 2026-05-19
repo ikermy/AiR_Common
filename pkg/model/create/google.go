@@ -73,7 +73,7 @@ type GoogleAgentClient struct {
 	apiKey         string
 	url            string
 	ctx            context.Context
-	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealuserID
+	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealUserID
 	promptFetcher  GooglePromptHintFetcher
 	toolsFetcher   GoogleFunctionDeclarationsFetcher
 }
@@ -132,7 +132,7 @@ func (m *GoogleAgentClient) SetMCPConfigFetchers(promptFetcher GooglePromptHintF
 	m.toolsFetcher = toolsFetcher
 }
 
-// SetUniversalModel устанавливает UniversalModel для доступа к GetRealuserID в create-time операциях.
+// SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID в create-time операциях.
 func (m *GoogleAgentClient) SetUniversalModel(um *UniversalModel) {
 	m.universalModel = um
 }

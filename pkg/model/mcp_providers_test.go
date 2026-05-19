@@ -21,7 +21,7 @@ import (
 type providerCase struct {
 	name     string // человекочитаемое имя
 	typeID   uint8  // числовой тип провайдера (1=OpenAI, 2=Mistral, 3=Google)
-	session  string // X-Session-ID header — "userID:providerType"
+	session  string // X-Session-ID header — "UserID:providerType"
 	wantTime bool   // get_current_time обязателен для всех
 	wantS3   bool   // ожидаем get_s3_files / create_file (uid=23 имеет S3)
 }

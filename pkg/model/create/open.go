@@ -105,7 +105,7 @@ type OpenAIAgentClient struct {
 	url            string
 	ctx            context.Context
 	httpClient     *http.Client
-	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealuserID
+	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealUserID
 }
 
 // StreamingFunctionCall представляет накапливаемый function call для Realtime API

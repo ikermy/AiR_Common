@@ -211,7 +211,7 @@ func (r *Router) NewMessage(operator Operator, msgType string, content *AssistRe
 func (r *Router) GetFileAsReader(userID uint32, url string) (io.Reader, error) {
 	manager, err := r.GetActiveUserManager(userID)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка получения активного менеджера для userID %d: %w", userID, err)
+		return nil, fmt.Errorf("ошибка получения активного менеджера для UserID %d: %w", userID, err)
 	}
 	return manager.GetFileAsReader(userID, url)
 }
@@ -219,12 +219,12 @@ func (r *Router) GetFileAsReader(userID uint32, url string) (io.Reader, error) {
 // GetOrSetRespGPT делегирует к модели на основе Provider из Assistant
 func (r *Router) GetOrSetRespGPT(assist Assistant, dialogID, respId uint64, respName string) (*RespModel, error) {
 	if assist.Provider == 0 {
-		return nil, fmt.Errorf("провайдер не установлен для userID=%d: у пользователя не создана модель ассистента. "+
+		return nil, fmt.Errorf("провайдер не установлен для UserID=%d: у пользователя не создана модель ассистента. "+
 			"Создайте модель через API или панель управления", assist.UserID)
 	}
 	m, err := r.getModel(assist.Provider)
 	if err != nil {
-		return nil, fmt.Errorf("не удалось получить модель для провайдера %s (userID=%d): %w",
+		return nil, fmt.Errorf("не удалось получить модель для провайдера %s (UserID=%d): %w",
 			assist.Provider, assist.UserID, err)
 	}
 	return m.GetOrSetRespGPT(assist, dialogID, respId, respName)
@@ -333,7 +333,7 @@ func (r *Router) GetActiveUserModel(userID uint32) (*create.UniversalModelData, 
 func (r *Router) GetActiveUserManager(userID uint32) (Inter, error) {
 	provider, err := r.db.GetActiveProvider(userID)
 	if err != nil {
-		return nil, fmt.Errorf("ошибка получения активного провайдера для userID %d: %w", userID, err)
+		return nil, fmt.Errorf("ошибка получения активного провайдера для UserID %d: %w", userID, err)
 	}
 
 	switch provider {
@@ -376,7 +376,7 @@ func (r *Router) GetActiveUserManager(userID uint32) (Inter, error) {
 func (r *Router) TranscribeAudio(userID uint32, audioData []byte, fileName string) (string, error) {
 	manager, err := r.GetActiveUserManager(userID)
 	if err != nil {
-		return "", fmt.Errorf("ошибка получения активного менеджера для userID %d: %w", userID, err)
+		return "", fmt.Errorf("ошибка получения активного менеджера для UserID %d: %w", userID, err)
 	}
 	return manager.TranscribeAudio(userID, audioData, fileName)
 }
@@ -754,13 +754,13 @@ func (r *Router) GetUserModelByProvider(userID uint32, provider create.ProviderT
 	return r.modelsManager.GetUserModelByProvider(userID, provider)
 }
 
-// GetRealuserID получает реальный userID через modelsManager.
+// GetRealuserID получает реальный UserID через modelsManager.
 // Дублирующий fallback с прямым HTTP-запросом удалён — modelsManager всегда инициализирован.
-func (r *Router) GetRealuserID(userID uint32) (uint64, error) {
+func (r *Router) GetRealUserID(userID uint32) (uint64, error) {
 	if r.modelsManager == nil {
 		return 0, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.GetRealuserID(userID)
+	return r.modelsManager.GetRealUserID(userID)
 }
 
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя

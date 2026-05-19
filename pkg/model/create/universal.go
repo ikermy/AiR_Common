@@ -38,7 +38,6 @@ const (
 
 	// RealtimeGoogleModel — Live-модель для Google Live API (AI Studio).
 	RealtimeGoogleModel = "gemini-3.1-flash-live-preview"
-	//RealtimeGoogleModel = "gemini-3.1-flash-live-preview"
 
 	// RealtimeOpenAIURL базовый WebSocket URL для OpenAI Realtime API
 	RealtimeOpenAIURL = "wss://api.openai.com/v1/realtime"
@@ -251,7 +250,7 @@ func New(ctx context.Context, db DB, conf *conf.Conf) *UniversalModel {
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
-		universalModel: m, // Передаем ссылку на universalModel для доступа к GetRealuserID
+		universalModel: m, // Передаем ссылку на universalModel для доступа к GetRealUserID
 	}
 
 	// Инициализируем Mistral клиент, если ключ предоставлен
@@ -1048,9 +1047,9 @@ func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
 	return vad
 }
 
-// GetRealuserID получает реальный userID через HTTP запрос к landing серверу
+// GetRealUserID получает реальный userID через HTTP запрос к landing серверу
 // Универсальный метод для всех провайдеров (OpenAI, Mistral)
-func (m *UniversalModel) GetRealuserID(userID uint32) (uint64, error) {
+func (m *UniversalModel) GetRealUserID(userID uint32) (uint64, error) {
 	// Строим URL для запроса к landing серверу
 	var url string
 	if mode.ProductionMode {
@@ -1070,7 +1069,7 @@ func (m *UniversalModel) GetRealuserID(userID uint32) (uint64, error) {
 
 	resp, err := client.Get(url)
 	if err != nil {
-		return 0, fmt.Errorf("ошибка при запросе GetRealuserID: %v", err)
+		return 0, fmt.Errorf("ошибка при запросе GetRealUserID: %v", err)
 	}
 	defer func() {
 		if e := resp.Body.Close(); e != nil {
@@ -1080,18 +1079,18 @@ func (m *UniversalModel) GetRealuserID(userID uint32) (uint64, error) {
 
 	// Обрабатываем HTTP ответ
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("неожиданный статус ответа GetRealuserID: %d", resp.StatusCode)
+		return 0, fmt.Errorf("неожиданный статус ответа GetRealUserID: %d", resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, fmt.Errorf("ошибка чтения ответа GetRealuserID: %v", err)
+		return 0, fmt.Errorf("ошибка чтения ответа GetRealUserID: %v", err)
 	}
 
 	// Парсим JSON ответ как число
 	var value uint64
 	if err := json.Unmarshal(body, &value); err != nil {
-		return 0, fmt.Errorf("ошибка парсинга JSON ответа GetRealuserID: %v", err)
+		return 0, fmt.Errorf("ошибка парсинга JSON ответа GetRealUserID: %v", err)
 	}
 
 	return value, nil

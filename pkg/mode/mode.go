@@ -37,8 +37,9 @@ var (
 	CarpinteroPort string
 	CarpinteroHost string
 	RealHost       string
+	MCPserver      string
 	// Operator settings
-	// Таймаут ожидания ПЕРВОГО ответа оператора в секундах (120 сек = 2 минуты)
+	// Таймаут ожидания ПЕРВОГО ответа оператора в секундах
 	// После первого ответа операторский режим становится постоянным (без таймера)
 	OperatorResponseTimeout = 120
 	// Тайм-аут на операции с БД (в секундах)
@@ -59,4 +60,8 @@ func SetAudioMode(enabled bool) {
 }
 func SetRealHost(host string) {
 	RealHost = host
+}
+
+func SetMcpServer(server string) {
+	MCPserver = server
 }

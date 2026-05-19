@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 
 	"github.com/gorilla/websocket"
 )
@@ -87,12 +86,9 @@ func DialGoogleRealtimeSession(apiKey, model string) (*websocket.Conn, error) {
 	return conn, nil
 }
 
-// DialRealtimeSession устанавливает WebSocket соединение к OpenAI Realtime API.
+// DialRealtimeSession устанавливает WebSocket соединение к OpenAI Realtime GA API.
 // Возвращает готовое *websocket.Conn для отправки/приёма событий.
-//
-// Заголовки:
-//   - Authorization: Bearer <apiKey>
-//   - OpenAI-Beta: realtime=v1
+// Голос, VAD и прочие настройки передаются через session.update после подключения.
 func DialRealtimeSession(apiKey, model string) (*websocket.Conn, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("DialRealtimeSession: apiKey не может быть пустым")
@@ -101,21 +97,15 @@ func DialRealtimeSession(apiKey, model string) (*websocket.Conn, error) {
 		model = RealtimeOpenAIModel
 	}
 
-	// Формируем URL с параметрами сессии
 	baseURL, _ := url.Parse(RealtimeOpenAIURL)
 	q := baseURL.Query()
 	q.Set("model", model)
-	q.Set("temperature", strconv.FormatFloat(RealtimeTemperature, 'f', 1, 64))
-	q.Set("max_output_tokens", strconv.Itoa(RealtimeMaxOutTokens))
 	baseURL.RawQuery = q.Encode()
 
 	headers := http.Header{}
 	headers.Set("Authorization", "Bearer "+apiKey)
-	headers.Set("OpenAI-Beta", "realtime=v1")
 
-	dialer := websocket.Dialer{
-		// Используем стандартный TLS — OpenAI не требует кастомного
-	}
+	dialer := websocket.Dialer{}
 
 	conn, resp, err := dialer.Dial(baseURL.String(), headers)
 	if err != nil {

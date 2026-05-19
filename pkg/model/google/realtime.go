@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -299,7 +298,7 @@ func normalizeLiveAPIToolKeys(tools []map[string]interface{}) []map[string]inter
 		return tools
 	}
 
-	// Вспомогательная функция для перевода type в UPPERCASE 
+	// Вспомогательная функция для перевода type в UPPERCASE
 	// (gRPC/Protobuf strict enum JSON pb parser требует "OBJECT" вместо "object").
 	var uppercaseSchemaTypes func(interface{})
 	uppercaseSchemaTypes = func(v interface{}) {
@@ -493,8 +492,8 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 	}
 
 	setup := map[string]interface{}{
-		"model":              fmt.Sprintf("models/%s", realtimeModel),
-		"generationConfig":   generationConfig,
+		"model":               fmt.Sprintf("models/%s", realtimeModel),
+		"generationConfig":    generationConfig,
 		"realtimeInputConfig": realtimeInputConfig,
 	}
 
@@ -539,7 +538,7 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 	if len(preview) > 800 {
 		preview = preview[:800] + "..."
 	}
-	log.Printf("[sendGoogleSetup] respId=%d setup=%s", rs.respId, preview)
+	//logger.Debug("[sendGoogleSetup] respId=%d setup=%s", rs.respId, preview)
 
 	rs.writeMu.Lock()
 	writeErr := rs.googleConn.WriteMessage(websocket.TextMessage, data)
@@ -584,7 +583,7 @@ func (m *Model) sendHistoryAndGreeting(rs *GoogleRealtimeSession) {
 	// ── 2. Строим текстовое представление истории ────────────────────────────
 	historyText := m.buildHistoryAsText(rs.dialogID)
 	if historyText != "" {
-		//log.Printf("[sendHistoryAndGreeting] история загружена dialogID=%d respId=%d", rs.dialogID, rs.respId)
+		//logger.Debug("[sendHistoryAndGreeting] история загружена dialogID=%d respId=%d", rs.dialogID, rs.respId)
 	}
 
 	// ── 3. Собираем финальный текст user-turn ────────────────────────────────
@@ -616,11 +615,11 @@ func (m *Model) sendHistoryAndGreeting(rs *GoogleRealtimeSession) {
 	}
 
 	//if dbg, err2 := json.Marshal(msg); err2 == nil {
-	//	log.Printf("[sendHistoryAndGreeting] отправка %d байт respId=%d", len(dbg), rs.respId)
+	//	//logger.Debug("[sendHistoryAndGreeting] отправка %d байт respId=%d", len(dbg), rs.respId)
 	//}
 
 	if err := rs.writeJSON(msg); err != nil {
-		log.Printf("[sendHistoryAndGreeting] ERROR respId=%d: %v", rs.respId, err)
+		//logger.Debug("[sendHistoryAndGreeting] ERROR respId=%d: %v", rs.respId, err)
 		rs.greetingSent.Store(false)
 	}
 }

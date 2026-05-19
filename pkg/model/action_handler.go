@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
@@ -18,15 +17,13 @@ import (
 // UniversalActionHandler универсальный обработчик функций для всех провайдеров
 type UniversalActionHandler struct {
 	port       string // Порт для внутренних HTTP запросов (MCP сервер)
-	db         comdb.Exterior
 	ctx        context.Context
 	httpClient *http.Client // shared client с таймаутом
 }
 
 // NewUniversalActionHandler создаёт новый action handler с доступом к БД
-func NewUniversalActionHandler(ctx context.Context, db comdb.Exterior, cfg *conf.Conf) *UniversalActionHandler {
+func NewUniversalActionHandler(ctx context.Context, cfg *conf.Conf) *UniversalActionHandler {
 	return &UniversalActionHandler{
-		db:   db,
 		ctx:  ctx,
 		port: cfg.WEB.Land,
 		httpClient: &http.Client{
@@ -37,14 +34,15 @@ func NewUniversalActionHandler(ctx context.Context, db comdb.Exterior, cfg *conf
 
 // mcpURL возвращает URL MCP сервера в зависимости от режима (Production/Dev)
 func (h *UniversalActionHandler) mcpURL() string {
-	if mode.ProductionMode {
-		return fmt.Sprintf("http://localhost:%s/mcp", h.port)
-	}
-	return fmt.Sprintf("https://localhost:%s/mcp", h.port)
+	//if mode.ProductionMode {
+	//	return fmt.Sprintf("http://localhost:%s/mcp", h.port)
+	//}
+	//return fmt.Sprintf("https://localhost:%s/mcp", h.port)
+	return mode.MCPserver
 }
 
 // callMCP отправляет единый JSON-RPC запрос к MCP серверу (POST /mcp).
-// userID и provider передаются через заголовок X-Session-ID — инструменты не получают user_id в аргументах.
+// UserID и provider передаются через заголовок X-Session-ID — инструменты не получают user_id в аргументах.
 func (h *UniversalActionHandler) callMCP(ctx context.Context, toolName, arguments string, provider create.ProviderType, userID uint32) string {
 	// Парсим строку аргументов в map
 	var args map[string]interface{}
@@ -81,7 +79,7 @@ func (h *UniversalActionHandler) callMCP(ctx context.Context, toolName, argument
 		return string(result)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	// Идентификация пользователя и провайдера — реальный userID без кодирования
+	// Идентификация пользователя и провайдера — реальный UserID без кодирования
 	req.Header.Set("X-Session-ID", fmt.Sprintf("%d:%d", userID, provider))
 
 	resp, err := h.httpClient.Do(req)

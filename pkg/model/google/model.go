@@ -34,7 +34,7 @@ type Model struct {
 	realtimeSessions sync.Map // respId -> *GoogleRealtimeSession (параллельные голосовые сессии)
 	UserModelTTl     time.Duration
 	actionHandler    model.ActionHandler
-	universalModel   *create.UniversalModel // Для доступа к GetRealuserID
+	universalModel   *create.UniversalModel // Для доступа к GetRealUserID
 	shutdownOnce     sync.Once
 }
 
@@ -174,7 +174,7 @@ func NewAsRouterOption() model.RouterOption {
 		}
 
 		// Создаём ActionHandler с Google OAuth конфигом из cfg
-		actionHandler := model.NewUniversalActionHandler(ctx, googleDB, cfg)
+		actionHandler := model.NewUniversalActionHandler(ctx, cfg)
 
 		googleModel := New(ctx, cfg, googleDB, actionHandler)
 
@@ -187,7 +187,7 @@ func (m *Model) SetClient(client *create.GoogleAgentClient) {
 	m.client = client
 }
 
-// SetUniversalModel устанавливает UniversalModel для доступа к GetRealuserID
+// SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID
 func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
 	if m.client != nil {
@@ -289,11 +289,11 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 				agentConfig.MetaAction = modelData.MetaAction
 				agentConfig.S3 = modelData.S3
 				agentConfig.Interpreter = modelData.Interpreter
-			agentConfig.RealtimeEnabled = modelData.Realtime
-			agentConfig.RealtimeVAD = modelData.RealtimeVAD
-			// RealtimeModel: берём из RealtimeVAD.Google.VoiceName нет — это фиксированная модель.
-			// Используем константу RealtimeGoogleModel, если в данных не переопределена.
-			agentConfig.RealtimeModel = create.RealtimeGoogleModel
+				agentConfig.RealtimeEnabled = modelData.Realtime
+				agentConfig.RealtimeVAD = modelData.RealtimeVAD
+				// RealtimeModel: берём из RealtimeVAD.Google.VoiceName нет — это фиксированная модель.
+				// Используем константу RealtimeGoogleModel, если в данных не переопределена.
+				agentConfig.RealtimeModel = create.RealtimeGoogleModel
 			}
 		} else {
 			return fmt.Errorf("UniversalModel не установлен, невозможно загрузить данные модели для пользователя %d", userID)

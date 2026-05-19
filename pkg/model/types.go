@@ -94,7 +94,7 @@ type AssistResponse struct {
 type Ch struct {
 	TxCh     chan Message
 	RxCh     chan Message
-	userID   uint32
+	UserID   uint32
 	DialogID uint64
 	RespName string
 	txClosed atomic.Bool
@@ -248,7 +248,7 @@ func CreateBaseResponder(parentCtx context.Context, ttl time.Duration,
 	ch := &Ch{
 		TxCh:     make(chan Message, create.TxChanBuffer),
 		RxCh:     make(chan Message, create.RxChanBuffer),
-		userID:   assist.UserID,
+		UserID:   assist.UserID,
 		DialogID: dialogID,
 		RespName: respName,
 	}

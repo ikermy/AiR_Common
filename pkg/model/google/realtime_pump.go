@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -71,7 +70,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 		}
 		// ── setupComplete — инжектируем историю + приветствие одним сообщением ──
 		if _, ok := event["setupComplete"]; ok {
-			//log.Printf("[pumpFromGoogle] setupComplete respId=%d — инжект истории + приветствие", rs.respId)
+			//logger.Debug("[pumpFromGoogle] setupComplete respId=%d — инжект истории + приветствие", rs.respId)
 			select {
 			case <-rs.setupCompleteCh:
 			default:
@@ -134,7 +133,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 
 		// interrupted — пользователь перебил модель (barge-in)
 		if interrupted, _ := serverContent["interrupted"].(bool); interrupted {
-			log.Printf("[pumpFromGoogle] *** INTERRUPTED *** respId=%d audioOutBuf=%d", rs.respId, len(rs.AudioOut))
+			//logger.Debug("[pumpFromGoogle] *** INTERRUPTED *** respId=%d audioOutBuf=%d", rs.respId, len(rs.AudioOut))
 			rs.IsGenerating.Store(false)
 			assistTextBuf.Reset()
 
@@ -145,7 +144,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 				drained++
 			}
 			if drained > 0 {
-				log.Printf("[pumpFromGoogle] interrupted: дренировано %d чанков из AudioOut respId=%d", drained, rs.respId)
+				//logger.Debug("[pumpFromGoogle] interrupted: дренировано %d чанков из AudioOut respId=%d", drained, rs.respId)
 			}
 
 			select {
@@ -185,7 +184,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 					case <-rs.ctx.Done():
 						return
 					default:
-						log.Printf("[pumpFromGoogle] AudioOut overflow, дроп %d байт respId=%d", len(pcm16), rs.respId)
+						//logger.Debug("[pumpFromGoogle] AudioOut overflow, дроп %d байт respId=%d", len(pcm16), rs.respId)
 					}
 					continue
 				}
@@ -213,7 +212,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 		// turnComplete — ход модели завершён
 		if turnComplete, _ := serverContent["turnComplete"].(bool); turnComplete {
 			rs.IsGenerating.Store(false)
-			log.Printf("[pumpFromGoogle] turnComplete respId=%d assistTextLen=%d", rs.respId, assistTextBuf.Len())
+			//logger.Debug("[pumpFromGoogle] turnComplete respId=%d assistTextLen=%d", rs.respId, assistTextBuf.Len())
 
 			// Сохраняем накопленный транскрипт ответа ассистента в историю диалога
 			if assistText := assistTextBuf.String(); assistText != "" {
@@ -432,11 +431,11 @@ func (m *Model) pumpToGoogle(rs *GoogleRealtimeSession) {
 			if rs.IsGenerating.Load() {
 				audioWhileGenerating++
 				if audioWhileGenerating == 1 || audioWhileGenerating%50 == 0 {
-					log.Printf("[pumpToGoogle] аудио от клиента ВО ВРЕМЯ генерации модели: фрейм #%d len=%d respId=%d", audioWhileGenerating, len(pcm16), rs.respId)
+					//logger.Debug("[pumpToGoogle] аудио от клиента ВО ВРЕМЯ генерации модели: фрейм #%d len=%d respId=%d", audioWhileGenerating, len(pcm16), rs.respId)
 				}
 			} else {
 				if audioWhileGenerating > 0 {
-					log.Printf("[pumpToGoogle] модель перестала генерировать, всего аудио во время генерации: %d фреймов respId=%d", audioWhileGenerating, rs.respId)
+					//logger.Debug("[pumpToGoogle] модель перестала генерировать, всего аудио во время генерации: %d фреймов respId=%d", audioWhileGenerating, rs.respId)
 					audioWhileGenerating = 0
 				}
 			}

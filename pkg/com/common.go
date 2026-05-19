@@ -36,7 +36,7 @@ const (
 type SubscriptionError struct {
 	Message string
 	Code    ErrorCode
-	userID  uint32
+	UserID  uint32
 }
 
 // Error реализует интерфейс error
@@ -56,7 +56,7 @@ func CheckUserSubscription(provider SubscriptionProvider, userID uint32) error {
 		return &SubscriptionError{
 			Code:    ErrInvalidSubscriptionData,
 			Message: fmt.Sprintf("ошибка получения лимитов подписки: %v", err),
-			userID:  userID,
+			UserID:  userID,
 		}
 	}
 
@@ -64,7 +64,7 @@ func CheckUserSubscription(provider SubscriptionProvider, userID uint32) error {
 		return &SubscriptionError{
 			Code:    ErrNoSubscription,
 			Message: "пользователь не имеет подписки",
-			userID:  userID,
+			UserID:  userID,
 		}
 	}
 
@@ -82,7 +82,7 @@ func CheckUserSubscription(provider SubscriptionProvider, userID uint32) error {
 		return &SubscriptionError{
 			Code:    ErrInvalidSubscriptionData,
 			Message: fmt.Sprintf("ошибка парсинга данных подписки: %v", err),
-			userID:  userID,
+			UserID:  userID,
 		}
 	}
 
@@ -91,7 +91,7 @@ func CheckUserSubscription(provider SubscriptionProvider, userID uint32) error {
 		return &SubscriptionError{
 			Code:    ErrInvalidSubscriptionData,
 			Message: fmt.Sprintf("ошибка преобразования даты окончания подписки: %v", err),
-			userID:  userID,
+			UserID:  userID,
 		}
 	}
 	userSub.EndDate = endDate
@@ -101,7 +101,7 @@ func CheckUserSubscription(provider SubscriptionProvider, userID uint32) error {
 		return &SubscriptionError{
 			Code:    ErrSubscriptionExpired,
 			Message: fmt.Sprintf("подписка истекла %v", userSub.EndDate),
-			userID:  userID,
+			UserID:  userID,
 		}
 	}
 
@@ -111,7 +111,7 @@ func CheckUserSubscription(provider SubscriptionProvider, userID uint32) error {
 				Code: ErrInsufficientBalance,
 				Message: fmt.Sprintf("достигнут лимит сообщений (%d/%d) и недостаточен баланс: %f",
 					userSub.MessagesUsed, userSub.MessageLimit, userSub.Balance),
-				userID: userID,
+				UserID: userID,
 			}
 		}
 	}

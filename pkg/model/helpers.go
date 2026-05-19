@@ -14,9 +14,9 @@ import (
 //
 // Использование:
 //
-//	func (m *MyModel) Request(userID uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+//	func (m *MyModel) Request(UserID uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
 //	    return model.StreamingToSync(text, files, func(onDelta func(string, bool) error, files ...model.FileUpload) error {
-//	        return m.RequestStreaming(userID, dialogID, text, onDelta, files...)
+//	        return m.RequestStreaming(UserID, dialogID, text, onDelta, files...)
 //	    })
 //	}
 func StreamingToSync(
