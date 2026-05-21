@@ -68,11 +68,11 @@ type Exterior interface {
 	GetContactsAvailableIn(userID uint32, provider string) ([]string, error)
 	GetContactsInBothProviders(userID uint32, provider1, provider2 string) ([]string, error)
 
-	// Google OAuth методы
-	SaveGoogleTokenByProvider(userID uint32, provider create.ProviderType, googleEmail string, token *oauth2.Token) error
-	GetGoogleTokenByProvider(userID uint32, provider create.ProviderType) (*oauth2.Token, string, error)
-	RefreshGoogleTokenIfNeededByProvider(userID uint32, provider create.ProviderType, oauthConfig *oauth2.Config) error
-	DeleteGoogleTokenByProvider(userID uint32, provider create.ProviderType) error
+	// Google OAuth методы (токен единый для пользователя, не зависит от провайдера/модели)
+	SaveGoogleToken(userID uint32, googleEmail string, token *oauth2.Token) error
+	GetGoogleToken(userID uint32) (*oauth2.Token, string, error)
+	RefreshGoogleTokenIfNeeded(userID uint32, oauthConfig *oauth2.Config) error
+	DeleteGoogleToken(userID uint32) error
 
 	// UserInfo методы
 	UserTimeZone(userID uint32) (string, error)

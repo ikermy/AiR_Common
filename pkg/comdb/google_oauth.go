@@ -8,14 +8,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"golang.org/x/oauth2"
 )
 
-// GoogleOAuthToken представляет токен Google OAuth для модели
+// GoogleOAuthToken представляет токен Google OAuth для пользователя
 type GoogleOAuthToken struct {
 	ID           uint32    `json:"id"`
-	ModelID      uint32    `json:"model_id"`
+	UserID       uint32    `json:"user_id"`
 	GoogleEmail  string    `json:"google_email"`
 	AccessToken  string    `json:"access_token"`
 	RefreshToken string    `json:"refresh_token"`
@@ -26,32 +25,8 @@ type GoogleOAuthToken struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
-// getModelIDByProvider получает model_id по userID и provider
-func (d *DB) getModelIDByProvider(userID uint32, provider create.ProviderType) (uint32, error) {
-	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
-	defer cancel()
-
-	query := `
-		SELECT um.ModelId 
-		FROM user_models um
-		WHERE um.userID = ? AND um.Provider = ?
-		LIMIT 1
-	`
-
-	var modelID uint32
-	err := d.Conn().QueryRowContext(ctx, query, userID, provider).Scan(&modelID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, fmt.Errorf("модель провайдера %d не найдена для пользователя %d", provider, userID)
-		}
-		return 0, fmt.Errorf("ошибка получения model_id: %w", err)
-	}
-
-	return modelID, nil
-}
-
-// SaveGoogleTokenByProvider сохраняет или обновляет Google OAuth токен для модели пользователя по провайдеру
-func (d *DB) SaveGoogleTokenByProvider(userID uint32, provider create.ProviderType, googleEmail string, token *oauth2.Token) error {
+// SaveGoogleToken сохраняет или обновляет Google OAuth токен пользователя
+func (d *DB) SaveGoogleToken(userID uint32, googleEmail string, token *oauth2.Token) error {
 	if userID == 0 {
 		return fmt.Errorf("получен некорректный userID")
 	}
@@ -62,37 +37,31 @@ func (d *DB) SaveGoogleTokenByProvider(userID uint32, provider create.ProviderTy
 		return fmt.Errorf("получен пустой токен")
 	}
 
-	// Получаем model_id по userID и provider
-	modelID, err := d.getModelIDByProvider(userID, provider)
-	if err != nil {
-		return err
-	}
-
 	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
 	defer cancel()
 
 	// Сериализуем scopes в JSON
 	scopesJSON, err := json.Marshal(token.Extra("scope"))
 	if err != nil {
-		// Если не удалось получить scopes из Extra, создаем пустой массив
 		scopesJSON = []byte("[]")
 	}
 
 	query := `
 		INSERT INTO google_oauth_tokens 
-			(model_id, google_email, access_token, refresh_token, token_type, expiry, scopes)
+			(user_id, google_email, access_token, refresh_token, token_type, expiry, scopes)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
-			access_token = VALUES(access_token),
+			google_email  = VALUES(google_email),
+			access_token  = VALUES(access_token),
 			refresh_token = VALUES(refresh_token),
-			token_type = VALUES(token_type),
-			expiry = VALUES(expiry),
-			scopes = VALUES(scopes),
-			updated_at = CURRENT_TIMESTAMP
+			token_type    = VALUES(token_type),
+			expiry        = VALUES(expiry),
+			scopes        = VALUES(scopes),
+			updated_at    = CURRENT_TIMESTAMP
 	`
 
 	_, err = d.Conn().ExecContext(ctx, query,
-		modelID,
+		userID,
 		googleEmail,
 		token.AccessToken,
 		token.RefreshToken,
@@ -115,16 +84,10 @@ func (d *DB) SaveGoogleTokenByProvider(userID uint32, provider create.ProviderTy
 	return nil
 }
 
-// GetGoogleTokenByProvider получает Google OAuth токен для модели пользователя по провайдеру
-func (d *DB) GetGoogleTokenByProvider(userID uint32, provider create.ProviderType) (*oauth2.Token, string, error) {
+// GetGoogleToken получает Google OAuth токен пользователя
+func (d *DB) GetGoogleToken(userID uint32) (*oauth2.Token, string, error) {
 	if userID == 0 {
 		return nil, "", fmt.Errorf("получен некорректный userID")
-	}
-
-	// Получаем model_id по userID и provider
-	modelID, err := d.getModelIDByProvider(userID, provider)
-	if err != nil {
-		return nil, "", err
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
@@ -133,7 +96,7 @@ func (d *DB) GetGoogleTokenByProvider(userID uint32, provider create.ProviderTyp
 	query := `
 		SELECT access_token, refresh_token, token_type, expiry, scopes, google_email
 		FROM google_oauth_tokens
-		WHERE model_id = ?
+		WHERE user_id = ?
 		LIMIT 1
 	`
 
@@ -141,7 +104,7 @@ func (d *DB) GetGoogleTokenByProvider(userID uint32, provider create.ProviderTyp
 	var expiry time.Time
 	var scopesJSON sql.NullString
 
-	err = d.Conn().QueryRowContext(ctx, query, modelID).Scan(
+	err := d.Conn().QueryRowContext(ctx, query, userID).Scan(
 		&accessToken,
 		&refreshToken,
 		&tokenType,
@@ -181,8 +144,8 @@ func (d *DB) GetGoogleTokenByProvider(userID uint32, provider create.ProviderTyp
 	return token, googleEmail, nil
 }
 
-// RefreshGoogleTokenIfNeededByProvider проверяет срок действия токена и обновляет его при необходимости
-func (d *DB) RefreshGoogleTokenIfNeededByProvider(userID uint32, provider create.ProviderType, oauthConfig *oauth2.Config) error {
+// RefreshGoogleTokenIfNeeded проверяет срок действия токена и обновляет его при необходимости
+func (d *DB) RefreshGoogleTokenIfNeeded(userID uint32, oauthConfig *oauth2.Config) error {
 	if userID == 0 {
 		return fmt.Errorf("получен некорректный userID")
 	}
@@ -191,7 +154,7 @@ func (d *DB) RefreshGoogleTokenIfNeededByProvider(userID uint32, provider create
 	}
 
 	// Получаем текущий токен
-	token, googleEmail, err := d.GetGoogleTokenByProvider(userID, provider)
+	token, googleEmail, err := d.GetGoogleToken(userID)
 	if err != nil {
 		return fmt.Errorf("ошибка получения токена для проверки: %w", err)
 	}
@@ -214,35 +177,28 @@ func (d *DB) RefreshGoogleTokenIfNeededByProvider(userID uint32, provider create
 	}
 
 	// Сохраняем обновленный токен
-	if err := d.SaveGoogleTokenByProvider(userID, provider, googleEmail, newToken); err != nil {
+	if err := d.SaveGoogleToken(userID, googleEmail, newToken); err != nil {
 		return fmt.Errorf("ошибка сохранения обновленного токена: %w", err)
 	}
 
 	return nil
 }
 
-// DeleteGoogleTokenByProvider удаляет Google OAuth токен для модели пользователя по провайдеру
-func (d *DB) DeleteGoogleTokenByProvider(userID uint32, provider create.ProviderType) error {
+// DeleteGoogleToken удаляет Google OAuth токен пользователя
+func (d *DB) DeleteGoogleToken(userID uint32) error {
 	if userID == 0 {
 		return fmt.Errorf("получен некорректный userID")
-	}
-
-	// Получаем model_id по userID и provider
-	modelID, err := d.getModelIDByProvider(userID, provider)
-	if err != nil {
-		return err
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
 	defer cancel()
 
-	// ИЗМЕНЕНО: Полностью удаляем запись из БД вместо деактивации
 	query := `
 		DELETE FROM google_oauth_tokens
-		WHERE model_id = ?
+		WHERE user_id = ?
 	`
 
-	result, err := d.Conn().ExecContext(ctx, query, modelID)
+	_, err := d.Conn().ExecContext(ctx, query, userID)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
@@ -252,11 +208,6 @@ func (d *DB) DeleteGoogleTokenByProvider(userID uint32, provider create.Provider
 		default:
 			return fmt.Errorf("ошибка удаления Google токена: %w", err)
 		}
-	}
-
-	rowsAffected, _ := result.RowsAffected()
-	if rowsAffected == 0 {
-		return nil
 	}
 
 	return nil

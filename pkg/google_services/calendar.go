@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/calendar/v3"
@@ -18,18 +17,16 @@ import (
 type CalendarService struct {
 	db           comdb.Exterior
 	ctx          context.Context
-	provider     create.ProviderType
 	clientID     string
 	clientSecret string
 	redirectURI  string
 }
 
 // NewCalendarService создает новый сервис Calendar с OAuth credentials
-func NewCalendarService(ctx context.Context, db comdb.Exterior, provider create.ProviderType, clientID, clientSecret, redirectURI string) *CalendarService {
+func NewCalendarService(ctx context.Context, db comdb.Exterior, clientID, clientSecret, redirectURI string) *CalendarService {
 	return &CalendarService{
 		db:           db,
 		ctx:          ctx,
-		provider:     provider,
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		redirectURI:  redirectURI,
@@ -40,7 +37,7 @@ func NewCalendarService(ctx context.Context, db comdb.Exterior, provider create.
 // Автоматически обновляет токен если истёк срок действия
 func (s *CalendarService) getCalendarService(userID uint32) (*calendar.Service, error) {
 	// Получаем токен из БД
-	token, googleEmail, err := s.db.GetGoogleTokenByProvider(userID, s.provider)
+	token, googleEmail, err := s.db.GetGoogleToken(userID)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения Google токена: %w", err)
 	}
@@ -80,7 +77,7 @@ func (s *CalendarService) getCalendarService(userID uint32) (*calendar.Service, 
 
 		// Если токен был обновлён - сохраняем в БД
 		if freshToken.AccessToken != token.AccessToken {
-			err = s.db.SaveGoogleTokenByProvider(userID, s.provider, googleEmail, freshToken)
+			err = s.db.SaveGoogleToken(userID, googleEmail, freshToken)
 			if err != nil {
 				return nil, fmt.Errorf("не удалось сохранить обновлённый токен: %v", err)
 			}
