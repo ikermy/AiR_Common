@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/com"
-	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
@@ -25,35 +24,31 @@ type Router struct {
 	google        Inter
 	modelsManager *create.UniversalModel
 	ctx           context.Context
-	conf          *conf.Conf
 	db            DB
-	landingPort   string
 }
 
 // RouterOption определяет опцию для настройки Router
-type RouterOption func(*Router, context.Context, *conf.Conf, DB) error
+type RouterOption func(*Router, context.Context, DB) error
 
 // NewModelRouter создаёт новый маршрутизатор с опциями.
 //
 //	router, err := model.NewModelRouter(ctx, conf, db,
 //	    openai.NewAsRouterOption(),
 //	    mistral.NewAsRouterOption())
-func NewModelRouter(ctx context.Context, conf *conf.Conf, db DB, options ...RouterOption) *Router {
+func NewModelRouter(ctx context.Context, db DB, options ...RouterOption) *Router {
 	router := &Router{
-		ctx:         ctx,
-		conf:        conf,
-		db:          db,
-		landingPort: conf.WEB.Land,
+		ctx: ctx,
+		db:  db,
 	}
 
 	if managerDB, ok := db.(create.DB); ok {
-		router.modelsManager = create.New(ctx, managerDB, conf)
+		router.modelsManager = create.New(ctx, managerDB)
 	} else {
 		log.Fatalf("DB не реализует create.DB, невозможна инициализация ModelRouter")
 	}
 
 	for _, option := range options {
-		if err := option(router, ctx, conf, db); err != nil {
+		if err := option(router, ctx, db); err != nil {
 			log.Fatalf("ошибка применения опции: %v", err)
 		}
 	}
@@ -79,7 +74,7 @@ func NewModelRouter(ctx context.Context, conf *conf.Conf, db DB, options ...Rout
 
 // WithOpenAIModel добавляет реализацию OpenAI модели
 func WithOpenAIModel(model Inter) RouterOption {
-	return func(r *Router, _ context.Context, _ *conf.Conf, _ DB) error {
+	return func(r *Router, _ context.Context, _ DB) error {
 		if model == nil {
 			return fmt.Errorf("OpenAI модель не может быть nil")
 		}
@@ -90,7 +85,7 @@ func WithOpenAIModel(model Inter) RouterOption {
 
 // WithMistralModel добавляет реализацию Mistral модели
 func WithMistralModel(model Inter) RouterOption {
-	return func(r *Router, _ context.Context, _ *conf.Conf, _ DB) error {
+	return func(r *Router, _ context.Context, _ DB) error {
 		if model == nil {
 			return fmt.Errorf("Mistral модель не может быть nil")
 		}
@@ -101,7 +96,7 @@ func WithMistralModel(model Inter) RouterOption {
 
 // WithGoogleModel добавляет реализацию Google модели
 func WithGoogleModel(model Inter) RouterOption {
-	return func(r *Router, _ context.Context, _ *conf.Conf, _ DB) error {
+	return func(r *Router, _ context.Context, _ DB) error {
 		if model == nil {
 			return fmt.Errorf("Google модель не может быть nil")
 		}

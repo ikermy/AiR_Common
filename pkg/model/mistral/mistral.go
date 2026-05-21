@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
@@ -39,8 +38,14 @@ func (m *MistralAgentClient) resolveKey(userID uint32) string {
 	return m.apiKey
 }
 
+// HasAPIKey возвращает true если для пользователя есть действующий API-ключ.
+// Используется для ранней проверки перед выполнением запросов.
+func (m *MistralAgentClient) HasAPIKey(userID uint32) bool {
+	return m.resolveKey(userID) != ""
+}
+
 // NewMistralAgentClient создает новый клиент с поддержкой агентов
-func NewMistralAgentClient(parent context.Context, conf *conf.Conf) *MistralAgentClient {
+func NewMistralAgentClient(parent context.Context) *MistralAgentClient {
 	ctx, cancel := context.WithCancel(parent)
 
 	return &MistralAgentClient{
@@ -854,7 +859,6 @@ func (m *MistralAgentClient) readStreamingResponse(body io.Reader, onDelta func(
 	if conversationID != "" {
 		result.ConversationID = conversationID
 	}
-
 
 	return result, nil
 }

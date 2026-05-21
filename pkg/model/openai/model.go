@@ -14,7 +14,7 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/conf"
+	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
@@ -124,12 +124,11 @@ type Services struct {
 }
 
 // New создаёт новый экземпляр OpenAIModel
-func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.ActionHandler) *Model {
+func New(parent context.Context, d DB, actionHandler model.ActionHandler) *Model {
 	ctx, cancel := context.WithCancel(parent)
 
-	// Клиент получает пустой apiKey и резолвер
-	// будет возвращать только персональные ключи из БД (или пустую строку).
-	openaiClient := create.NewOpenAIAgentClient(ctx, "")
+	// Клиент не принимает глобальный ключ — персональный ключ читается из БД через keyResolver.
+	openaiClient := create.NewOpenAIAgentClient(ctx)
 
 	openaiClient.SetKeyResolver(func(userID uint32) string {
 		if key, err := d.GetUserAPIKey(userID, create.ProviderOpenAI); err == nil {
@@ -146,7 +145,7 @@ func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.Acti
 		responders:    sync.Map{},
 		waitChannels:  sync.Map{},
 		dialogCache:   sync.Map{},
-		UserModelTTl:  time.Duration(conf.GLOB.UserModelTTl) * time.Minute,
+		UserModelTTl:  mode.UserModelTTl,
 		actionHandler: actionHandler,
 	}
 
@@ -157,28 +156,28 @@ func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.Acti
 }
 
 // NewAsRouterOption создаёт OpenAI модель и возвращает её как опцию для ModelRouter
-// Использование: router := model.NewModelRouter(ctx, conf, db, openai.NewAsRouterOption())
+// Использование: router := model.NewModelRouter(ctx, db, openai.NewAsRouterOption())
 func NewAsRouterOption() model.RouterOption {
-	return func(r *model.Router, ctx context.Context, cfg *conf.Conf, db model.DB) error {
+	return func(r *model.Router, ctx context.Context, db model.DB) error {
 		openaiDB, ok := db.(DB)
 		if !ok {
 			return fmt.Errorf("DB не соответствует интерфейсу openai.DB")
 		}
 
 		// Создаём универсальный обработчик функций
-		actionHandler := model.NewUniversalActionHandler(ctx, cfg)
+		actionHandler := model.NewUniversalActionHandler(ctx)
 
 		// Создаём OpenAI модель (клиент уже инициализирован в New)
-		openaiModel := New(ctx, cfg, openaiDB, actionHandler)
+		openaiModel := New(ctx, openaiDB, actionHandler)
 
 		// Создаём UniversalModel для управления моделями
-		universalModel := create.New(ctx, openaiDB, cfg)
+		universalModel := create.New(ctx, openaiDB)
 
 		// Устанавливаем связь с universalModel
 		openaiModel.SetUniversalModel(universalModel)
 
 		// Регистрируем модель в роутере
-		return model.WithOpenAIModel(openaiModel)(r, ctx, cfg, db)
+		return model.WithOpenAIModel(openaiModel)(r, ctx, db)
 	}
 }
 
@@ -308,6 +307,12 @@ func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
 // По образцу Google провайдера - конфигурация хранится в БД, а не в OpenAI API
 // Возвращает конфигурацию агента и haunter флаг явно
 func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool, error) {
+	// Проверяем наличие API-ключа для пользователя до любых запросов к БД/API.
+	// Если ключа нет — возвращаем явную ошибку, иначе все запросы к OpenAI упадут с 401.
+	if m.client == nil || !m.client.HasAPIKey(userID) {
+		return nil, false, fmt.Errorf("OpenAI API ключ не настроен для пользователя %d: добавьте персональный ключ через настройки", userID)
+	}
+
 	// Получаем все модели пользователя
 	userModels, err := m.db.GetAllUserModels(userID)
 	if err != nil {

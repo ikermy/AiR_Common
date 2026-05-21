@@ -117,12 +117,13 @@ type GoogleTool struct {
 	GoogleSearch         *struct{}             `json:"google_search,omitempty"`
 }
 
-// NewGoogleAgentClient создаёт новый экземпляр GoogleAgentClient с API ключом
-func NewGoogleAgentClient(ctx context.Context, apiKey string) *GoogleAgentClient {
+// NewGoogleAgentClient создаёт новый экземпляр GoogleAgentClient.
+// API-ключ не передаётся глобально — используется только персональный ключ
+// из БД через SetKeyResolver.
+func NewGoogleAgentClient(ctx context.Context) *GoogleAgentClient {
 	return &GoogleAgentClient{
-		apiKey: apiKey,
-		url:    mode.GoogleAgentsURL,
-		ctx:    ctx,
+		url: mode.GoogleAgentsURL,
+		ctx: ctx,
 	}
 }
 
@@ -151,6 +152,12 @@ func (m *GoogleAgentClient) resolveKey(userID uint32) string {
 // GetAPIKeyForUser возвращает эффективный API-ключ для пользователя (персональный или глобальный).
 func (m *GoogleAgentClient) GetAPIKeyForUser(userID uint32) string {
 	return m.resolveKey(userID)
+}
+
+// HasAPIKey возвращает true если для пользователя есть действующий API-ключ.
+// Используется для ранней проверки перед выполнением запросов.
+func (m *GoogleAgentClient) HasAPIKey(userID uint32) bool {
+	return m.resolveKey(userID) != ""
 }
 
 // SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID в create-time операциях.

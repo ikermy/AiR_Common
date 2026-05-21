@@ -10,7 +10,7 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/conf"
+	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
@@ -122,12 +122,11 @@ type Services struct {
 }
 
 // New создаёт новый экземпляр GoogleModel
-func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.ActionHandler) *Model {
+func New(parent context.Context, d DB, actionHandler model.ActionHandler) *Model {
 	ctx, cancel := context.WithCancel(parent)
 
-	// Клиент получает пустой apiKey и резолвер
-	// будет возвращать только персональные ключи из БД (или пустую строку).
-	googleClient := create.NewGoogleAgentClient(ctx, "")
+	// Клиент не принимает глобальный ключ — персональный ключ читается из БД через keyResolver.
+	googleClient := create.NewGoogleAgentClient(ctx)
 
 	googleClient.SetKeyResolver(func(userID uint32) string {
 		if key, err := d.GetUserAPIKey(userID, create.ProviderGoogle); err == nil {
@@ -163,7 +162,7 @@ func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.Acti
 		cancel:        cancel,
 		client:        googleClient,
 		db:            d,
-		UserModelTTl:  time.Duration(conf.GLOB.UserModelTTl) * time.Minute,
+		UserModelTTl:  mode.UserModelTTl,
 		actionHandler: actionHandler,
 	}
 
@@ -175,18 +174,17 @@ func New(parent context.Context, conf *conf.Conf, d DB, actionHandler model.Acti
 
 // NewAsRouterOption создаёт Google модель и возвращает её как опцию для ModelRouter
 func NewAsRouterOption() model.RouterOption {
-	return func(r *model.Router, ctx context.Context, cfg *conf.Conf, db model.DB) error {
+	return func(r *model.Router, ctx context.Context, db model.DB) error {
 		googleDB, ok := db.(DB)
 		if !ok {
 			return fmt.Errorf("DB не соответствует интерфейсу google.DB")
 		}
 
-		// Создаём ActionHandler с Google OAuth конфигом из cfg
-		actionHandler := model.NewUniversalActionHandler(ctx, cfg)
+		actionHandler := model.NewUniversalActionHandler(ctx)
 
-		googleModel := New(ctx, cfg, googleDB, actionHandler)
+		googleModel := New(ctx, googleDB, actionHandler)
 
-		return model.WithGoogleModel(googleModel)(r, ctx, cfg, db)
+		return model.WithGoogleModel(googleModel)(r, ctx, db)
 	}
 }
 
@@ -227,6 +225,12 @@ func (m *Model) NewMessage(operator model.Operator, msgType string, content *mod
 // Пытается загрузить из AllIds, если пусто - создает конфигурацию по умолчанию
 // Также проверяет наличие эмбеддингов в таблице vector_embeddings
 func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error {
+	// Проверяем наличие API-ключа для пользователя до любых запросов к БД/API.
+	// Если ключа нет — возвращаем явную ошибку, иначе все запросы к Google упадут с 401.
+	if m.client == nil || !m.client.HasAPIKey(userID) {
+		return fmt.Errorf("Google API ключ не настроен для пользователя %d: добавьте персональный ключ через настройки", userID)
+	}
+
 	// Получаем все модели пользователя
 	userModels, err := m.db.GetAllUserModels(userID)
 	if err != nil {

@@ -105,6 +105,12 @@ func (m *MistralAgentClient) SetMCPConfigFetchers(promptFetcher GooglePromptHint
 	m.toolsFetcher = toolsFetcher
 }
 
+// HasAPIKey возвращает true если для пользователя есть действующий API-ключ.
+// Используется для ранней проверки перед выполнением запросов.
+func (m *MistralAgentClient) HasAPIKey(userID uint32) bool {
+	return m.resolveKey(userID) != ""
+}
+
 // deleteMistralModel удаляет Mistral Agent (с поддержкой WS сообщений)
 func (m *UniversalModel) deleteMistralModel(userID uint32, modelData *UserModelRecord, deleteFiles bool, progressCallback func(string)) error {
 	if progressCallback != nil {

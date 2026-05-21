@@ -36,7 +36,7 @@ var (
 	CarpinteroCh   = make(chan com.CarpCh, 1)  // Канал для передачи уведомлений
 	Event          = make(chan uint64, 1)      // Канал для передачи Id диалога при отключении клиента
 	InstantCh      = make(chan com.InstMsg, 1) // Канал для передачи мгновенных сообщений в панель управления
-	MailServerPort string
+	LandingPort    string
 	CarpinteroPort string
 	CarpinteroHost string
 	RealHost       string
@@ -47,6 +47,7 @@ var (
 	OperatorResponseTimeout = 120
 	// Тайм-аут на операции с БД (в секундах)
 	SqlTimeToCancel = 5 * time.Second
+	UserModelTTl    = 5 * time.Minute
 )
 
 func SetTextMode(enabled bool) {
@@ -67,4 +68,12 @@ func SetRealHost(host string) {
 
 func SetMcpServer(server string) {
 	MCPserver = server
+}
+
+func SetUserModelTTL(ttl time.Duration) {
+	UserModelTTl = ttl
+}
+
+func SetLandingPort(port string) {
+	LandingPort = port
 }

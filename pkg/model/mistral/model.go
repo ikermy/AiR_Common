@@ -15,7 +15,7 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/conf"
+	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
@@ -83,10 +83,10 @@ type Services struct {
 }
 
 // New создает новую модель Mistral
-func New(parent context.Context, conf *conf.Conf, actionHandler model.ActionHandler, db DB, router model.RouterInterface) *Model {
+func New(parent context.Context, actionHandler model.ActionHandler, db DB, router model.RouterInterface) *Model {
 	ctx, cancel := context.WithCancel(parent)
 
-	mistralClient := NewMistralAgentClient(parent, conf)
+	mistralClient := NewMistralAgentClient(parent)
 
 	// Резолвер персональных ключей Mistral: возвращаем только ключ из БД или пустую строку.
 	mistralClient.SetKeyResolver(func(userID uint32) string {
@@ -103,24 +103,24 @@ func New(parent context.Context, conf *conf.Conf, actionHandler model.ActionHand
 		db:            db,
 		responders:    sync.Map{},
 		waitChannels:  sync.Map{},
-		UserModelTTl:  time.Duration(conf.GLOB.UserModelTTl) * time.Minute,
+		UserModelTTl:  mode.UserModelTTl,
 		actionHandler: actionHandler,
 		router:        router,
 	}
 }
 
 // NewAsRouterOption создаёт Mistral модель и возвращает её как опцию для ModelRouter
-// Использование: router := model.NewModelRouter(ctx, conf, db, mistral.NewAsRouterOption())
+// Использование: router := model.NewModelRouter(ctx, db, mistral.NewAsRouterOption())
 func NewAsRouterOption() model.RouterOption {
-	return func(r *model.Router, ctx context.Context, cfg *conf.Conf, db model.DB) error {
+	return func(r *model.Router, ctx context.Context, db model.DB) error {
 		// Создаём универсальный обработчик функций с Google OAuth конфигом
-		actionHandler := model.NewUniversalActionHandler(ctx, cfg)
+		actionHandler := model.NewUniversalActionHandler(ctx)
 
 		// Создаём Mistral модель с action handler и router
-		mistralModel := New(ctx, cfg, actionHandler, db, r)
+		mistralModel := New(ctx, actionHandler, db, r)
 
 		// Устанавливаем UniversalModel для доступа к DecompressModelData
-		universalModel := create.New(ctx, db, cfg)
+		universalModel := create.New(ctx, db)
 
 		// Подключаем MCP fetchers для create-time операций (создание агента через Mistral API).
 		// Аналогично google/model.go: function declarations и prompt hint — только от MCP.
@@ -150,7 +150,7 @@ func NewAsRouterOption() model.RouterOption {
 		mistralModel.SetUniversalModel(universalModel)
 
 		// Регистрируем модель в роутере
-		return model.WithMistralModel(mistralModel)(r, ctx, cfg, db)
+		return model.WithMistralModel(mistralModel)(r, ctx, db)
 	}
 }
 
@@ -202,6 +202,12 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 		respModel := val.(*RespModel)
 		respModel.TTL = time.Now().Add(m.UserModelTTl) // Обновляем TTL при каждом обращении
 		return m.convertToModelRespModel(respModel), nil
+	}
+
+	// Проверяем наличие API-ключа для пользователя до создания респондента.
+	// Если ключа нет — возвращаем явную ошибку, иначе все запросы к Mistral упадут с 401.
+	if m.client == nil || !m.client.HasAPIKey(assist.UserID) {
+		return nil, fmt.Errorf("Mistral API ключ не настроен для пользователя %d: добавьте персональный ключ через настройки", assist.UserID)
 	}
 
 	// Используем helper-функцию для создания базовых компонентов

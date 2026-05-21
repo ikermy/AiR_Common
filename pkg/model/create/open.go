@@ -141,12 +141,13 @@ func getStringField(m map[string]interface{}, key string) string {
 	return ""
 }
 
-// NewOpenAIAgentClient создаёт новый OpenAI клиент с API ключом
-func NewOpenAIAgentClient(ctx context.Context, apiKey string) *OpenAIAgentClient {
+// NewOpenAIAgentClient создаёт новый OpenAI клиент.
+// API-ключ не передаётся глобально — используется только персональный ключ
+// из БД через SetKeyResolver.
+func NewOpenAIAgentClient(ctx context.Context) *OpenAIAgentClient {
 	return &OpenAIAgentClient{
-		apiKey: apiKey,
-		url:    "https://api.openai.com/v1",
-		ctx:    ctx,
+		url: "https://api.openai.com/v1",
+		ctx: ctx,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -176,6 +177,12 @@ func (c *OpenAIAgentClient) resolveKey(userID uint32) string {
 // GetAPIKeyForUser возвращает эффективный API-ключ для пользователя (персональный или глобальный).
 func (c *OpenAIAgentClient) GetAPIKeyForUser(userID uint32) string {
 	return c.resolveKey(userID)
+}
+
+// HasAPIKey возвращает true если для пользователя есть действующий API-ключ.
+// Используется для ранней проверки перед выполнением запросов.
+func (c *OpenAIAgentClient) HasAPIKey(userID uint32) bool {
+	return c.resolveKey(userID) != ""
 }
 
 // doRequest выполняет HTTP запрос к OpenAI API

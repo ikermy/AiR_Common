@@ -9,23 +9,20 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
 // UniversalActionHandler универсальный обработчик функций для всех провайдеров
 type UniversalActionHandler struct {
-	port       string // Порт для внутренних HTTP запросов (MCP сервер)
 	ctx        context.Context
 	httpClient *http.Client // shared client с таймаутом
 }
 
 // NewUniversalActionHandler создаёт новый action handler с доступом к БД
-func NewUniversalActionHandler(ctx context.Context, cfg *conf.Conf) *UniversalActionHandler {
+func NewUniversalActionHandler(ctx context.Context) *UniversalActionHandler {
 	return &UniversalActionHandler{
-		ctx:  ctx,
-		port: cfg.WEB.Land,
+		ctx: ctx,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},

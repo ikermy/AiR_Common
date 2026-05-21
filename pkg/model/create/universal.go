@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
@@ -235,24 +234,20 @@ type UniversalModel struct {
 	openaiClient  *OpenAIAgentClient  // Клиент для работы с OpenAI
 	mistralClient *MistralAgentClient // Клиент для работы с Mistral
 	googleClient  *GoogleAgentClient  // Клиент для работы с Google
-	landingPort   string
 	db            DB
 }
 
 // New создаёт новый экземпляр UniversalModel для управления моделями
 // любой ключь может быть пустым (если не используется соответствующий провайдер)
-func New(ctx context.Context, db DB, conf *conf.Conf) *UniversalModel {
+func New(ctx context.Context, db DB) *UniversalModel {
 	m := &UniversalModel{
-		ctx:         ctx,
-		db:          db,
-		landingPort: conf.WEB.Land, // TODO нужно изменить правила Nginx и убрать порт
+		ctx: ctx,
+		db:  db,
 	}
 
 	// Инициализируем OpenAI клиент БЕЗ глобального ключа — глобальные ключи из конфига
-	// должны игнорироваться полностью. Клиент получает пустой apiKey и резолвер
-	// будет возвращать только персональные ключи из БД (или пустую строку).
+	// должны игнорироваться полностью. Персональный ключ читается из БД через keyResolver.
 	m.openaiClient = &OpenAIAgentClient{
-		apiKey: "",
 		url:    mode.OpenAIAgentsURL,
 		ctx:    ctx,
 		httpClient: &http.Client{
@@ -268,10 +263,8 @@ func New(ctx context.Context, db DB, conf *conf.Conf) *UniversalModel {
 	})
 
 	// Инициализируем Mistral клиент БЕЗ глобального ключа — глобальные ключи из конфига
-	// должны игнорироваться полностью. Клиент получает пустой apiKey и резолвер
-	// будет возвращать только персональные ключи из БД (или пустую строку).
+	// должны игнорироваться полностью. Персональный ключ читается из БД через keyResolver.
 	m.mistralClient = &MistralAgentClient{
-		apiKey:         "",
 		url:            mode.MistralAgentsURL,
 		ctx:            ctx,
 		universalModel: m,
@@ -284,10 +277,8 @@ func New(ctx context.Context, db DB, conf *conf.Conf) *UniversalModel {
 	})
 
 	// Инициализируем google клиент БЕЗ глобального ключа — глобальные ключи из конфига
-	// должны игнорироваться полностью. Клиент получает пустой apiKey и резолвер
-	// будет возвращать только персональные ключи из БД (или пустую строку).
+	// должны игнорироваться полностью. Персональный ключ читается из БД через keyResolver.
 	m.googleClient = &GoogleAgentClient{
-		apiKey:         "",
 		url:            mode.GoogleAgentsURL,
 		ctx:            ctx,
 		universalModel: m,
@@ -1102,9 +1093,9 @@ func (m *UniversalModel) GetRealUserID(userID uint32) (uint64, error) {
 	// Строим URL для запроса к landing серверу
 	var url string
 	if mode.ProductionMode {
-		url = fmt.Sprintf("http://localhost:%s/uid?uid=%d", m.landingPort, userID)
+		url = fmt.Sprintf("http://localhost:%s/uid?uid=%d", mode.LandingPort, userID)
 	} else {
-		url = fmt.Sprintf("https://localhost:%s/uid?uid=%d", m.landingPort, userID)
+		url = fmt.Sprintf("https://localhost:%s/uid?uid=%d", mode.LandingPort, userID)
 	}
 
 	// Создаём HTTP клиент с отключённой проверкой SSL для localhost

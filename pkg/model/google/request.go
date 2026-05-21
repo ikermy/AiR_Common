@@ -1170,7 +1170,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 
 	// === 5. Генерируем эмбеддинг запроса ===
 	embeddingStart := time.Now()
-	queryEmbedding, err := m.GenerateEmbedding(text)
+	queryEmbedding, err := m.GenerateEmbedding(userID, text)
 	result.embeddingDuration = time.Since(embeddingStart)
 
 	if err != nil {

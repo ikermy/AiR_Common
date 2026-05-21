@@ -98,14 +98,14 @@ func (m *Model) downloadFileFromGoogle(fileURI string) ([]byte, error) {
 // для избежания дублирования кода с GoogleAgentClient.GenerateEmbedding()
 //
 // Используется внутри UploadDocumentWithEmbedding, SearchSimilarDocuments и других публичных методов GoogleModel
-func (m *Model) GenerateEmbedding(text string) ([]float32, error) {
+func (m *Model) GenerateEmbedding(userID uint32, text string) ([]float32, error) {
 	// Проверяем кэш
 	if cached, found := m.getCachedEmbedding(text); found {
 		return cached, nil
 	}
 
-	// Вызываем Google API
-	embedding, err := create.GenerateGoogleEmbedding(m.ctx, m.client.GetAPIKey(), text)
+	// Вызываем Google API, используя персональный ключ пользователя (или глобальный если не задан)
+	embedding, err := create.GenerateGoogleEmbedding(m.ctx, m.client.GetAPIKeyForUser(userID), text)
 	if err != nil {
 		return nil, err
 	}
