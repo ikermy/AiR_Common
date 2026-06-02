@@ -73,7 +73,7 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/com"
-	"github.com/ikermy/AiR_Common/pkg/conf"
+	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
 type Inter interface {
@@ -243,11 +243,11 @@ func WithNumWorkers(n uint8) Option {
 //crm.WithAltContactChannel(crm.ChannelTelegram),
 //)
 
-func New(parent context.Context, cfg *conf.Conf, opts ...Option) *CRM {
+func New(parent context.Context, opts ...Option) *CRM {
 	ctx, cancel := context.WithCancel(parent)
 
 	crm := &CRM{
-		port:        cfg.WEB.CRM,
+		port:        mode.CRMPort,
 		ctx:         ctx,
 		cancel:      cancel,
 		respTimeOut: DefaultRespTimeout,

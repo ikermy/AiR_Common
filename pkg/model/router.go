@@ -758,7 +758,38 @@ func (r *Router) GetRealUserID(userID uint32) (uint64, error) {
 	return r.modelsManager.GetRealUserID(userID)
 }
 
+// ProvidersWithApiKeys возвращает два списка провайдеров: с API-ключом и без.
+func (r *Router) ProvidersWithApiKeys(userID uint32) create.ProvidersAvailability {
+	if r.modelsManager == nil {
+		return create.ProvidersAvailability{}
+	}
+	return r.modelsManager.ProvidersWithApiKeys(userID)
+}
+
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
 func (r *Router) InvalidateUserAgentConfigCache(userID uint32) {
 	r.forEachProvider(func(p Inter) { p.InvalidateUserAgentConfigCache(userID) })
+}
+
+// DisconnectUser завершает активные сессии пользователя у всех инициализированных провайдеров:
+// закрывает realtime-соединения, отменяет контексты респондентов, удаляет их из кэша.
+// Используется при глобальном отключении пользователя (например, блокировка аккаунта).
+// Для отключения конкретного провайдера используйте RevokeUserAPIKey.
+func (r *Router) DisconnectUser(userID uint32) {
+	r.forEachProvider(func(p Inter) { p.DisconnectUser(userID) })
+}
+
+// RevokeUserAPIKey выполняет graceful завершение всех сессий пользователя
+// для указанного провайдера и удаляет API-ключ из БД.
+// Порядок: сначала DisconnectUser у конкретного провайдера, затем удаление ключа.
+func (r *Router) RevokeUserAPIKey(userID uint32, provider create.ProviderType) error {
+	// Завершаем сессии только у указанного провайдера
+	if p, err := r.getModel(provider); err == nil {
+		p.DisconnectUser(userID)
+	}
+
+	if r.modelsManager == nil {
+		return fmt.Errorf("модельный менеджер не инициализирован")
+	}
+	return r.modelsManager.DeleteUserAPIKey(userID, provider)
 }

@@ -27,6 +27,7 @@ type Inter interface {
 	DeleteTempFile(fileID string) error
 	TranscribeAudio(userID uint32, audioData []byte, fileName string) (string, error)
 	CleanUp()
+	DisconnectUser(userID uint32)
 	InvalidateUserAgentConfigCache(userID uint32)
 	Shutdown(shutCh chan<- com.LogMsg)
 }
@@ -34,6 +35,8 @@ type Inter interface {
 // RouterInterface минимальный интерфейс для доступа к методам роутера
 type RouterInterface interface {
 	GetRealUserID(userID uint32) (uint64, error)
+	ProvidersWithApiKeys(userID uint32) create.ProvidersAvailability
+	RevokeUserAPIKey(userID uint32, provider create.ProviderType) error
 }
 
 // OpenAIManager расширяет Inter методами управления моделями OpenAI

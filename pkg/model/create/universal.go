@@ -73,6 +73,14 @@ const (
 	ProviderGoogle  ProviderType = 3
 )
 
+// AllProviders содержит все зарегистрированные провайдеры в порядке добавления.
+// При добавлении нового провайдера достаточно добавить его сюда и в switch-и String/FromString/IsValid.
+var AllProviders = []ProviderType{
+	ProviderOpenAI,
+	ProviderMistral,
+	ProviderGoogle,
+}
+
 // String возвращает строковое представление типа провайдера
 func (p ProviderType) String() string {
 	switch p {
@@ -108,7 +116,12 @@ func (p ProviderType) FromUint8(value uint8) ProviderType {
 
 // IsValid проверяет, является ли тип провайдера валидным
 func (p ProviderType) IsValid() bool {
-	return p == ProviderOpenAI || p == ProviderMistral || p == ProviderGoogle
+	for _, known := range AllProviders {
+		if p == known {
+			return true
+		}
+	}
+	return false
 }
 
 type DB interface {
@@ -248,8 +261,8 @@ func New(ctx context.Context, db DB) *UniversalModel {
 	// Инициализируем OpenAI клиент БЕЗ глобального ключа — глобальные ключи из конфига
 	// должны игнорироваться полностью. Персональный ключ читается из БД через keyResolver.
 	m.openaiClient = &OpenAIAgentClient{
-		url:    mode.OpenAIAgentsURL,
-		ctx:    ctx,
+		url: mode.OpenAIAgentsURL,
+		ctx: ctx,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -304,6 +317,30 @@ func (m *UniversalModel) SetMistralMCPFetchers(promptFetcher GooglePromptHintFet
 // ============================================================================
 // USER API KEYS — персональные API-ключи провайдеров
 // ============================================================================
+
+// ProvidersAvailability содержит результат проверки API-ключей по всем провайдерам.
+type ProvidersAvailability struct {
+	Available   []string `json:"available"`   // Провайдеры с действующим API-ключом в БД
+	Unavailable []string `json:"unavailable"` // Провайдеры без API-ключа
+}
+
+// ProvidersWithApiKeys проверяет каждый зарегистрированный провайдер и возвращает
+// два списка: с ключом и без ключа.
+func (m *UniversalModel) ProvidersWithApiKeys(userID uint32) ProvidersAvailability {
+	result := ProvidersAvailability{
+		Available:   make([]string, 0),
+		Unavailable: make([]string, 0),
+	}
+	for _, p := range AllProviders {
+		key, err := m.db.GetUserAPIKey(userID, p)
+		if err == nil && key != "" {
+			result.Available = append(result.Available, p.String())
+		} else {
+			result.Unavailable = append(result.Unavailable, p.String())
+		}
+	}
+	return result
+}
 
 // SetUserAPIKey сохраняет персональный API-ключ пользователя для указанного провайдера.
 func (m *UniversalModel) SetUserAPIKey(userID uint32, provider ProviderType, key string) error {
@@ -1091,12 +1128,14 @@ func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
 // Универсальный метод для всех провайдеров (OpenAI, Mistral)
 func (m *UniversalModel) GetRealUserID(userID uint32) (uint64, error) {
 	// Строим URL для запроса к landing серверу
-	var url string
-	if mode.ProductionMode {
-		url = fmt.Sprintf("http://localhost:%s/uid?uid=%d", mode.LandingPort, userID)
-	} else {
-		url = fmt.Sprintf("https://localhost:%s/uid?uid=%d", mode.LandingPort, userID)
-	}
+	//var url string
+	//if mode.ProductionMode {
+	//	url = fmt.Sprintf("http://localhost:%s/system/uid?uid=%d", mode.LandingPort, userID)
+	//} else {
+	//	url = fmt.Sprintf("https://localhost:%s/system/uid?uid=%d", mode.LandingPort, userID)
+	//}
+
+	url := fmt.Sprintf("http://airlanding:8081/uid?uid=%d", userID)
 
 	// Создаём HTTP клиент с отключённой проверкой SSL для localhost
 	tr := &http.Transport{

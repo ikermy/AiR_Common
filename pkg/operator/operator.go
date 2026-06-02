@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/r3labs/sse/v2"
@@ -72,14 +71,14 @@ type session struct {
 	connectionErrorCh chan string
 }
 
-func New(parent context.Context, cfg *conf.Conf) *Operator {
+func New(parent context.Context) *Operator {
 	ctx, cancel := context.WithCancel(parent)
 
 	o := &Operator{
 		ctx:           ctx,
 		cancel:        cancel,
 		operatorChMap: sync.Map{},
-		port:          cfg.WEB.Oper,
+		port:          mode.OperPort,
 	}
 
 	return o

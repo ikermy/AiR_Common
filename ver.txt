@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.2"
-git tag -a v1.50.2 -m "user api key fix"
+git commit -m "v1.50.3"
+git tag -a v1.50.3 -m "without config"
 git push origin master
-git push origin v1.50.2
+git push origin v1.50.3

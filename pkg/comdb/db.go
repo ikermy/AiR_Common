@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/conf"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"golang.org/x/oauth2"
@@ -132,23 +132,32 @@ type DB struct {
 }
 
 // New создает новое подключение к базе данных
-func New(parent context.Context, conf *conf.Conf) (*DB, error) {
-	var dsn string
-	if mode.ProductionMode {
-		dsn = fmt.Sprintf("%s:%s@unix(%s)/%s?parseTime=true&charset=utf8mb4&loc=Local",
-			conf.DB.User,
-			conf.DB.Password,
-			conf.DB.Host,
-			conf.DB.Name,
-		)
-	} else {
-		dsn = fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true&charset=utf8mb4&loc=Local",
-			conf.DB.User,
-			conf.DB.Password,
-			conf.DB.Host,
-			conf.DB.Name,
-		)
-	}
+func New(parent context.Context) (*DB, error) {
+	//var dsn string
+	//if mode.ProductionMode {
+	//	dsn = fmt.Sprintf("%s:%s@unix(%s)/%s?parseTime=true&charset=utf8mb4&loc=Local",
+	//		conf.DB.User,
+	//		conf.DB.Password,
+	//		conf.DB.Host,
+	//		conf.DB.Name,
+	//	)
+	//} else {
+	//	dsn = fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true&charset=utf8mb4&loc=Local",
+	//		conf.DB.User,
+	//		conf.DB.Password,
+	//		conf.DB.Host,
+	//		conf.DB.Name,
+	//	)
+	//}
+
+	host := os.Getenv("DB_HOST")
+	name := os.Getenv("DB_NAME")
+	user := os.Getenv("DB_USER")
+	pass := os.Getenv("DB_PASSWORD")
+
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true&charset=utf8mb4&loc=Local",
+		user, pass, host, name)
+
 	conn, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, err
@@ -1604,7 +1613,7 @@ func (d *DB) SaveUserModel(
 		return fmt.Errorf("получены некорректные значения: userID, name или assistantId пусты")
 	}
 	// Валидация провайдера
-	if provider != create.ProviderOpenAI && provider != create.ProviderMistral && provider != create.ProviderGoogle {
+	if !provider.IsValid() {
 		return fmt.Errorf("некорректный provider: %d (допустимы 1=OpenAI, 2=Mistral, 3=Google)", provider)
 	}
 

@@ -845,3 +845,31 @@ func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 		//logger.Debug("Инвалидирован кэш конфигурации модели для userID=%d (удалено %d респондентов)", userID, invalidatedCount)
 	}
 }
+
+// DisconnectUser выполняет graceful завершение всех активных сессий пользователя:
+// 1. Закрывает все realtime-сессии (WebSocket + каналы)
+// 2. Отменяет контексты всех респондентов
+// 3. Удаляет респондентов из кэша
+func (m *Model) DisconnectUser(userID uint32) {
+	// Шаг 1: закрываем realtime-сессии пользователя
+	m.realtimeSessions.Range(func(key, value interface{}) bool {
+		rs := value.(*GoogleRealtimeSession)
+		if rs.userID == userID {
+			respId := key.(uint64)
+			m.CloseRealtimeSession(respId)
+		}
+		return true
+	})
+
+	// Шаг 2: отменяем контексты и удаляем респондентов
+	m.responders.Range(func(key, value interface{}) bool {
+		respModel := value.(*GoogleRespModel)
+		if respModel.Assist.UserID == userID {
+			if respModel.Cancel != nil {
+				respModel.Cancel()
+			}
+			m.responders.Delete(key)
+		}
+		return true
+	})
+}

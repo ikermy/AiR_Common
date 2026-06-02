@@ -653,7 +653,7 @@ func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
 }
 
-// GetRealuserID получает реальный userID через ModelRouter
+// GetRealUserID получает реальный userID через ModelRouter
 // Использует единый метод для всех провайдеров (OpenAI, Mistral)
 func (m *Model) GetRealUserID(userID uint32) (uint64, error) {
 	if m.router == nil {
@@ -676,4 +676,20 @@ func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 	if invalidatedCount > 0 {
 		//logger.Debug("Инвалидирован кэш конфигурации модели для userID=%d (удалено %d респондентов)", userID, invalidatedCount)
 	}
+}
+
+// DisconnectUser выполняет graceful завершение всех активных сессий пользователя:
+// отменяет контексты всех респондентов и удаляет их из кэша.
+// Mistral не поддерживает realtime-сессии.
+func (m *Model) DisconnectUser(userID uint32) {
+	m.responders.Range(func(key, value interface{}) bool {
+		respModel := value.(*RespModel)
+		if respModel.Assist.UserID == userID {
+			if respModel.Cancel != nil {
+				respModel.Cancel()
+			}
+			m.responders.Delete(key)
+		}
+		return true
+	})
 }
