@@ -163,8 +163,8 @@ func (e *Endpoint) SendNotification(msg com.CarpCh) error {
 
 func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	//url := fmt.Sprintf("https://localhost:%s/notification/telega", mode.LandingPort)
-	url := fmt.Sprintf("http://airlanding:%s/notification/telega", mode.LandingPort)
+	url := fmt.Sprintf("https://localhost/notification/telega")
+	//url := fmt.Sprintf("http://airlanding:%s/notification/telega", mode.LandingPort)
 
 	payload := map[string]interface{}{
 		"uid":    uid,
@@ -180,7 +180,8 @@ func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName
 
 func SendEmailNotification(uid uint32, email, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	url := fmt.Sprintf("https://localhost:%s/notification/mail", mode.LandingPort)
+	//url := fmt.Sprintf("https://localhost:%s/notification/mail", mode.LandingPort)
+	url := fmt.Sprintf("http://airlanding:%s/notification/mail", mode.LandingPort)
 
 	payload := map[string]interface{}{
 		"uid":    uid,
@@ -196,7 +197,8 @@ func SendEmailNotification(uid uint32, email, event, userName, assistName, targe
 
 func SendInstantNotification(uid uint32, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	url := fmt.Sprintf("https://localhost:%s/notification/instant", mode.LandingPort)
+	url := fmt.Sprintf("https://localhost/notification/instant")
+	//url := fmt.Sprintf("http://airlanding:%s/notification/instant", mode.LandingPort)
 
 	payload := map[string]interface{}{
 		"uid":    uid,
