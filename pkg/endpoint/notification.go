@@ -163,7 +163,7 @@ func (e *Endpoint) SendNotification(msg com.CarpCh) error {
 
 func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	url := fmt.Sprintf("https://localhost/notification/telega")
+	url := "https://airlanding:443/notification/telega" // HTTPS через Envoy
 	//url := fmt.Sprintf("http://airlanding:%s/notification/telega", mode.LandingPort)
 
 	payload := map[string]interface{}{
@@ -197,7 +197,7 @@ func SendEmailNotification(uid uint32, email, event, userName, assistName, targe
 
 func SendInstantNotification(uid uint32, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	url := fmt.Sprintf("https://localhost/notification/instant")
+	url := "https://airlanding:443/notification/instant" // HTTPS через Envoy
 	//url := fmt.Sprintf("http://airlanding:%s/notification/instant", mode.LandingPort)
 
 	payload := map[string]interface{}{
