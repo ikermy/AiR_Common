@@ -82,7 +82,7 @@ func (e *Endpoint) SendNotification(msg com.CarpCh) error {
 	if err != nil {
 		return fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
-
+	fmt.Println("channels:", channels)
 	var lastError error
 	successCount := 0
 
@@ -163,7 +163,8 @@ func (e *Endpoint) SendNotification(msg com.CarpCh) error {
 
 func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName, target string) error {
 	// Добавить userID для возможности смены языка уведомлений
-	url := fmt.Sprintf("https://localhost:%s/notification/telega", mode.LandingPort)
+	//url := fmt.Sprintf("https://localhost:%s/notification/telega", mode.LandingPort)
+	url := fmt.Sprintf("http://airlanding:%s/notification/telega", mode.LandingPort)
 
 	payload := map[string]interface{}{
 		"uid":    uid,
