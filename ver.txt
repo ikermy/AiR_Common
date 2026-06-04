@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.10"
-git tag -a v1.50.10 -m "crypto"
+git commit -m "v1.50.11"
+git tag -a v1.50.11 -m "crypto"
 git push origin master
-git push origin v1.50.10
+git push origin v1.50.11
