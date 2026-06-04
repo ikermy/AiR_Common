@@ -185,7 +185,7 @@ func (m *Model) StartRealtimeSession(userID uint32, dialogID, respId uint64) err
 		return fmt.Errorf("StartRealtimeSession: Realtime не включён для userID=%d (установите флаг Realtime в настройках модели)", userID)
 	}
 
-	conn, err := create.DialGoogleRealtimeSession(m.client.GetAPIKey(), rm.AgentConfig.RealtimeModel)
+	conn, err := create.DialGoogleRealtimeSession(m.client.GetAPIKeyForUser(userID), rm.AgentConfig.RealtimeModel)
 	if err != nil {
 		return fmt.Errorf("StartRealtimeSession: ошибка подключения к Google Live API: %w", err)
 	}
