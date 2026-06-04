@@ -82,7 +82,7 @@ func (e *Endpoint) SendNotification(msg com.CarpCh) error {
 	if err != nil {
 		return fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
-	fmt.Println("channels:", channels)
+
 	var lastError error
 	successCount := 0
 

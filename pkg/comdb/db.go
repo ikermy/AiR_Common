@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/crypto"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 	"golang.org/x/oauth2"
@@ -78,9 +79,10 @@ type Exterior interface {
 	UserTimeZone(userID uint32) (string, error)
 
 	// UserAPIKey — персональные API-ключи провайдеров для каждого пользователя.
+	// TODO глобальный ключь не должен использоваться никогда!
 	// Возвращает пустую строку (без ошибки) если ключ не задан — caller должен использовать глобальный ключ.
 	GetUserAPIKey(userID uint32, provider ProviderType) (string, error)
-	SetUserAPIKey(userID uint32, provider ProviderType, key string) error
+	SetUserAPIKey(userId uint32, provider ProviderType, apiKey string) error
 	DeleteUserAPIKey(userID uint32, provider ProviderType) error
 }
 
@@ -1931,55 +1933,73 @@ func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remainin
 	return remaining, totalLimit, nil
 }
 
-// GetUserAPIKey возвращает персональный API-ключ пользователя для указанного провайдера.
-// Возвращает ("", nil) если ключ не задан — caller должен использовать глобальный ключ из конфига.
+// GetUserApiKey возвращает API-ключ пользователя для провайдера.
+// Автоматически расшифровывает если ключ зашифрован application key.
 func (d *DB) GetUserAPIKey(userID uint32, provider ProviderType) (string, error) {
-	if userID == 0 {
-		return "", nil
-	}
-
 	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
 	defer cancel()
 
-	var key sql.NullString
+	var apiKey string
 	err := d.conn.QueryRowContext(ctx,
-		`SELECT ApiKey FROM user_api_keys WHERE UserId = ? AND Provider = ?`,
-		userID, provider.String(),
-	).Scan(&key)
+		"SELECT ApiKey FROM user_api_keys WHERE UserId = ? AND Provider = ?",
+		userID, int(provider)).Scan(&apiKey)
 
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
-	}
 	if err != nil {
-		return "", fmt.Errorf("ошибка получения API ключа пользователя %d (%s): %w", userID, provider, err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil // ключ не найден — не ошибка
+		}
+		return "", fmt.Errorf("ошибка получения API-ключа: %w", err)
 	}
-	if !key.Valid {
-		return "", nil
+
+	// Если ключ не зашифрован — возвращаем как есть (backward compatibility)
+	if !crypto.IsEncryptedWithAppKey(apiKey) {
+		return apiKey, nil
 	}
-	return key.String, nil
+
+	// Расшифровываем через global encryptor
+	encryptor, err := crypto.GetGlobalEncryptor()
+	if err != nil {
+		return "", fmt.Errorf("application encryption key не доступен: %w", err)
+	}
+
+	decrypted, err := encryptor.DecryptField(apiKey)
+	if err != nil {
+		return "", fmt.Errorf("ошибка расшифровки API-ключа: %w", err)
+	}
+
+	return decrypted, nil
 }
 
-// SetUserAPIKey сохраняет (или обновляет) персональный API-ключ пользователя для провайдера.
-func (d *DB) SetUserAPIKey(userID uint32, provider ProviderType, key string) error {
-	if userID == 0 {
-		return fmt.Errorf("некорректный userID")
-	}
-	if key == "" {
-		return fmt.Errorf("ключ не может быть пустым")
-	}
-
+// SetUserAPIKey сохраняет API-ключ пользователя с автоматическим шифрованием,
+// если application encryption key установлен.
+func (d *DB) SetUserAPIKey(userID uint32, provider ProviderType, apiKey string) error {
 	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
 	defer cancel()
 
-	_, err := d.conn.ExecContext(ctx,
-		`INSERT INTO user_api_keys (UserId, Provider, ApiKey)
-		 VALUES (?, ?, ?)
-		 ON DUPLICATE KEY UPDATE ApiKey = VALUES(ApiKey), UpdatedAt = CURRENT_TIMESTAMP`,
-		userID, provider.String(), key,
-	)
-	if err != nil {
-		return fmt.Errorf("ошибка сохранения API ключа пользователя %d (%s): %w", userID, provider, err)
+	keyToStore := apiKey
+
+	// Пытаемся зашифровать если application encryption key доступен
+	encryptor, err := crypto.GetGlobalEncryptor()
+	if err == nil && encryptor.IsKeySet() {
+		encrypted, encErr := encryptor.EncryptField(apiKey)
+		if encErr != nil {
+			// Не критично — сохраняем plaintext
+			//logger.Warn("comdb: не удалось зашифровать API-ключ, сохраняем plaintext: %v", encErr)
+		} else {
+			keyToStore = encrypted
+		}
 	}
+
+	// Сохраняем (INSERT или UPDATE)
+	query := `INSERT INTO user_api_keys (UserId, Provider, ApiKey)
+	          VALUES (?, ?, ?)
+	          ON DUPLICATE KEY UPDATE ApiKey = VALUES(ApiKey)`
+
+	_, execErr := d.conn.ExecContext(ctx, query, userID, int(provider), keyToStore)
+	if execErr != nil {
+		return fmt.Errorf("ошибка сохранения API-ключа: %w", execErr)
+	}
+
 	return nil
 }
 
