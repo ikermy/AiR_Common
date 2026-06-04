@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package svcpb;
+
+option go_package = "github.com/ikermy/AiR_Common/pkg/bff/proto";
+
+// ConfigService — gRPC service for inter-service communication with Landing.
+// Authorization: metadata header "x-service-key" must contain the service key
+// stored in app_config under "svc.service_key".
+service ConfigService {
+  // GetBotConfig returns decrypted Telegram bot settings.
+  rpc GetBotConfig(GetBotConfigRequest) returns (BotConfigResponse);
+
+  // GetUserMasterKey returns the decrypted User MasterKey from Landing's in-memory cache.
+  // The key is available only after the user has logged in at least once since the last
+  // Landing restart. Returns codes.Unavailable if the key is not in cache.
+  // The caller is responsible for deciding how to handle the unavailable case.
+  rpc GetUserMasterKey(GetUserMasterKeyRequest) returns (UserMasterKeyResponse);
+}
+
+// GetBotConfigRequest — empty request (auth via metadata).
+message GetBotConfigRequest {}
+
+// BotConfigResponse — Telegram bot settings.
+message BotConfigResponse {
+  string token    = 1; // Bot API token
+  string bot_name = 2; // Bot username (without @)
+  string bot_id   = 3; // Numeric bot ID
+}
+
+// GetUserMasterKeyRequest — request for a user's MasterKey.
+message GetUserMasterKeyRequest {
+  uint32 user_id = 1; // User ID
+}
+
+// UserMasterKeyResponse — raw 32-byte AES-256 MasterKey.
+// Transmitted only over secured internal network (Docker bridge + service key auth).
+message UserMasterKeyResponse {
+  bytes master_key = 1; // 32 bytes — AES-256 key
+}
+
