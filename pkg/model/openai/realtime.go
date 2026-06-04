@@ -196,7 +196,7 @@ func (m *Model) StartRealtimeSession(userID uint32, dialogID, respId uint64) err
 	}
 
 	//logger.Debug("[OpenAI StartRealtimeSession] respId=%d model=%q dial...", respId, rm.AgentConfig.RealtimeModel)
-	conn, err := create.DialRealtimeSession(m.client.GetAPIKey(), rm.AgentConfig.RealtimeModel)
+	conn, err := create.DialRealtimeSession(m.client.GetAPIKeyForUser(userID), rm.AgentConfig.RealtimeModel)
 	if err != nil {
 		return fmt.Errorf("StartRealtimeSession: ошибка подключения к OpenAI Realtime API: %w", err)
 	}

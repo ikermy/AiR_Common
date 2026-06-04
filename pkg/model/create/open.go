@@ -105,7 +105,7 @@ type OpenAIAgentClient struct {
 	url            string
 	ctx            context.Context
 	httpClient     *http.Client
-	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealUserID
+	universalModel *UniversalModel            // Ссылка на universalModel для доступа к GetRealUserID
 	keyResolver    func(userID uint32) string // Резолвер персональных ключей; nil → глобальный apiKey
 }
 
@@ -154,6 +154,7 @@ func NewOpenAIAgentClient(ctx context.Context) *OpenAIAgentClient {
 	}
 }
 
+// TODO убрать или сделать внутренним ? так же для остальных провайдеров
 // GetAPIKey возвращает API ключ клиента (для использования в функциях генерации эмбеддингов)
 func (c *OpenAIAgentClient) GetAPIKey() string {
 	return c.apiKey
