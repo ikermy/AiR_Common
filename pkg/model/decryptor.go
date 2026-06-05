@@ -50,8 +50,9 @@ func WrapDBWithMasterKeyDecryption(ctx context.Context, db comdb.Exterior, mkPro
 //
 //   - Ключ не зашифрован $mk$ (plaintext или $app$) → возвращает как есть (comdb обработает $app$).
 //   - Ключ зашифрован $mk$ и mkProvider доступен → расшифровывает через MasterKey.
-//   - Ключ зашифрован $mk$ и mkProvider == nil → отправляет уведомление "reauth-userkey"
-//     пользователю и возвращает ErrMasterKeyUnavailable вызывающему сервису.
+//   - Ключ зашифрован $mk$ и mkProvider == nil → уведомление "reauth-userkey" + ErrMasterKeyUnavailable.
+//   - Ключ зашифрован $mk$ и GetUserMasterKey вернул ошибку (codes.Unavailable = ключ не в кэше,
+//     пользователь не входил с момента перезапуска Landing) → уведомление "reauth-userkey" + ErrMasterKeyUnavailable.
 func (d *masterKeyDecryptingDB) GetUserAPIKey(userID uint32, provider create.ProviderType) (string, error) {
 	key, err := d.Exterior.GetUserAPIKey(userID, provider)
 	if err != nil {
@@ -61,9 +62,8 @@ func (d *masterKeyDecryptingDB) GetUserAPIKey(userID uint32, provider create.Pro
 		return key, nil
 	}
 
-	// Ключ зашифрован MasterKey пользователя ($mk$) — нужен Landing-сервис
-	if d.mkProvider == nil {
-		// Уведомляем пользователя о необходимости повторной авторизации
+	// Вспомогательная функция: отправить уведомление о необходимости повторной авторизации.
+	sendReauthNotification := func() {
 		select {
 		case mode.CarpinteroCh <- com.CarpCh{
 			Event:  "reauth-userkey",
@@ -71,16 +71,25 @@ func (d *masterKeyDecryptingDB) GetUserAPIKey(userID uint32, provider create.Pro
 			Target: provider.String(),
 		}:
 		default:
-			// канал переполнен — уведомление будет потеряно, но ошибку вернём в любом случае
+			// канал переполнен — уведомление потеряно, но ошибка всё равно вернётся
 		}
+	}
+
+	// Ключ зашифрован MasterKey пользователя ($mk$) — нужен Landing-сервис
+	if d.mkProvider == nil {
+		sendReauthNotification()
 		return "", ErrMasterKeyUnavailable
 	}
 
 	mk, err := d.mkProvider.GetUserMasterKey(d.ctx, userID)
 	if err != nil {
-		return "", fmt.Errorf("GetUserMasterKey(user=%d, provider=%s): %w", userID, provider, err)
+		// Наиболее частая причина: codes.Unavailable — ключ не в кэше Landing,
+		// пользователь не входил с момента последнего перезапуска сервиса.
+		// Другие ошибки (сеть, неверный service key) также блокируют расшифровку.
+		// В любом случае пользователю нужно повторно авторизоваться.
+		sendReauthNotification()
+		return "", fmt.Errorf("%w: %v", ErrMasterKeyUnavailable, err)
 	}
 
 	return crypto.DecryptFieldWithMasterKey(mk, key)
 }
-
