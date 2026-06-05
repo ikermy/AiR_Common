@@ -13,6 +13,8 @@ package bff
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	bffproto "github.com/ikermy/AiR_Common/pkg/bff/proto"
@@ -36,12 +38,21 @@ type Client struct {
 }
 
 // New creates a Client and establishes a connection to the Landing gRPC server.
-//   - addr       — host:port of Landing gRPC (e.g. "landing:50051")
-//   - serviceKey — secret key stored in app_config["svc.service_key"]
-func New(addr, serviceKey string) (*Client, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func New() (*Client, error) {
+	// Получаем адрес сервера из переменной окружения
+	host := strings.TrimSpace(os.Getenv("GRPC_CONFIG_HOST"))
+	// Читаем SERVICE_KEY из файла
+	serviceKeyFile := strings.TrimSpace(os.Getenv("SERVICE_KEY_FILE"))
+
+	serviceKeyData, err := os.ReadFile(serviceKeyFile)
 	if err != nil {
-		return nil, fmt.Errorf("bff.New: dial %s: %w", addr, err)
+		return nil, fmt.Errorf("ошибка чтения SERVICE_KEY из файла %s: %v", serviceKeyFile, err)
+	}
+	serviceKey := strings.TrimSpace(string(serviceKeyData))
+
+	conn, err := grpc.NewClient(host, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("bff.New: dial %s: %w", host, err)
 	}
 	return &Client{
 		conn:       conn,
@@ -97,4 +108,3 @@ func (c *Client) GetUserMasterKey(ctx context.Context, userId uint32) ([32]byte,
 func (c *Client) ctxWithKey(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, serviceKeyHeader, c.serviceKey)
 }
-
