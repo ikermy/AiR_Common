@@ -3,26 +3,14 @@ package crm
 import (
 	"context"
 	"fmt"
-	"log"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/conf"
+	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
-func getConfig() *conf.Conf {
-	// Переходим в корневую директорию проекта
-	if err := os.Chdir("../.."); err != nil {
-		log.Fatalf("Failed to change to root directory: %v", err)
-	}
-
-	cfg, err := conf.NewConf()
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
-	}
-
-	return cfg
+func setCRMPort(port string) {
+	mode.CRMPort = port
 }
 
 // testGetCacheStats возвращает статистику использования кэша
@@ -64,19 +52,10 @@ func (u *User) testClearCache() {
 }
 
 func TestCRM(t *testing.T) {
-	// Получаем конфигурацию
-	cfg := getConfig()
-
-	// Используем реальный сервер на порту 8092
-	cfg.WEB.CRM = "8092"
-
-	// Создаём контекст
+	setCRMPort("8092")
 	ctx := context.Background()
+	crm := New(ctx)
 
-	// Создаём экземпляр CRM
-	crm := New(ctx, cfg)
-
-	// Инициализируем пользователя
 	c, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
@@ -102,19 +81,10 @@ func TestCRM(t *testing.T) {
 }
 
 func TestCRM_Init(t *testing.T) {
-	// Получаем конфигурацию
-	cfg := getConfig()
-
-	// Используем реальный сервер на порту 8092
-	cfg.WEB.CRM = "8092"
-
-	// Создаём контекст
+	setCRMPort("8092")
 	ctx := context.Background()
+	crm := New(ctx)
 
-	// Создаём экземпляр CRM
-	crm := New(ctx, cfg)
-
-	// Инициализируем пользователя
 	user, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
@@ -130,11 +100,9 @@ func TestCRM_Init(t *testing.T) {
 func TestCRM_Cache(t *testing.T) {
 	t.Skip("Manual test - requires running server")
 
-	cfg := getConfig()
-	cfg.WEB.CRM = "8092"
-
+	setCRMPort("8092")
 	ctx := context.Background()
-	crm := New(ctx, cfg)
+	crm := New(ctx)
 
 	// Инициализируем пользователя
 	user, _, err := crm.Init(23)
@@ -204,11 +172,9 @@ func TestCRM_Cache(t *testing.T) {
 
 // TestUninitializedUser проверяет безопасность работы с неинициализированным User
 func TestUninitializedUser(t *testing.T) {
-	cfg := getConfig()
-	cfg.WEB.CRM = "8092"
-
+	setCRMPort("8092")
 	ctx := context.Background()
-	crm := New(ctx, cfg)
+	crm := New(ctx)
 
 	// Инициализируем с несуществующим userID (должна вернуться ошибка)
 	user, _, err := crm.Init(99999)
@@ -240,12 +206,11 @@ func TestUninitializedUser(t *testing.T) {
 func TestCRM_Options(t *testing.T) {
 	t.Skip("Example test - demonstrates usage of optional parameters")
 
-	cfg := getConfig()
-	cfg.WEB.CRM = "8092"
+	setCRMPort("8092")
 	ctx := context.Background()
 
 	// Пример 1: Все опции вместе
-	crm1 := New(ctx, cfg,
+	crm1 := New(ctx,
 		WithRespTimeout(20*time.Second),
 		WithCacheTTL(1*time.Hour),
 		WithNumWorkers(20),
@@ -253,33 +218,24 @@ func TestCRM_Options(t *testing.T) {
 	t.Logf("CRM создан с кастомными параметрами: %+v", crm1)
 
 	// Пример 2: Только таймаут
-	crm2 := New(ctx, cfg, WithRespTimeout(15*time.Second))
+	crm2 := New(ctx, WithRespTimeout(15*time.Second))
 	t.Logf("CRM создан с кастомным таймаутом: %+v", crm2)
 
 	// Пример 3: Только кэш TTL
-	crm3 := New(ctx, cfg, WithCacheTTL(45*time.Minute))
+	crm3 := New(ctx, WithCacheTTL(45*time.Minute))
 	t.Logf("CRM создан с кастомным TTL кэша: %+v", crm3)
 
-	// Пример 4: Только количество воркеров
-	crm4 := New(ctx, cfg, WithNumWorkers(5))
+	// Пример 4: только количество воркеров
+	crm4 := New(ctx, WithNumWorkers(5))
 	t.Logf("CRM создан с 5 воркерами: %+v", crm4)
 }
 
 // TestCRM_CreateContact тестирует создание контакта
 func TestCRM_CreateContact(t *testing.T) {
-	// Получаем конфигурацию
-	cfg := getConfig()
-
-	// Используем реальный сервер на порту 8092
-	cfg.WEB.CRM = "8092"
-
-	// Создаём контекст
+	setCRMPort("8092")
 	ctx := context.Background()
+	crm := New(ctx)
 
-	// Создаём экземпляр CRM
-	crm := New(ctx, cfg)
-
-	// Инициализируем пользователя
 	user, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
@@ -316,15 +272,10 @@ func TestCRM_CreateContact(t *testing.T) {
 
 // TestCRM_AltContact тестирует работу с альтернативными контактами
 func TestCRM_AltContact(t *testing.T) {
-	cfg := getConfig()
-	cfg.WEB.CRM = "8092"
-
+	setCRMPort("8092")
 	ctx := context.Background()
+	crm := New(ctx, WithAltContactChannel(ChannelTelegram))
 
-	// Создаём CRM с настройкой канала Telegram
-	crm := New(ctx, cfg, WithAltContactChannel(ChannelTelegram))
-
-	// Инициализируем пользователя
 	user, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
@@ -375,11 +326,9 @@ func TestCRM_AltContact(t *testing.T) {
 func TestCRM_PriorityPhoneOverAlt(t *testing.T) {
 	t.Skip("Manual test - requires running server")
 
-	cfg := getConfig()
-	cfg.WEB.CRM = "8092"
-
+	setCRMPort("8092")
 	ctx := context.Background()
-	crm := New(ctx, cfg, WithAltContactChannel(ChannelTelegram))
+	crm := New(ctx, WithAltContactChannel(ChannelTelegram))
 
 	user, _, err := crm.Init(23)
 	if err != nil {
@@ -414,15 +363,10 @@ func TestCRM_PriorityPhoneOverAlt(t *testing.T) {
 func TestCRM_AvitoChannel(t *testing.T) {
 	t.Skip("Manual test - requires running server")
 
-	cfg := getConfig()
-	cfg.WEB.CRM = "8092"
-
+	setCRMPort("8092")
 	ctx := context.Background()
+	crm := New(ctx, WithAltContactChannel(ChannelAvito))
 
-	// Создаём CRM с настройкой канала Avito
-	crm := New(ctx, cfg, WithAltContactChannel(ChannelAvito))
-
-	// Инициализируем пользователя
 	user, _, err := crm.Init(23)
 	if err != nil {
 		t.Fatalf("Failed to initialize User: %v", err)
