@@ -33,6 +33,7 @@ type RouterOption func(*Router, context.Context, DB) error
 // NewModelRouter создаёт новый маршрутизатор с опциями.
 //
 //	router, err := model.NewModelRouter(ctx, conf, db,
+//	    model.WithMasterKeyProvider(bffClient), // должна идти первой, если используется
 //	    openai.NewAsRouterOption(),
 //	    mistral.NewAsRouterOption())
 func NewModelRouter(ctx context.Context, db DB, options ...RouterOption) *Router {
@@ -41,17 +42,21 @@ func NewModelRouter(ctx context.Context, db DB, options ...RouterOption) *Router
 		db:  db,
 	}
 
-	if managerDB, ok := db.(create.DB); ok {
+	// Применяем опции ПЕРЕД созданием modelsManager, чтобы WithMasterKeyProvider
+	// успел обернуть router.db до того, как его используют провайдеры и modelsManager.
+	// Каждая опция получает актуальный router.db (возможно уже обёрнутый предыдущей опцией).
+	for _, option := range options {
+		if err := option(router, ctx, router.db); err != nil {
+			log.Fatalf("ошибка применения опции: %v", err)
+		}
+	}
+
+	if managerDB, ok := router.db.(create.DB); ok {
 		router.modelsManager = create.New(ctx, managerDB)
 	} else {
 		log.Fatalf("DB не реализует create.DB, невозможна инициализация ModelRouter")
 	}
 
-	for _, option := range options {
-		if err := option(router, ctx, db); err != nil {
-			log.Fatalf("ошибка применения опции: %v", err)
-		}
-	}
 
 	if router.google != nil {
 		if googleModel, ok := router.google.(interface{ SetUniversalModel(*create.UniversalModel) }); ok {
@@ -90,6 +95,28 @@ func WithMistralModel(model Inter) RouterOption {
 			return fmt.Errorf("Mistral модель не может быть nil")
 		}
 		r.mistral = model
+		return nil
+	}
+}
+
+// WithMasterKeyProvider подключает Landing-сервис для расшифровки API-ключей,
+// зашифрованных MasterKey пользователя ($mk$ префикс).
+//
+// ВАЖНО: передавайте эту опцию ПЕРВОЙ в NewModelRouter — она оборачивает DB,
+// и все последующие опции (провайдеры) автоматически получат обёрнутую версию.
+//
+//	router := model.NewModelRouter(ctx, db,
+//	    model.WithMasterKeyProvider(bffClient),
+//	    openai.NewAsRouterOption(),
+//	    ...)
+//
+// bff.Client из пакета bff удовлетворяет интерфейсу MasterKeyProvider без изменений.
+// Если пользователь запрашивает $mk$-зашифрованный ключ, а Landing недоступен —
+// пользователю автоматически отправляется уведомление "reauth-userkey" и
+// вызывающий сервис получает ErrMasterKeyUnavailable.
+func WithMasterKeyProvider(mkProvider MasterKeyProvider) RouterOption {
+	return func(r *Router, ctx context.Context, db DB) error {
+		r.db = WrapDBWithMasterKeyDecryption(ctx, db, mkProvider)
 		return nil
 	}
 }
