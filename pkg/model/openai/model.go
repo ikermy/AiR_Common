@@ -307,9 +307,13 @@ func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
 // По образцу Google провайдера - конфигурация хранится в БД, а не в OpenAI API
 // Возвращает конфигурацию агента и haunter флаг явно
 func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool, error) {
-	// Проверяем наличие API-ключа для пользователя до любых запросов к БД/API.
-	// Если ключа нет — возвращаем явную ошибку, иначе все запросы к OpenAI упадут с 401.
-	if m.client == nil || !m.client.HasAPIKey(userID) {
+	// Получаем API-ключ напрямую через DB: это обеспечивает правильную обработку $mk$-ключей —
+	// если MasterKey недоступен, ошибка и уведомление пропагируются явно, а не теряются в HasAPIKey.
+	apiKey, err := m.db.GetUserAPIKey(userID, create.ProviderOpenAI)
+	if err != nil {
+		return nil, false, fmt.Errorf("ошибка получения OpenAI API-ключа для пользователя %d: %w", userID, err)
+	}
+	if m.client == nil || apiKey == "" {
 		return nil, false, fmt.Errorf("OpenAI API ключ не настроен для пользователя %d: добавьте персональный ключ через настройки", userID)
 	}
 

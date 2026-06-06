@@ -337,7 +337,7 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 	case "reauth":
 		msg = fmt.Sprintf("Канал %s отключен, требуется повторная авторизация", Target)
 	case "reauth-userkey":
-		msg = fmt.Sprintf("Для работы с провайдером %s требуется повторная авторизация. Пожалуйста, войдите в систему заново.", Target)
+		msg = fmt.Sprintf("Для работы требуется расшифровка пользовательских данных, пожалуйста, войдите в систему заново.")
 	case "model-operator":
 		msg = fmt.Sprintf("Ассистент %s запросил переключение на оператора в диалоге с пользователем %s", AssistName, UserName)
 	// События подписки

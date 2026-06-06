@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.16"
-git tag -a v1.50.16 -m "grpc client"
+git commit -m "v1.50.17"
+git tag -a v1.50.17 -m "masterKeyResolver"
 git push origin master
-git push origin v1.50.16
+git push origin v1.50.17

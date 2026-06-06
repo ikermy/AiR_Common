@@ -126,32 +126,24 @@ type (
 
 // DB представляет соединение с базой данных
 type DB struct {
-	dsn     string
-	conn    *sql.DB
-	mainCTX context.Context
-	ctx     context.Context
-	cancel  context.CancelFunc
+	dsn               string
+	masterKeyResolver MasterKeyResolver
+	conn              *sql.DB
+	mainCTX           context.Context
+	ctx               context.Context
+	cancel            context.CancelFunc
+}
+
+// MasterKeyResolver returns the user's decrypted MasterKey from cache or remote.
+type MasterKeyResolver func(userId uint32) ([32]byte, bool)
+
+// Метод инъекции:
+func (d *DB) SetMasterKeyResolver(r MasterKeyResolver) {
+	d.masterKeyResolver = r
 }
 
 // New создает новое подключение к базе данных
 func New(parent context.Context) (*DB, error) {
-	//var dsn string
-	//if mode.ProductionMode {
-	//	dsn = fmt.Sprintf("%s:%s@unix(%s)/%s?parseTime=true&charset=utf8mb4&loc=Local",
-	//		conf.DB.User,
-	//		conf.DB.Password,
-	//		conf.DB.Host,
-	//		conf.DB.Name,
-	//	)
-	//} else {
-	//	dsn = fmt.Sprintf("%s:%s@tcp(%s)/%s?parseTime=true&charset=utf8mb4&loc=Local",
-	//		conf.DB.User,
-	//		conf.DB.Password,
-	//		conf.DB.Host,
-	//		conf.DB.Name,
-	//	)
-	//}
-
 	host := os.Getenv("DB_HOST")
 	name := os.Getenv("DB_NAME")
 	user := os.Getenv("DB_USER")
@@ -364,48 +356,84 @@ func (d *DB) SaveContext(threadId uint64, provider create.ProviderType, dialogCo
 
 // ReadDialog читает всю историю диалога и возвращает структурированные данные
 func (d *DB) ReadDialog(dialogId uint64, limit ...uint8) (json.RawMessage, error) {
-	// Проверяем входное значение
 	if dialogId == 0 {
 		return nil, fmt.Errorf("получен некорректный dialogId")
 	}
 
-	// Дочерний контекст с тайм-аутом на операцию
 	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
 	defer cancel()
 
-	// Выполняем вызов хранимой функции
-	var data sql.NullString
+	var raw sql.NullString
 	var err error
-
 	if len(limit) == 0 {
-		// без лимита
-		err = d.Conn().QueryRowContext(ctx,
-			"SELECT ReadDialog(?, NULL);", dialogId).Scan(&data)
+		err = d.Conn().QueryRowContext(ctx, "SELECT ReadDialog(?, NULL);", dialogId).Scan(&raw)
 	} else {
-		// с лимитом
-		err = d.Conn().QueryRowContext(ctx,
-			"SELECT ReadDialog(?, ?);", dialogId, limit[0]).Scan(&data)
+		err = d.Conn().QueryRowContext(ctx, "SELECT ReadDialog(?, ?);", dialogId, limit[0]).Scan(&raw)
 	}
-	//err := d.Conn().QueryRowContext(ctx, "SELECT ReadDialog(?);", dialogId).Scan(&data)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
-			return nil, fmt.Errorf("тайм-аут (%d с) при вызове функции ReadDialog: %w", sqlTimeToCancel, err)
+			return nil, fmt.Errorf("тайм-аут при вызове ReadDialog: %w", err)
 		case errors.Is(err, context.Canceled):
 			return nil, fmt.Errorf("операция отменена: %w", err)
 		case errors.Is(err, sql.ErrNoRows):
 			return nil, fmt.Errorf("диалог не найден")
 		default:
-			return nil, fmt.Errorf("ошибка вызова хранимой функции ReadDialog: %w", err)
+			return nil, fmt.Errorf("ошибка ReadDialog: %w", err)
 		}
 	}
-
-	// Если диалог не найден или данные пустые
-	if !data.Valid {
+	if !raw.Valid {
 		return nil, fmt.Errorf("получены пустые данные")
 	}
 
-	return json.RawMessage(data.String), nil
+	result := json.RawMessage(raw.String)
+
+	// Расшифровываем поле Data если оно зашифровано $mk$
+	if d.masterKeyResolver != nil {
+		result = d.decryptReadDialogResult(ctx, dialogId, result)
+	}
+
+	return result, nil
+}
+
+// decryptReadDialogResult находит поле Data в результате SP и расшифровывает его.
+func (d *DB) decryptReadDialogResult(ctx context.Context, dialogId uint64, raw json.RawMessage) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return raw
+	}
+
+	dataField, ok := obj["Data"]
+	if !ok {
+		return raw
+	}
+
+	// Data может быть строкой $mk$... или JSON-массивом
+	var dataStr string
+	if err := json.Unmarshal(dataField, &dataStr); err != nil || !crypto.IsEncryptedWithMasterKey(dataStr) {
+		return raw // не зашифровано
+	}
+
+	// Получаем userId для этого диалога
+	var userId uint32
+	if err := d.Conn().QueryRowContext(ctx,
+		"SELECT `User` FROM dialogs WHERE Id = ? LIMIT 1", dialogId).Scan(&userId); err != nil {
+		return raw
+	}
+
+	mk, ok := d.masterKeyResolver(userId)
+	if !ok {
+		return raw // MasterKey не в кэше
+	}
+
+	plain, err := crypto.DecryptFieldWithMasterKey(mk, dataStr)
+	if err != nil {
+		return raw
+	}
+
+	obj["Data"] = json.RawMessage(plain)
+	result, _ := json.Marshal(obj)
+	return result
 }
 
 // DeleteDialog удаляет диалог с проверкой прав пользователя
@@ -447,26 +475,89 @@ func (d *DB) DeleteDialog(userID uint32, dialogId uint64) error {
 // SaveDialog сохраняет всю историю диалога в базу данных
 func (d *DB) SaveDialog(treadId uint64, message json.RawMessage) error {
 	if treadId == 0 {
-		return fmt.Errorf("получен пустот тред")
+		return fmt.Errorf("получен пустой тред")
 	}
 
-	// Дочерний контекст с тайм-аутом на операцию
 	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
 	defer cancel()
 
-	// Вызываем хранимую процедуру для сохранения данных диалога
+	// Если resolver задан — обрабатываем шифрование сами (минуя SP)
+	if d.masterKeyResolver != nil {
+		return d.saveDialogWithResolver(ctx, treadId, message)
+	}
+
+	// Fallback: хранимая процедура (plaintext, обратная совместимость)
 	if _, err := d.Conn().ExecContext(ctx, "CALL SaveDialog(?, ?)", treadId, message); err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
-			return fmt.Errorf("тайм-аут (%d с) при сохранении диалога: %w", mode.SqlTimeToCancel, err)
+			return fmt.Errorf("тайм-аут при сохранении диалога: %w", err)
 		case errors.Is(err, context.Canceled):
 			return fmt.Errorf("операция отменена: %w", err)
 		default:
 			return fmt.Errorf("ошибка сохранения диалога: %w", err)
 		}
 	}
-
 	return nil
+}
+
+// saveDialogWithResolver читает + расшифровывает + аппендит + шифрует + сохраняет.
+// Использует транзакцию с FOR UPDATE для защиты от гонки.
+func (d *DB) saveDialogWithResolver(ctx context.Context, treadId uint64, message json.RawMessage) error {
+	tx, err := d.Conn().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("saveDialog begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Читаем userId и текущий Data с блокировкой строки
+	var userId uint32
+	var rawData sql.NullString
+	if err = tx.QueryRowContext(ctx,
+		"SELECT `User`, `Data` FROM dialogs WHERE Id = ? FOR UPDATE", treadId).
+		Scan(&userId, &rawData); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("диалог %d не найден", treadId)
+		}
+		return fmt.Errorf("saveDialog read: %w", err)
+	}
+
+	mk, hasMK := d.masterKeyResolver(userId)
+
+	// Разворачиваем текущий массив данных
+	var arr []json.RawMessage
+	if rawData.Valid && rawData.String != "" {
+		data := rawData.String
+		if hasMK && crypto.IsEncryptedWithMasterKey(data) {
+			if data, err = crypto.DecryptFieldWithMasterKey(mk, data); err != nil {
+				return fmt.Errorf("saveDialog decrypt: %w", err)
+			}
+		}
+		_ = json.Unmarshal([]byte(data), &arr) // если не массив — начнём заново
+	}
+
+	// Аппендим новое сообщение
+	arr = append(arr, message)
+
+	newBytes, err := json.Marshal(arr)
+	if err != nil {
+		return fmt.Errorf("saveDialog marshal: %w", err)
+	}
+	newData := string(newBytes)
+
+	// Шифруем если MasterKey доступен
+	if hasMK {
+		if newData, err = crypto.EncryptFieldWithMasterKey(mk, newData); err != nil {
+			return fmt.Errorf("saveDialog encrypt: %w", err)
+		}
+	}
+
+	if _, err = tx.ExecContext(ctx,
+		"UPDATE dialogs SET `Data` = ?, `Date` = NOW() WHERE Id = ?",
+		newData, treadId); err != nil {
+		return fmt.Errorf("saveDialog update: %w", err)
+	}
+
+	return tx.Commit()
 }
 
 // UpdateDialogsMeta устанавливает достижение цели

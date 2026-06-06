@@ -28,7 +28,7 @@ var ErrMasterKeyUnavailable = errors.New(
 // $mk$-зашифрованные API-ключи через MasterKeyProvider.
 // Все остальные методы делегируются исходному comdb.Exterior.
 type masterKeyDecryptingDB struct {
-	comdb.Exterior                   // делегирование всех методов
+	comdb.Exterior // делегирование всех методов
 	ctx            context.Context
 	mkProvider     MasterKeyProvider
 }
@@ -68,7 +68,6 @@ func (d *masterKeyDecryptingDB) GetUserAPIKey(userID uint32, provider create.Pro
 		case mode.CarpinteroCh <- com.CarpCh{
 			Event:  "reauth-userkey",
 			UserID: userID,
-			Target: provider.String(),
 		}:
 		default:
 			// канал переполнен — уведомление потеряно, но ошибка всё равно вернётся

@@ -205,8 +205,13 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 	}
 
 	// Проверяем наличие API-ключа для пользователя до создания респондента.
-	// Если ключа нет — возвращаем явную ошибку, иначе все запросы к Mistral упадут с 401.
-	if m.client == nil || !m.client.HasAPIKey(assist.UserID) {
+	// Получаем ключ напрямую через DB: это обеспечивает правильную обработку $mk$-ключей —
+	// если MasterKey недоступен, ошибка и уведомление пропагируются явно, а не теряются в HasAPIKey.
+	apiKey, err := m.db.GetUserAPIKey(assist.UserID, create.ProviderMistral)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения Mistral API-ключа для пользователя %d: %w", assist.UserID, err)
+	}
+	if m.client == nil || apiKey == "" {
 		return nil, fmt.Errorf("Mistral API ключ не настроен для пользователя %d: добавьте персональный ключ через настройки", assist.UserID)
 	}
 

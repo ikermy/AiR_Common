@@ -225,9 +225,14 @@ func (m *Model) NewMessage(operator model.Operator, msgType string, content *mod
 // Пытается загрузить из AllIds, если пусто - создает конфигурацию по умолчанию
 // Также проверяет наличие эмбеддингов в таблице vector_embeddings
 func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error {
-	// Проверяем наличие API-ключа для пользователя до любых запросов к БД/API.
-	// Если ключа нет — возвращаем явную ошибку, иначе все запросы к Google упадут с 401.
-	if m.client == nil || !m.client.HasAPIKey(userID) {
+	// Получаем API-ключ напрямую через DB: это обеспечивает правильную обработку $mk$-ключей —
+	// если MasterKey недоступен (Landing не ответил / пользователь не входил), ошибка и уведомление
+	// пропагируются явно, а не теряются внутри HasAPIKey.
+	apiKey, err := m.db.GetUserAPIKey(userID, create.ProviderGoogle)
+	if err != nil {
+		return fmt.Errorf("ошибка получения Google API-ключа для пользователя %d: %w", userID, err)
+	}
+	if m.client == nil || apiKey == "" {
 		return fmt.Errorf("Google API ключ не настроен для пользователя %d: добавьте персональный ключ через настройки", userID)
 	}
 
