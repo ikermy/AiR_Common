@@ -127,7 +127,7 @@ type (
 // DB представляет соединение с базой данных
 type DB struct {
 	dsn               string
-	masterKeyResolver MasterKeyResolver
+	MasterKeyResolver MasterKeyResolver
 	conn              *sql.DB
 	mainCTX           context.Context
 	ctx               context.Context
@@ -139,7 +139,7 @@ type MasterKeyResolver func(userId uint32) ([32]byte, bool)
 
 // Метод инъекции:
 func (d *DB) SetMasterKeyResolver(r MasterKeyResolver) {
-	d.masterKeyResolver = r
+	d.MasterKeyResolver = r
 }
 
 // New создает новое подключение к базе данных
@@ -389,7 +389,7 @@ func (d *DB) ReadDialog(dialogId uint64, limit ...uint8) (json.RawMessage, error
 	result := json.RawMessage(raw.String)
 
 	// Расшифровываем поле Data если оно зашифровано $mk$
-	if d.masterKeyResolver != nil {
+	if d.MasterKeyResolver != nil {
 		result = d.decryptReadDialogResult(ctx, dialogId, result)
 	}
 
@@ -421,7 +421,7 @@ func (d *DB) decryptReadDialogResult(ctx context.Context, dialogId uint64, raw j
 		return raw
 	}
 
-	mk, ok := d.masterKeyResolver(userId)
+	mk, ok := d.MasterKeyResolver(userId)
 	if !ok {
 		return raw // MasterKey не в кэше
 	}
@@ -482,7 +482,7 @@ func (d *DB) SaveDialog(treadId uint64, message json.RawMessage) error {
 	defer cancel()
 
 	// Если resolver задан — обрабатываем шифрование сами (минуя SP)
-	if d.masterKeyResolver != nil {
+	if d.MasterKeyResolver != nil {
 		return d.saveDialogWithResolver(ctx, treadId, message)
 	}
 
@@ -521,7 +521,7 @@ func (d *DB) saveDialogWithResolver(ctx context.Context, treadId uint64, message
 		return fmt.Errorf("saveDialog read: %w", err)
 	}
 
-	mk, hasMK := d.masterKeyResolver(userId)
+	mk, hasMK := d.MasterKeyResolver(userId)
 
 	// Разворачиваем текущий массив данных
 	var arr []json.RawMessage
