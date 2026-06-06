@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/crypto"
 	"golang.org/x/oauth2"
 )
 
@@ -40,6 +41,23 @@ func (d *DB) SaveGoogleToken(userID uint32, googleEmail string, token *oauth2.To
 	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
 	defer cancel()
 
+	accessToken := token.AccessToken
+	refreshToken := token.RefreshToken
+
+	// Шифруем токены MasterKey'ом ($mk$) если доступен
+	if d.MasterKeyResolver != nil {
+		if mk, ok := d.MasterKeyResolver(userID); ok {
+			if enc, err := crypto.EncryptFieldWithMasterKey(mk, accessToken); err == nil {
+				accessToken = enc
+			}
+			if refreshToken != "" {
+				if enc, err := crypto.EncryptFieldWithMasterKey(mk, refreshToken); err == nil {
+					refreshToken = enc
+				}
+			}
+		}
+	}
+
 	// Сериализуем scopes в JSON
 	scopesJSON, err := json.Marshal(token.Extra("scope"))
 	if err != nil {
@@ -63,8 +81,8 @@ func (d *DB) SaveGoogleToken(userID uint32, googleEmail string, token *oauth2.To
 	_, err = d.Conn().ExecContext(ctx, query,
 		userID,
 		googleEmail,
-		token.AccessToken,
-		token.RefreshToken,
+		accessToken,
+		refreshToken,
 		token.TokenType,
 		token.Expiry,
 		scopesJSON,
@@ -123,6 +141,22 @@ func (d *DB) GetGoogleToken(userID uint32) (*oauth2.Token, string, error) {
 			return nil, "", nil // Токен не найден, но это не ошибка
 		default:
 			return nil, "", fmt.Errorf("ошибка получения Google токена: %w", err)
+		}
+	}
+
+	// Расшифровываем токены если зашифрованы $mk$
+	if d.MasterKeyResolver != nil {
+		if mk, ok := d.MasterKeyResolver(userID); ok {
+			if crypto.IsEncryptedWithMasterKey(accessToken) {
+				if plain, err := crypto.DecryptFieldWithMasterKey(mk, accessToken); err == nil {
+					accessToken = plain
+				}
+			}
+			if crypto.IsEncryptedWithMasterKey(refreshToken) {
+				if plain, err := crypto.DecryptFieldWithMasterKey(mk, refreshToken); err == nil {
+					refreshToken = plain
+				}
+			}
 		}
 	}
 
