@@ -388,16 +388,14 @@ func (d *DB) ReadDialog(dialogId uint64, limit ...uint8) (json.RawMessage, error
 
 	result := json.RawMessage(raw.String)
 
-	// Расшифровываем поле Data если оно зашифровано $mk$
-	if d.MasterKeyResolver != nil {
-		result = d.decryptReadDialogResult(ctx, dialogId, result)
-	}
+	// Обрабатываем результат: расшифровка (если нужно) и нормализация массива Data
+	result = d.processReadDialogResult(ctx, dialogId, result)
 
 	return result, nil
 }
 
-// decryptReadDialogResult находит поле Data в результате SP и расшифровывает его.
-func (d *DB) decryptReadDialogResult(ctx context.Context, dialogId uint64, raw json.RawMessage) json.RawMessage {
+// processReadDialogResult выполняет расшифровку и нормализацию данных диалога.
+func (d *DB) processReadDialogResult(ctx context.Context, dialogId uint64, raw json.RawMessage) json.RawMessage {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return raw
@@ -408,32 +406,64 @@ func (d *DB) decryptReadDialogResult(ctx context.Context, dialogId uint64, raw j
 		return raw
 	}
 
-	// Data может быть строкой $mk$... или JSON-массивом
+	processedData := dataField
+
+	// 1. Пробуем расшифровать, если поле Data является строкой с префиксом $mk$
 	var dataStr string
-	if err := json.Unmarshal(dataField, &dataStr); err != nil || !crypto.IsEncryptedWithMasterKey(dataStr) {
-		return raw // не зашифровано
+	if err := json.Unmarshal(dataField, &dataStr); err == nil && crypto.IsEncryptedWithMasterKey(dataStr) {
+		if d.MasterKeyResolver != nil {
+			var userId uint32
+			if err := d.Conn().QueryRowContext(ctx,
+				"SELECT `User` FROM dialogs WHERE Id = ? LIMIT 1", dialogId).Scan(&userId); err == nil {
+				if mk, ok := d.MasterKeyResolver(userId); ok {
+					if plain, err := crypto.DecryptFieldWithMasterKey(mk, dataStr); err == nil {
+						processedData = json.RawMessage(plain)
+					}
+				}
+			}
+		}
 	}
 
-	// Получаем userId для этого диалога
-	var userId uint32
-	if err := d.Conn().QueryRowContext(ctx,
-		"SELECT `User` FROM dialogs WHERE Id = ? LIMIT 1", dialogId).Scan(&userId); err != nil {
-		return raw
-	}
+	// 2. Всегда нормализуем массив (превращаем строки-JSON в объекты)
+	obj["Data"] = d.normalizeDataArray(processedData)
 
-	mk, ok := d.MasterKeyResolver(userId)
-	if !ok {
-		return raw // MasterKey не в кэше
-	}
-
-	plain, err := crypto.DecryptFieldWithMasterKey(mk, dataStr)
-	if err != nil {
-		return raw
-	}
-
-	obj["Data"] = json.RawMessage(plain)
 	result, _ := json.Marshal(obj)
 	return result
+}
+
+// normalizeDataArray гарантирует, что каждый элемент в массиве является JSON-объектом, а не строкой.
+func (d *DB) normalizeDataArray(data json.RawMessage) json.RawMessage {
+	var arr []json.RawMessage
+	if err := json.Unmarshal(data, &arr); err != nil {
+		return data
+	}
+
+	changed := false
+	for i, item := range arr {
+		var s string
+		// Если элемент — это JSON-строка (начинается на "), пробуем её распарсить
+		if len(item) > 0 && item[0] == '"' {
+			if err := json.Unmarshal(item, &s); err == nil {
+				trimmed := strings.TrimSpace(s)
+				// Проверяем, что внутри действительно объект или массив
+				if (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+					(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")) {
+					arr[i] = json.RawMessage(trimmed)
+					changed = true
+				}
+			}
+		}
+	}
+
+	if !changed {
+		return data
+	}
+
+	newBytes, err := json.Marshal(arr)
+	if err != nil {
+		return data
+	}
+	return json.RawMessage(newBytes)
 }
 
 // DeleteDialog удаляет диалог с проверкой прав пользователя
@@ -532,7 +562,9 @@ func (d *DB) saveDialogWithResolver(ctx context.Context, treadId uint64, message
 				return fmt.Errorf("saveDialog decrypt: %w", err)
 			}
 		}
-		_ = json.Unmarshal([]byte(data), &arr) // если не массив — начнём заново
+		// Нормализуем существующие данные перед аппендом
+		rawArr := d.normalizeDataArray(json.RawMessage(data))
+		_ = json.Unmarshal(rawArr, &arr)
 	}
 
 	// Аппендим новое сообщение
