@@ -27,8 +27,8 @@ type ErrorCode int
 const (
 	ErrNoSubscription ErrorCode = iota + 1
 	ErrSubscriptionExpired
-	ErrMessageLimitExceeded // Не используется, можно реализовать разовое уведомление
-	ErrInsufficientBalance
+	ErrMessageLimitExceeded // Legacy не используется
+	ErrInsufficientBalance  // Legacy, не используется
 	ErrInvalidSubscriptionData
 )
 
@@ -69,12 +69,9 @@ func CheckUserSubscription(provider SubscriptionProvider, userID uint32) error {
 	}
 
 	type UserSubscription struct {
-		EndDate      time.Time `json:"-"`
-		EndDateStr   string    `json:"EndDate"`
-		Balance      float64   `json:"balance"`
-		MessageCost  float64   `json:"MessageCost"`
-		MessageLimit int       `json:"MessageLimit"`
-		MessagesUsed int       `json:"MessagesUsed"`
+		EndDate    time.Time `json:"-"`
+		EndDateStr string    `json:"EndDate"`
+		Balance    float64   `json:"balance"`
 	}
 
 	var userSub UserSubscription
@@ -102,17 +99,6 @@ func CheckUserSubscription(provider SubscriptionProvider, userID uint32) error {
 			Code:    ErrSubscriptionExpired,
 			Message: fmt.Sprintf("подписка истекла %v", userSub.EndDate),
 			UserID:  userID,
-		}
-	}
-
-	if userSub.MessagesUsed >= userSub.MessageLimit {
-		if userSub.Balance <= userSub.MessageCost {
-			return &SubscriptionError{
-				Code: ErrInsufficientBalance,
-				Message: fmt.Sprintf("достигнут лимит сообщений (%d/%d) и недостаточен баланс: %f",
-					userSub.MessagesUsed, userSub.MessageLimit, userSub.Balance),
-				UserID: userID,
-			}
 		}
 	}
 
