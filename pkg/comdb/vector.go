@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/crypto"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
@@ -37,6 +38,22 @@ func (d *DB) SaveEmbedding(userID uint32, modelId uint64, provider create.Provid
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil {
 		return fmt.Errorf("ошибка сериализации метаданных: %w", err)
+	}
+
+	// Если настроен мастер-ключ, шифруем имя документа и его содержание перед сохранением
+	if d.MasterKeyResolver != nil {
+		if mk, ok := d.MasterKeyResolver(userID); ok {
+			if !crypto.IsEncryptedWithMasterKey(docName) {
+				if enc, err := crypto.EncryptFieldWithMasterKey(mk, docName); err == nil {
+					docName = enc
+				}
+			}
+			if !crypto.IsEncryptedWithMasterKey(content) {
+				if enc, err := crypto.EncryptFieldWithMasterKey(mk, content); err == nil {
+					content = enc
+				}
+			}
+		}
 	}
 
 	query := `INSERT INTO vector_embeddings (user_id, model_id, provider, doc_id, doc_name, content, embedding, embedding_dim, metadata)
@@ -185,6 +202,22 @@ func (d *DB) ListModelEmbeddings(modelId uint64, provider create.ProviderType) (
 			}
 		}
 
+		// РАСШИФРОВКА
+		if d.MasterKeyResolver != nil {
+			if mk, ok := d.MasterKeyResolver(doc.UserID); ok {
+				if crypto.IsEncryptedWithMasterKey(doc.Name) {
+					if decomp, err := crypto.DecryptFieldWithMasterKey(mk, doc.Name); err == nil {
+						doc.Name = decomp
+					}
+				}
+				if crypto.IsEncryptedWithMasterKey(doc.Content) {
+					if decomp, err := crypto.DecryptFieldWithMasterKey(mk, doc.Content); err == nil {
+						doc.Content = decomp
+					}
+				}
+			}
+		}
+
 		documents = append(documents, doc)
 	}
 
@@ -272,6 +305,22 @@ func (d *DB) SearchSimilarEmbeddings(modelId uint64, provider create.ProviderTyp
 		if len(metadataJSON) > 0 {
 			if err := json.Unmarshal(metadataJSON, &doc.Metadata); err != nil {
 				return nil, fmt.Errorf("SearchSimilarEmbeddings: ошибка десериализации метаданных: %v", err)
+			}
+		}
+
+		// РАСШИФРОВКА
+		if d.MasterKeyResolver != nil {
+			if mk, ok := d.MasterKeyResolver(doc.UserID); ok {
+				if crypto.IsEncryptedWithMasterKey(doc.Name) {
+					if decomp, err := crypto.DecryptFieldWithMasterKey(mk, doc.Name); err == nil {
+						doc.Name = decomp
+					}
+				}
+				if crypto.IsEncryptedWithMasterKey(doc.Content) {
+					if decomp, err := crypto.DecryptFieldWithMasterKey(mk, doc.Content); err == nil {
+						doc.Content = decomp
+					}
+				}
 			}
 		}
 
