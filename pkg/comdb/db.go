@@ -27,7 +27,6 @@ const sqlTimeToCancel = 5 // Тайм-аут на операции с БД
 type Exterior interface {
 	GetOrSetTreadAndResponder(userID uint32, responderRealId uint64, responderName string, chatType ChatType) (uint64, error)
 	DisableAllUserChannel(userID uint32) error
-	PlusOneMessage(userID uint32) error
 	GetNotificationChannel(userID uint32) (json.RawMessage, error)
 	GetUserSubscriptionLimites(userID uint32) (json.RawMessage, error)
 	SaveDialog(treadId uint64, message json.RawMessage) error
@@ -44,6 +43,7 @@ type Exterior interface {
 	SaveUserModel(userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint8, ids json.RawMessage, operator bool) error
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
 	ReadUserModel(userID uint32) ([]byte, *create.VecIds, error)
+	SetUserSubscriptionNotified(user uint32) error
 
 	// User Model Management - методы для управления моделями пользователя (для create.DB)
 	ReadUserModelByProvider(userID uint32, provider create.ProviderType) ([]byte, *create.VecIds, error)
@@ -740,29 +740,6 @@ func (d *DB) SetChannelEnabled(userID uint32, chName string, status bool) error 
 			return fmt.Errorf("операция отменена: %w", err)
 		default:
 			return fmt.Errorf("ошибка сохранения статуса канала: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// PlusOneMessage увеличивает счетчик сообщений пользователя на 1
-func (d *DB) PlusOneMessage(userID uint32) error {
-	if userID == 0 {
-		return fmt.Errorf("получен пустой userID")
-	}
-
-	ctx, cancel := context.WithTimeout(d.Context(), mode.SqlTimeToCancel)
-	defer cancel()
-
-	if _, err := d.Conn().ExecContext(ctx, "CALL PlusOneMessage(?)", userID); err != nil {
-		switch {
-		case errors.Is(err, context.DeadlineExceeded):
-			return fmt.Errorf("тайм-аут (%d с) при вызове PlusOneMessage: %w", mode.SqlTimeToCancel, err)
-		case errors.Is(err, context.Canceled):
-			return fmt.Errorf("операция отменена: %w", err)
-		default:
-			return fmt.Errorf("ошибка вызова PlusOneMessage: %w", err)
 		}
 	}
 
@@ -2173,4 +2150,25 @@ func (d *DB) UserTimeZone(userID uint32) (string, error) {
 	}
 
 	return tz.String, nil
+}
+
+func (d *DB) SetUserSubscriptionNotified(user uint32) error {
+	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	query := "UPDATE subscriptions SET Notified = TRUE WHERE UserId = ?"
+
+	_, err := d.Conn().ExecContext(ctx, query, user)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("тайм-аут (%d с) при обновлении статуса уведомления: %w", sqlTimeToCancel, err)
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("операция отменена: %w", err)
+		default:
+			return fmt.Errorf("ошибка при обновлении статуса уведомления: %w", err)
+		}
+	}
+
+	return nil
 }
