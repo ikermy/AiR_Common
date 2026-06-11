@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.25"
-git tag -a v1.50.25 -m "subscription"
+git commit -m "v1.50.26"
+git tag -a v1.50.26 -m "subscription"
 git push origin master
-git push origin v1.50.25
+git push origin v1.50.26
