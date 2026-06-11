@@ -76,6 +76,7 @@ func (c *Client) GetBotConfig(ctx context.Context) (*bffproto.BotConfigResponse,
 	if err != nil {
 		return nil, fmt.Errorf("bff.GetBotConfig: %w", err)
 	}
+
 	return resp, nil
 }
 

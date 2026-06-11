@@ -63,7 +63,6 @@ type BotConfigResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"`                    // Bot API token
 	BotName       string                 `protobuf:"bytes,2,opt,name=bot_name,json=botName,proto3" json:"bot_name,omitempty"` // Bot username (without @)
-	BotId         string                 `protobuf:"bytes,3,opt,name=bot_id,json=botId,proto3" json:"bot_id,omitempty"`       // Numeric bot ID
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -108,13 +107,6 @@ func (x *BotConfigResponse) GetToken() string {
 func (x *BotConfigResponse) GetBotName() string {
 	if x != nil {
 		return x.BotName
-	}
-	return ""
-}
-
-func (x *BotConfigResponse) GetBotId() string {
-	if x != nil {
-		return x.BotId
 	}
 	return ""
 }
@@ -219,7 +211,6 @@ const file_svc_config_proto_rawDesc = "" +
 	"\x11BotConfigResponse\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\x12\x19\n" +
 	"\bbot_name\x18\x02 \x01(\tR\abotName\x12\x15\n" +
-	"\x06bot_id\x18\x03 \x01(\tR\x05botId\"2\n" +
 	"\x17GetUserMasterKeyRequest\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\rR\x06userId\"6\n" +
 	"\x15UserMasterKeyResponse\x12\x1d\n" +

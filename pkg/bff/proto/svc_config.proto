@@ -25,7 +25,6 @@ message GetBotConfigRequest {}
 message BotConfigResponse {
   string token    = 1; // Bot API token
   string bot_name = 2; // Bot username (without @)
-  string bot_id   = 3; // Numeric bot ID
 }
 
 // GetUserMasterKeyRequest — request for a user's MasterKey.
