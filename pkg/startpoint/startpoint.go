@@ -87,6 +87,7 @@ type Answer struct {
 	Answer        model.AssistResponse
 	VoiceQuestion bool           // Флаг, указывающий, что вопрос был задан голосом
 	Operator      model.Operator // Фактически будем указывать кто ответил: модель или оператор
+	Err           error          // Ошибка модели (не nil — модель не смогла ответить); текст в Answer.Message — fallback для пользователя
 }
 
 // BotInterface - интерфейс для различных реализаций ботов
@@ -481,23 +482,23 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 						s.sendError(errCh, fmt.Errorf("критическая ошибка при обработке вопроса после таймаута оператора: %v", err))
 						return
 					}
+				deaf = false
+				select {
+				case answerCh <- Answer{Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."}, Err: err}:
+				default:
+				}
+			} else {
+				//logger.Debug("ans: %v", answer)
+				// Отправляем ответ AI
+				select {
+				case answerCh <- Answer{
+					Answer:        answer,
+					VoiceQuestion: currentQuest.Voice,
+					Operator:      model.Operator{SetOperator: false, Operator: false},
+				}:
 					deaf = false
-					select {
-					case answerCh <- Answer{Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."}}:
-					default:
-					}
-				} else {
-					//logger.Debug("ans: %v", answer)
-					// Отправляем ответ AI
-					select {
-					case answerCh <- Answer{
-						Answer:        answer,
-						VoiceQuestion: currentQuest.Voice,
-						Operator:      model.Operator{SetOperator: false, Operator: false},
-					}:
-						deaf = false
-					default:
-						s.sendError(errCh, fmt.Errorf("канал answerCh закрыт при отправке ответа AI после таймаута оператора"))
+				default:
+					s.sendError(errCh, fmt.Errorf("канал answerCh закрыт при отправке ответа AI после таймаута оператора"))
 						return
 					}
 				}
@@ -754,14 +755,14 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 						s.sendError(errCh, fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserID, err))
 						return
 					}
-					deaf = false
-					select {
-					case answerCh <- Answer{Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."}}:
-					default:
-					}
-					continue
+				deaf = false
+				select {
+				case answerCh <- Answer{Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."}, Err: err}:
+				default:
 				}
-				operatorAnswered = false
+				continue
+			}
+			operatorAnswered = false
 			} else {
 				answer = respMsg.Content
 				operatorAnswered = true
@@ -803,15 +804,15 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 					s.sendError(errCh, fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserID, err))
 					return
 				}
-				deaf = false
-				select {
-				case answerCh <- Answer{Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."}}:
-				default:
-				}
-				continue
+			deaf = false
+			select {
+			case answerCh <- Answer{Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."}, Err: err}:
+			default:
 			}
+			continue
+		}
 
-			// Пришёл ответ от модели, проверяю на флаг запроса операторского режима
+		// Пришёл ответ от модели, проверяю на флаг запроса операторского режима
 			if answer.Operator {
 				// Модель запросила эскалацию к оператору
 				if !operatorMode {
@@ -1156,6 +1157,15 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 			// Безопасная отправка ответа в TxCh
 			if err := usrCh.SendToTx(assistMsg); err != nil {
 				//logger.Warn("Ошибка отправки ответа в TxCh для dialogID %d: %v", treadId, err)
+			}
+
+			// Если ответ содержит ошибку модели — уведомляем вызывающий код и не сохраняем в историю
+			if resp.Err != nil {
+				select {
+				case errCh <- fmt.Errorf("модель не смогла ответить (dialogID=%d): %w", treadId, resp.Err):
+				default:
+				}
+				continue
 			}
 
 			// Сохраняем через воркер — строго после вопроса (fullQuestCh был отправлен раньше)
