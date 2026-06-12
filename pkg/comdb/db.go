@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -2034,21 +2035,49 @@ func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remainin
 }
 
 // GetUserApiKey возвращает API-ключ пользователя для провайдера.
-// Автоматически расшифровывает если ключ зашифрован application key.
+// Канонический формат Provider в user_api_keys — строковый ("google").
+// Numeric provider ("3") читается только для обратной совместимости.
+// Автоматически расшифровывает "$app$"; "$mk$" расшифровывает при наличии
+// MasterKeyResolver, иначе оставляет для внешней model.WithMasterKeyProvider обёртки.
 func (d *DB) GetUserAPIKey(userID uint32, provider ProviderType) (string, error) {
 	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
 	defer cancel()
 
 	var apiKey string
 	err := d.conn.QueryRowContext(ctx,
-		"SELECT ApiKey FROM user_api_keys WHERE UserId = ? AND Provider = ?",
-		userID, int(provider)).Scan(&apiKey)
+		`SELECT ApiKey
+		   FROM user_api_keys
+		  WHERE UserId = ? AND Provider IN (?, ?)
+		  ORDER BY CASE WHEN Provider = ? THEN 0 ELSE 1 END
+		  LIMIT 1`,
+		userID,
+		provider.String(),
+		strconv.Itoa(int(provider)),
+		provider.String(),
+	).Scan(&apiKey)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil // ключ не найден — не ошибка
 		}
 		return "", fmt.Errorf("ошибка получения API-ключа: %w", err)
+	}
+
+	apiKey = strings.TrimSpace(apiKey)
+
+	if crypto.IsEncryptedWithMasterKey(apiKey) {
+		if d.MasterKeyResolver == nil {
+			return apiKey, nil
+		}
+		masterKey, ok := d.MasterKeyResolver(userID)
+		if !ok {
+			return "", fmt.Errorf("API-ключ зашифрован MasterKey, но MasterKey пользователя %d не загружен", userID)
+		}
+		decrypted, err := crypto.DecryptFieldWithMasterKey(masterKey, apiKey)
+		if err != nil {
+			return "", fmt.Errorf("ошибка расшифровки API-ключа через MasterKey: %w", err)
+		}
+		return strings.TrimSpace(decrypted), nil
 	}
 
 	// Если ключ не зашифрован — возвращаем как есть (backward compatibility)
@@ -2067,25 +2096,38 @@ func (d *DB) GetUserAPIKey(userID uint32, provider ProviderType) (string, error)
 		return "", fmt.Errorf("ошибка расшифровки API-ключа: %w", err)
 	}
 
-	return decrypted, nil
+	return strings.TrimSpace(decrypted), nil
 }
 
 // SetUserAPIKey сохраняет API-ключ пользователя с автоматическим шифрованием,
-// если application encryption key установлен.
+// если MasterKey пользователя загружен или application encryption key установлен.
 func (d *DB) SetUserAPIKey(userID uint32, provider ProviderType, apiKey string) error {
 	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
 	defer cancel()
 
-	keyToStore := apiKey
+	keyToStore := strings.TrimSpace(apiKey)
+	if keyToStore == "" {
+		return fmt.Errorf("API-ключ не может быть пустым")
+	}
+
+	if d.MasterKeyResolver != nil {
+		if masterKey, ok := d.MasterKeyResolver(userID); ok {
+			encrypted, encErr := crypto.EncryptFieldWithMasterKey(masterKey, keyToStore)
+			if encErr != nil {
+				return fmt.Errorf("ошибка шифрования API-ключа через MasterKey: %w", encErr)
+			}
+			keyToStore = encrypted
+		}
+	}
 
 	// Пытаемся зашифровать если application encryption key доступен
-	encryptor, err := crypto.GetGlobalEncryptor()
-	if err == nil && encryptor.IsKeySet() {
-		encrypted, encErr := encryptor.EncryptField(apiKey)
-		if encErr != nil {
-			// Не критично — сохраняем plaintext
-			//logger.Warn("comdb: не удалось зашифровать API-ключ, сохраняем plaintext: %v", encErr)
-		} else {
+	if !crypto.IsEncryptedWithMasterKey(keyToStore) {
+		encryptor, err := crypto.GetGlobalEncryptor()
+		if err == nil && encryptor.IsKeySet() {
+			encrypted, encErr := encryptor.EncryptField(keyToStore)
+			if encErr != nil {
+				return fmt.Errorf("ошибка шифрования API-ключа application key: %w", encErr)
+			}
 			keyToStore = encrypted
 		}
 	}
@@ -2095,9 +2137,17 @@ func (d *DB) SetUserAPIKey(userID uint32, provider ProviderType, apiKey string) 
 	          VALUES (?, ?, ?)
 	          ON DUPLICATE KEY UPDATE ApiKey = VALUES(ApiKey)`
 
-	_, execErr := d.conn.ExecContext(ctx, query, userID, int(provider), keyToStore)
+	_, execErr := d.conn.ExecContext(ctx, query, userID, provider.String(), keyToStore)
 	if execErr != nil {
 		return fmt.Errorf("ошибка сохранения API-ключа: %w", execErr)
+	}
+
+	if _, err := d.conn.ExecContext(ctx,
+		`DELETE FROM user_api_keys WHERE UserId = ? AND Provider = ?`,
+		userID,
+		strconv.Itoa(int(provider)),
+	); err != nil {
+		return fmt.Errorf("ошибка удаления legacy API-ключа: %w", err)
 	}
 
 	return nil
@@ -2113,8 +2163,10 @@ func (d *DB) DeleteUserAPIKey(userID uint32, provider ProviderType) error {
 	defer cancel()
 
 	_, err := d.conn.ExecContext(ctx,
-		`DELETE FROM user_api_keys WHERE UserId = ? AND Provider = ?`,
-		userID, provider.String(),
+		`DELETE FROM user_api_keys WHERE UserId = ? AND Provider IN (?, ?)`,
+		userID,
+		provider.String(),
+		strconv.Itoa(int(provider)),
 	)
 	if err != nil {
 		return fmt.Errorf("ошибка удаления API ключа пользователя %d (%s): %w", userID, provider, err)

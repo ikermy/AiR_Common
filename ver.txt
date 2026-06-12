@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.27"
-git tag -a v1.50.27 -m "add listener return err"
+git commit -m "v1.50.28"
+git tag -a v1.50.28 -m "user key provider fix"
 git push origin master
-git push origin v1.50.27
+git push origin v1.50.28
