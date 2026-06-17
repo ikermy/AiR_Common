@@ -74,6 +74,94 @@ func (s *Start) sendError(errCh chan<- error, err error) {
 	}
 }
 
+func (s *Start) pushAnswer(answerCh chan<- Answer, errCh chan<- error, ans Answer, errMsg string) bool {
+	select {
+	case answerCh <- ans:
+		return true
+	default:
+		s.sendError(errCh, fmt.Errorf(errMsg))
+		return false
+	}
+}
+
+func (s *Start) trySendAnswer(answerCh chan<- Answer, ans Answer) {
+	select {
+	case answerCh <- ans:
+	default:
+	}
+}
+
+func (s *Start) sendFallbackAnswer(answerCh chan<- Answer, err error) {
+	s.trySendAnswer(answerCh, Answer{
+		Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."},
+		Err:    err,
+	})
+}
+
+func (s *Start) handleAskFailure(
+	u *model.RespModel,
+	err error,
+	answerCh chan<- Answer,
+	errCh chan<- error,
+	fatalMessage string,
+) (shouldReturn bool) {
+	if IsProviderLimitError(err) {
+		s.handleProviderLimitError(u.Assist.UserID, u.RespName, u.Assist.AssistName, err.Error())
+		return false
+	}
+	if IsFatalError(err) {
+		s.sendError(errCh, fmt.Errorf("%s: %v", fatalMessage, err))
+		return true
+	}
+	s.sendFallbackAnswer(answerCh, err)
+	return false
+}
+
+func operatorSystemAnswer(message string) Answer {
+	return Answer{
+		Answer:   model.AssistResponse{Message: message},
+		Operator: model.Operator{SetOperator: false, Operator: false},
+	}
+}
+
+func operatorTimeoutMessage() string {
+	if mode.OperatorResponseTimeout%60 == 0 && mode.OperatorResponseTimeout >= 60 {
+		return fmt.Sprintf("⏱️ Оператор не ответил в течение %d мин\nПродолжаю работу в режиме AI-агента 🧠", mode.OperatorResponseTimeout/60)
+	}
+	return fmt.Sprintf("⏱️ Оператор не ответил в течение %d сек\nПродолжаю работу в режиме AI-агента 🧠", mode.OperatorResponseTimeout)
+}
+
+func stopOperatorTimeoutTimer(timer *time.Timer, timeoutCh <-chan struct{}) *time.Timer {
+	if timer == nil {
+		return nil
+	}
+	safeStopTimer(timer)
+	select {
+	case <-timeoutCh:
+	default:
+	}
+	return nil
+}
+
+func (s *Start) startOperatorMode(u *model.RespModel, treadId uint64, timeoutCh chan<- struct{}) (<-chan model.Message, *time.Timer) {
+	operatorRxCh := s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserID, treadId)
+	operatorTimeoutTimer := time.AfterFunc(time.Duration(mode.OperatorResponseTimeout)*time.Second, func() {
+		select {
+		case timeoutCh <- struct{}{}:
+		default:
+		}
+	})
+	return operatorRxCh, operatorTimeoutTimer
+}
+
+// handleProviderLimitError обрабатывает лимитную ошибку AI-провайдера:
+// отправляет уведомление пользователю через внешние каналы и возвращает deaf=false для продолжения цикла.
+// Возвращает true, если вызывающий должен выполнить continue.
+func (s *Start) handleProviderLimitError(userID uint32, respName, assistName, errMsg string) bool {
+	s.End.SendEvent(userID, "ai-provider-limit", respName, assistName, errMsg)
+	return true
+}
+
 // Question структура для хранения вопросов пользователя
 type Question struct {
 	Question []string           // Вопрос пользователя, может состоять из нескольких вопросов
@@ -409,16 +497,12 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 				}
 
 				// Отправляем информационное сообщение пользователю
-				systemMsg := model.AssistResponse{
-					Message: "🚫👨‍💻 Нет доступных операторов \n Продолжаю работу в режиме AI-агента 🧠",
-				}
-				select {
-				case answerCh <- Answer{
-					Answer:   systemMsg,
-					Operator: model.Operator{SetOperator: false, Operator: false},
-				}:
-				default:
-					s.sendError(errCh, fmt.Errorf("канал answerCh закрыт при отправке сообщения об ошибке tg_id"))
+				if !s.pushAnswer(
+					answerCh,
+					errCh,
+					operatorSystemAnswer("🚫👨‍💻 Нет доступных операторов \n Продолжаю работу в режиме AI-агента 🧠"),
+					"канал answerCh закрыт при отправке сообщения об ошибке tg_id",
+				) {
 					return
 				}
 
@@ -433,7 +517,7 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 			//	mode.OperatorResponseTimeout)
 
 			// Останавливаем таймер
-			operatorTimeoutTimer = nil
+			operatorTimeoutTimer = stopOperatorTimeoutTimer(operatorTimeoutTimer, operatorTimeoutCh)
 
 			// Отключаем операторский режим
 			operatorMode = false
@@ -450,23 +534,7 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 			}
 
 			// Отправляем информационное сообщение пользователю о переключении на AI
-			timeoutMessage := fmt.Sprintf("⏱️ Оператор не ответил в течение %d секунд\nПродолжаю работу в режиме AI-агента 🧠", mode.OperatorResponseTimeout)
-			// Для production (120 секунд = 2 минуты) показываем в минутах
-			if mode.OperatorResponseTimeout >= 60 {
-				timeoutMessage = fmt.Sprintf("⏱️ Оператор не ответил в течение %d минут\nПродолжаю работу в режиме AI-агента 🧠", mode.OperatorResponseTimeout/60)
-			}
-			systemMsg := model.AssistResponse{
-				Message: timeoutMessage,
-			}
-			select {
-			case answerCh <- Answer{
-				Answer:   systemMsg,
-				Operator: model.Operator{SetOperator: false, Operator: false},
-			}:
-			//	logger.Debug("Отправлено сообщение о переключении с оператора на AI")
-			default:
-				//logger.Warn("Не удалось отправить сообщение о переключении на AI")
-			}
+			s.trySendAnswer(answerCh, operatorSystemAnswer(operatorTimeoutMessage()))
 
 			// Если есть текущий вопрос без ответа, обрабатываем его через AI
 			if !deaf && currentQuest.Question != nil && len(currentQuest.Question) > 0 {
@@ -478,29 +546,26 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 				// Отправляем запрос в AI
 				answer, err := s.AskWithRetry(u.Assist.UserID, respId, treadId, userAsk, currentQuest.Files...)
 				if err != nil {
-					if IsFatalError(err) {
-						s.sendError(errCh, fmt.Errorf("критическая ошибка при обработке вопроса после таймаута оператора: %v", err))
-						return
-					}
-				deaf = false
-				select {
-				case answerCh <- Answer{Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."}, Err: err}:
-				default:
-				}
-			} else {
-				//logger.Debug("ans: %v", answer)
-				// Отправляем ответ AI
-				select {
-				case answerCh <- Answer{
-					Answer:        answer,
-					VoiceQuestion: currentQuest.Voice,
-					Operator:      model.Operator{SetOperator: false, Operator: false},
-				}:
 					deaf = false
-				default:
-					s.sendError(errCh, fmt.Errorf("канал answerCh закрыт при отправке ответа AI после таймаута оператора"))
+					if s.handleAskFailure(u, err, answerCh, errCh, "критическая ошибка при обработке вопроса после таймаута оператора") {
 						return
 					}
+				} else {
+					//logger.Debug("ans: %v", answer)
+					// Отправляем ответ AI
+					if !s.pushAnswer(
+						answerCh,
+						errCh,
+						Answer{
+							Answer:        answer,
+							VoiceQuestion: currentQuest.Voice,
+							Operator:      model.Operator{SetOperator: false, Operator: false},
+						},
+						"канал answerCh закрыт при отправке ответа AI после таймаута оператора",
+					) {
+						return
+					}
+					deaf = false
 				}
 			}
 			continue
@@ -540,13 +605,7 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 			// Останавливаем таймер ожидания первого ответа оператора
 			// После первого ответа режим становится постоянным (без таймера)
 			if operatorTimeoutTimer != nil {
-				operatorTimeoutTimer.Stop()
-				operatorTimeoutTimer = nil // Обнуляем чтобы больше не перезапускать
-				// Очищаем канал если там есть сигнал
-				select {
-				case <-operatorTimeoutCh:
-				default:
-				}
+				operatorTimeoutTimer = stopOperatorTimeoutTimer(operatorTimeoutTimer, operatorTimeoutCh)
 				//logger.Debug("Таймер оператора остановлен - режим теперь постоянный")
 			}
 
@@ -557,11 +616,7 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 				Operator:      operatorMsg.Operator,
 			}
 
-			select {
-			case answerCh <- answ:
-				//logger.Debug("Ответ оператора отправлен пользователю")
-			default:
-				s.sendError(errCh, fmt.Errorf("канал answerCh закрыт или переполнен"))
+			if !s.pushAnswer(answerCh, errCh, answ, "канал answerCh закрыт или переполнен") {
 				return
 			}
 			continue // т.к. это операторское сообщение то сразу ждём следующее, а не спускаемся вниз по логике AI
@@ -588,15 +643,7 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 				// Инициализация канала оператора при первом включении режима
 				if !operatorMode {
 					operatorMode = true
-					operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserID, treadId)
-
-					// Запускаем таймер ожидания ответа оператора с callback
-					operatorTimeoutTimer = time.AfterFunc(time.Duration(mode.OperatorResponseTimeout)*time.Second, func() {
-						select {
-						case operatorTimeoutCh <- struct{}{}:
-						default:
-						}
-					})
+					operatorRxCh, operatorTimeoutTimer = s.startOperatorMode(u, treadId, operatorTimeoutCh)
 					//logger.Debug("Включен операторский режим (таймаут: %d сек)", mode.OperatorResponseTimeout)
 				}
 
@@ -751,18 +798,13 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 				// Отправляю запрос в OpenAI
 				answer, err = s.AskWithRetry(u.Assist.UserID, respId, treadId, userAsk, currentQuest.Files...)
 				if err != nil {
-					if IsFatalError(err) {
-						s.sendError(errCh, fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserID, err))
+					deaf = false
+					if s.handleAskFailure(u, err, answerCh, errCh, fmt.Sprintf("критическая ошибка для пользователя %d", u.Assist.UserID)) {
 						return
 					}
-				deaf = false
-				select {
-				case answerCh <- Answer{Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."}, Err: err}:
-				default:
+					continue
 				}
-				continue
-			}
-			operatorAnswered = false
+				operatorAnswered = false
 			} else {
 				answer = respMsg.Content
 				operatorAnswered = true
@@ -772,26 +814,12 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 				// Включаем постоянный режим после успешного ответа оператора
 				if !operatorMode {
 					operatorMode = true
-					operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserID, treadId)
-
-					// Запускаем таймер для операторского режима с callback
-					operatorTimeoutTimer = time.AfterFunc(time.Duration(mode.OperatorResponseTimeout)*time.Second, func() {
-						select {
-						case operatorTimeoutCh <- struct{}{}:
-						default:
-						}
-					})
+					operatorRxCh, operatorTimeoutTimer = s.startOperatorMode(u, treadId, operatorTimeoutCh)
 					//logger.Debug("Операторский режим активирован после ответа оператора (таймаут: %d сек)", mode.OperatorResponseTimeout)
 				} else if operatorTimeoutTimer != nil {
 					// Оператор ответил - останавливаем таймер навсегда
 					// Режим становится постоянным
-					operatorTimeoutTimer.Stop()
-					operatorTimeoutTimer = nil // Обнуляем чтобы больше не использовать
-					// Очищаем канал если там есть сигнал
-					select {
-					case <-operatorTimeoutCh:
-					default:
-					}
+					operatorTimeoutTimer = stopOperatorTimeoutTimer(operatorTimeoutTimer, operatorTimeoutCh)
 					//logger.Debug("Таймер оператора остановлен - режим теперь постоянный")
 				}
 			}
@@ -800,24 +828,19 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 			// Отправляю запрос в OpenAI
 			answer, err = s.AskWithRetry(u.Assist.UserID, respId, treadId, userAsk, currentQuest.Files...)
 			if err != nil {
-				if IsFatalError(err) {
-					s.sendError(errCh, fmt.Errorf("критическая ошибка для пользователя %d: %v", u.Assist.UserID, err))
+				deaf = false
+				if s.handleAskFailure(u, err, answerCh, errCh, fmt.Sprintf("критическая ошибка для пользователя %d", u.Assist.UserID)) {
 					return
 				}
-			deaf = false
-			select {
-			case answerCh <- Answer{Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."}, Err: err}:
-			default:
+				continue
 			}
-			continue
-		}
 
-		// Пришёл ответ от модели, проверяю на флаг запроса операторского режима
+			// Пришёл ответ от модели, проверяю на флаг запроса операторского режима
 			if answer.Operator {
 				// Модель запросила эскалацию к оператору
 				if !operatorMode {
 					operatorMode = true
-					operatorRxCh = s.Oper.ReceiveFromOperator(s.ctx, u.Assist.UserID, treadId)
+					operatorRxCh, operatorTimeoutTimer = s.startOperatorMode(u, treadId, operatorTimeoutCh)
 					s.End.SendEvent(u.Assist.UserID, "model-operator", u.RespName, u.Assist.AssistName, "")
 					//logger.Debug("Операторский режим активирован по флагу ответа модели")
 				}
@@ -882,11 +905,8 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 			}
 
 			// Только для Lead Hunter достижение цели с передачей контакта
-			if endpointConcrete, ok := s.End.(*endpoint.Endpoint); ok {
-				err := endpointConcrete.CallOptional(int64(respId))
-				if err != nil {
-					//logger.Error("ошибка вызова CallOptional для respId %d: %v", respId, err)
-				}
+			if err := s.End.CallOptional(int64(respId)); err != nil {
+				//logger.Error("ошибка вызова CallOptional для respId %d: %v", respId, err)
 			}
 		}
 

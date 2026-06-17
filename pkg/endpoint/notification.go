@@ -352,11 +352,20 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 		msg = errMsg[com.ErrorCode(errorCode)]
 		// Разбан ботов для service lead generation
 	case "lead-botunban":
-		msg = fmt.Sprintf("Боты:\n%s\nразблокированны по таймеру, попробуйте их снова использовать", Target)
+		msg = fmt.Sprintf("Боты:\n%s\nразблокированы по таймеру, попробуйте их снова использовать", Target)
 	case "lead-start":
 		msg = fmt.Sprintf("Поиск лидов запущен:\n-всего контактов для обработки %s", Target)
 	case "lead-stop":
 		msg = fmt.Sprintf("Поиск лидов завершён:\n-всего контактов %s\n-обработанно %s", Target, AssistName)
+	// События превышения лимита AI-провайдера
+	case "ai-provider-limit":
+		// Target содержит информацию о провайдере и/или коде ошибки
+		// Например: "OpenAI: 429 Too Many Requests" или "Mistral: rate_limit_exceeded"
+		limitInfo := Target
+		if limitInfo == "" {
+			limitInfo = "AI-провайдер"
+		}
+		msg = fmt.Sprintf("⚠️ Проблема с подключением к %s:\nпревышен лимит запросов или требуется оплата.\nПожалуйста, проверьте статус подписки и пополните баланс.", limitInfo)
 	default:
 		return "", fmt.Errorf("неизвестное событие: %s", Event)
 	}

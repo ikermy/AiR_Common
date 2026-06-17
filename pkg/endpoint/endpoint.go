@@ -22,6 +22,7 @@ type Inter interface {
 	SaveDialog(creator comdb.CreatorType, treadId uint64, resp *model.AssistResponse)
 	GetDialogHistory(dialogID uint64, limit int) ([]Message, error)
 	Meta(userID uint32, dialogID uint64, meta string, respName string, assistName string, metaAction string) error
+	CallOptional(val any) error
 	SendEvent(userID uint32, event, userName, assistName, target string)
 	SendNotification(msg com.CarpCh) error
 }

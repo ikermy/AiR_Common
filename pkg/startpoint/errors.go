@@ -50,6 +50,20 @@ func (e *NonCriticalError) Unwrap() error {
 	return e.Err
 }
 
+// ProviderLimitError представляет ошибку превышения лимита/квоты/подписки AI-провайдера
+// (429 Too Many Requests, rate limit exceeded, quota exceeded, billing errors и т.п.)
+type ProviderLimitError struct {
+	Err error
+}
+
+func (e *ProviderLimitError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *ProviderLimitError) Unwrap() error {
+	return e.Err
+}
+
 // IsFatalError проверяет, является ли ошибка критической
 func IsFatalError(err error) bool {
 	var fatalErr *FatalError
@@ -62,7 +76,42 @@ func IsNonCriticalError(err error) bool {
 	return errors.As(err, &nonCritErr)
 }
 
-// isFatalErrorPattern проверяет паттерны критических ошибок (auth, quota)
+// IsProviderLimitError проверяет, является ли ошибка лимитной ошибкой AI-провайдера
+func IsProviderLimitError(err error) bool {
+	var limitErr *ProviderLimitError
+	return errors.As(err, &limitErr)
+}
+
+// isProviderLimitError проверяет, связана ли ошибка с превышением лимита/квоты/подписки AI-провайдера
+// (429 Too Many Requests, rate limit exceeded, quota exceeded, billing errors и т.п.)
+func isProviderLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	limitPatterns := []string{
+		"429 too many requests",
+		"rate limit",
+		"rate_limit",
+		"quota exceeded",
+		"quota_exceeded",
+		"insufficient_quota",
+		"insufficient quota",
+		"billing issue",
+		"billing error",
+		"payment required",
+		"subscription required",
+		"resource exhausted",
+	}
+	for _, pattern := range limitPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// isFatalErrorPattern проверяет паттерны критических ошибок (auth)
 func isFatalErrorPattern(err error) bool {
 	if err == nil {
 		return false
@@ -73,7 +122,6 @@ func isFatalErrorPattern(err error) bool {
 		"Unauthorized",
 		"Forbidden",
 		"invalid API key",
-		"insufficient quota",
 	}
 	for _, pattern := range fatalPatterns {
 		if strings.Contains(errStr, pattern) {
@@ -123,6 +171,12 @@ func (s *Start) AskWithRetry(userID uint32, respId, dialogID uint64, arrAsk []st
 
 		lastErr = err
 
+		// Лимитная ошибка провайдера (429, rate limit, quota, billing) — немедленный возврат
+		if isProviderLimitError(err) {
+			//logger.Warn("Лимитная ошибка провайдера для диалога %d: %v", dialogID, err)
+			return response, &ProviderLimitError{Err: err}
+		}
+
 		// Критическая ошибка — немедленный возврат
 		if isFatalErrorPattern(err) {
 			//logger.Warn("Критическая ошибка для диалога %d: %v", dialogID, err)
@@ -146,7 +200,7 @@ func (s *Start) AskWithRetry(userID uint32, respId, dialogID uint64, arrAsk []st
 			continue
 		}
 
-		// Некритическая ошибка (400, 404, 429, context canceled и др.) — сразу возвращаем
+		// Некритическая ошибка (400, 404, context canceled и др.) — сразу возвращаем
 		//logger.Debug("Non-critical error for dialog %d: %v", dialogID, err)
 		return response, &NonCriticalError{Err: err}
 	}
