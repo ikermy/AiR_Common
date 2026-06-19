@@ -222,20 +222,39 @@ type streamAccumulator struct {
 var errMessageNotString = errors.New("message field is not a string")
 
 // ProcessStreamDelta накапливает сырой чанк и извлекает текущий текст поля message.
-// text     — текущее содержимое поля "message" (может быть пустым)
-// complete — true если закрывающая кавычка поля "message" найдена
-// err      — диагностическая ошибка парсинга
-func (s *Start) ProcessStreamDelta(respId uint64, rawChunk string) (text string, complete bool, err error) {
+// Для текстовых ответов возвращает kind=text и накапливаемый Text.
+// Для function-call/service событий возвращает kind=event и исходный RawJSON.
+func (s *Start) ProcessStreamDelta(respId uint64, rawChunk string) (model.StreamDeltaResult, error) {
 	if rawChunk == "" {
-		return s.GetStreamDisplayText(respId), false, nil
+		return model.StreamDeltaResult{
+			Kind: model.StreamDeltaKindText,
+			Text: s.GetStreamDisplayText(respId),
+		}, nil
+	}
+
+	if eventResult, ok, err := tryParseStructuredStreamEvent(rawChunk); ok || err != nil {
+		return eventResult, err
 	}
 
 	acc := s.getOrCreateStreamAccumulator(respId)
 	acc.mu.Lock()
 	defer acc.mu.Unlock()
 
+	if acc.rawAccumulated.Len() == 0 && !strings.ContainsRune(rawChunk, '{') {
+		acc.displayText += rawChunk
+		return model.StreamDeltaResult{
+			Kind:     model.StreamDeltaKindText,
+			Text:     acc.displayText,
+			Complete: false,
+		}, nil
+	}
+
 	if acc.messageDone {
-		return acc.displayText, true, nil
+		return model.StreamDeltaResult{
+			Kind:     model.StreamDeltaKindText,
+			Text:     acc.displayText,
+			Complete: true,
+		}, nil
 	}
 
 	_, _ = acc.rawAccumulated.WriteString(rawChunk)
@@ -243,10 +262,14 @@ func (s *Start) ProcessStreamDelta(respId uint64, rawChunk string) (text string,
 
 	newText, isComplete, parseErr := extractStreamText(raw)
 	if parseErr != nil {
-		return acc.displayText, false, parseErr
+		return model.StreamDeltaResult{
+			Kind:     model.StreamDeltaKindText,
+			Text:     acc.displayText,
+			Complete: false,
+		}, parseErr
 	}
 
-	if newText != "" {
+	if newText != "" || isComplete {
 		acc.displayText = newText
 	}
 
@@ -255,7 +278,11 @@ func (s *Start) ProcessStreamDelta(respId uint64, rawChunk string) (text string,
 		acc.rawAccumulated.Reset()
 	}
 
-	return acc.displayText, acc.messageDone, nil
+	return model.StreamDeltaResult{
+		Kind:     model.StreamDeltaKindText,
+		Text:     acc.displayText,
+		Complete: acc.messageDone,
+	}, nil
 }
 
 // GetStreamDisplayText возвращает последний извлечённый displayText для respId.
@@ -278,6 +305,47 @@ func (s *Start) ResetStreamAccumulator(respId uint64) {
 func (s *Start) getOrCreateStreamAccumulator(respId uint64) *streamAccumulator {
 	raw, _ := s.streamAccumulators.LoadOrStore(respId, &streamAccumulator{})
 	return raw.(*streamAccumulator)
+}
+
+func tryParseStructuredStreamEvent(rawChunk string) (model.StreamDeltaResult, bool, error) {
+	trimmed := strings.TrimSpace(rawChunk)
+	if trimmed == "" || trimmed[0] != '{' {
+		return model.StreamDeltaResult{}, false, nil
+	}
+
+	objPrefix, complete := firstJSONObjectPrefix(trimmed)
+	if objPrefix == "" || !complete {
+		return model.StreamDeltaResult{}, false, nil
+	}
+
+	var event map[string]interface{}
+	if err := json.Unmarshal([]byte(objPrefix), &event); err != nil {
+		return model.StreamDeltaResult{}, false, nil
+	}
+
+	eventType, _ := event["type"].(string)
+	if eventType == "" {
+		return model.StreamDeltaResult{}, false, nil
+	}
+
+	result := model.StreamDeltaResult{
+		Kind:      model.StreamDeltaKindEvent,
+		Complete:  eventType != "response.function_call_arguments.delta",
+		EventType: eventType,
+		RawJSON:   objPrefix,
+	}
+
+	if name, ok := event["name"].(string); ok {
+		result.Name = name
+	}
+
+	if arguments, ok := event["arguments"].(string); ok {
+		result.Arguments = arguments
+	} else if delta, ok := event["delta"].(string); ok {
+		result.Arguments = delta
+	}
+
+	return result, true, nil
 }
 
 // extractStreamText извлекает поле "message" из первой JSON-структуры.

@@ -125,8 +125,28 @@ type RealtimeProvider interface {
 
 // DeltaProcessor интерфейс унифицированной обработки стриминговых дельт.
 // Реализуется Startpoint для клиентских каналов (Telegram/WhatsApp/Instagram и т.д.).
+type StreamDeltaKind string
+
+const (
+	StreamDeltaKindText  StreamDeltaKind = "text"
+	StreamDeltaKindEvent StreamDeltaKind = "event"
+)
+
+// StreamDeltaResult результат обработки входящей потоковой дельты.
+// Для text-событий используется поле Text.
+// Для function_call/service-событий сохраняется RawJSON и, если доступно, Arguments.
+type StreamDeltaResult struct {
+	Kind      StreamDeltaKind `json:"kind"`
+	Text      string          `json:"text,omitempty"`
+	Complete  bool            `json:"complete,omitempty"`
+	EventType string          `json:"event_type,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Arguments string          `json:"arguments,omitempty"`
+	RawJSON   string          `json:"raw_json,omitempty"`
+}
+
 type DeltaProcessor interface {
-	ProcessStreamDelta(respId uint64, rawChunk string) (text string, complete bool, err error)
+	ProcessStreamDelta(respId uint64, rawChunk string) (StreamDeltaResult, error)
 	GetStreamDisplayText(respId uint64) string
 	ResetStreamAccumulator(respId uint64)
 }
