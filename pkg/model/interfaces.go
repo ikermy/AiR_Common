@@ -122,3 +122,11 @@ type RealtimeProvider interface {
 	GetRealtimeGenerating(respId uint64) *atomic.Bool
 	SetRealtimeDisconnectCallback(respId uint64, callback func(respId uint64)) error
 }
+
+// DeltaProcessor интерфейс унифицированной обработки стриминговых дельт.
+// Реализуется Startpoint для клиентских каналов (Telegram/WhatsApp/Instagram и т.д.).
+type DeltaProcessor interface {
+	ProcessStreamDelta(respId uint64, rawChunk string) (text string, complete bool, err error)
+	GetStreamDisplayText(respId uint64) string
+	ResetStreamAccumulator(respId uint64)
+}

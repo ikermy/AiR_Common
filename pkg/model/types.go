@@ -112,13 +112,14 @@ func (ch *Ch) IsRxOpen() bool {
 }
 
 // SendToTx безопасно отправляет сообщение в TxCh
-func (ch *Ch) SendToTx(msg Message) error {
+func (ch *Ch) SendToTx(msg Message) (err error) {
 	if !ch.IsTxOpen() {
 		return fmt.Errorf("канал TxCh закрыт для DialogID %d", ch.DialogID)
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			// канал закрыт в race-condition — паника проигнорирована
+			// канал закрыт в race-condition
+			err = fmt.Errorf("%v", r)
 		}
 	}()
 	select {
@@ -130,13 +131,14 @@ func (ch *Ch) SendToTx(msg Message) error {
 }
 
 // SendToRx безопасно отправляет сообщение в RxCh
-func (ch *Ch) SendToRx(msg Message) error {
+func (ch *Ch) SendToRx(msg Message) (err error) {
 	if !ch.IsRxOpen() {
 		return fmt.Errorf("канал RxCh закрыт для DialogID %d", ch.DialogID)
 	}
 	defer func() {
 		if r := recover(); r != nil {
-			// канал закрыт в race-condition — паника проигнорирована
+			// канал закрыт в race-condition
+			err = fmt.Errorf("%v", r)
 		}
 	}()
 	select {

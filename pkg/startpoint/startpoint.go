@@ -3,7 +3,9 @@ package startpoint
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -79,7 +81,7 @@ func (s *Start) pushAnswer(answerCh chan<- Answer, errCh chan<- error, ans Answe
 	case answerCh <- ans:
 		return true
 	default:
-		s.sendError(errCh, fmt.Errorf(errMsg))
+		s.sendError(errCh, errors.New(errMsg))
 		return false
 	}
 }
@@ -202,6 +204,354 @@ type Start struct {
 	// Карта для хранения провайдера каждого респондента (ключ: respID, значение: provider)
 	// Используется для передачи информации о провайдере при вызове CallOptional
 	responderProviders sync.Map // key: uint64 (respId), value: string (provider)
+
+	// Накопители потоковых дельт по респондентам.
+	// key: uint64 (respId), value: *streamAccumulator
+	streamAccumulators sync.Map
+}
+
+// streamAccumulator накапливает сырые дельты и извлекает текст из поля "message".
+// Потокобезопасен через internal mutex.
+type streamAccumulator struct {
+	mu             sync.Mutex
+	rawAccumulated strings.Builder
+	displayText    string
+	messageDone    bool
+}
+
+var errMessageNotString = errors.New("message field is not a string")
+
+// ProcessStreamDelta накапливает сырой чанк и извлекает текущий текст поля message.
+// text     — текущее содержимое поля "message" (может быть пустым)
+// complete — true если закрывающая кавычка поля "message" найдена
+// err      — диагностическая ошибка парсинга
+func (s *Start) ProcessStreamDelta(respId uint64, rawChunk string) (text string, complete bool, err error) {
+	if rawChunk == "" {
+		return s.GetStreamDisplayText(respId), false, nil
+	}
+
+	acc := s.getOrCreateStreamAccumulator(respId)
+	acc.mu.Lock()
+	defer acc.mu.Unlock()
+
+	if acc.messageDone {
+		return acc.displayText, true, nil
+	}
+
+	_, _ = acc.rawAccumulated.WriteString(rawChunk)
+	raw := acc.rawAccumulated.String()
+
+	newText, isComplete, parseErr := extractStreamText(raw)
+	if parseErr != nil {
+		return acc.displayText, false, parseErr
+	}
+
+	if newText != "" {
+		acc.displayText = newText
+	}
+
+	if isComplete {
+		acc.messageDone = true
+		acc.rawAccumulated.Reset()
+	}
+
+	return acc.displayText, acc.messageDone, nil
+}
+
+// GetStreamDisplayText возвращает последний извлечённый displayText для respId.
+func (s *Start) GetStreamDisplayText(respId uint64) string {
+	raw, ok := s.streamAccumulators.Load(respId)
+	if !ok {
+		return ""
+	}
+	acc := raw.(*streamAccumulator)
+	acc.mu.Lock()
+	defer acc.mu.Unlock()
+	return acc.displayText
+}
+
+// ResetStreamAccumulator удаляет накопитель для respId.
+func (s *Start) ResetStreamAccumulator(respId uint64) {
+	s.streamAccumulators.Delete(respId)
+}
+
+func (s *Start) getOrCreateStreamAccumulator(respId uint64) *streamAccumulator {
+	raw, _ := s.streamAccumulators.LoadOrStore(respId, &streamAccumulator{})
+	return raw.(*streamAccumulator)
+}
+
+// extractStreamText извлекает поле "message" из первой JSON-структуры.
+// Возвращает текущий текст, complete=true если строка message закрыта, и ошибку диагностики.
+func extractStreamText(raw string) (text string, complete bool, err error) {
+	start := strings.IndexByte(raw, '{')
+	if start < 0 {
+		return "", false, nil
+	}
+
+	prefix := raw[start:]
+
+	objPrefix, _ := firstJSONObjectPrefix(prefix)
+	if objPrefix == "" {
+		return "", false, nil
+	}
+
+	msg, msgComplete, found, parseErr := extractTopLevelMessage(objPrefix)
+	if parseErr != nil {
+		return "", false, parseErr
+	}
+	if !found {
+		return "", false, nil
+	}
+
+	return msg, msgComplete, nil
+}
+
+// firstJSONObjectPrefix возвращает префикс первой JSON-структуры (от '{' до текущего конца или полного закрытия). 
+func firstJSONObjectPrefix(s string) (prefix string, complete bool) {
+	if s == "" || s[0] != '{' {
+		return "", false
+	}
+
+	depth := 0
+	inString := false
+	escaped := false
+
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == '"' {
+				inString = false
+			}
+			continue
+		}
+
+		switch ch {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[:i+1], true
+			}
+		}
+	}
+
+	return s, false
+}
+
+func extractTopLevelMessage(objPrefix string) (message string, complete bool, found bool, err error) {
+	if objPrefix == "" || objPrefix[0] != '{' {
+		return "", false, false, nil
+	}
+
+	i := 1
+	for i < len(objPrefix) {
+		i = skipSpaces(objPrefix, i)
+		if i >= len(objPrefix) {
+			break
+		}
+		if objPrefix[i] == '}' {
+			break
+		}
+		if objPrefix[i] == ',' {
+			i++
+			continue
+		}
+		if objPrefix[i] != '"' {
+			i++
+			continue
+		}
+
+		keyRaw, next, keyComplete := scanJSONStringRaw(objPrefix, i)
+		if !keyComplete {
+			return "", false, false, nil
+		}
+		key := decodeJSONStringLossy(keyRaw)
+		i = skipSpaces(objPrefix, next)
+		if i >= len(objPrefix) || objPrefix[i] != ':' {
+			return "", false, false, nil
+		}
+		i++
+		i = skipSpaces(objPrefix, i)
+		if i >= len(objPrefix) {
+			return "", false, key == "message", nil
+		}
+
+		if key == "message" {
+			if objPrefix[i] != '"' {
+				return "", false, true, errMessageNotString
+			}
+			valRaw, _, valComplete := scanJSONStringRaw(objPrefix, i)
+			return decodeJSONStringLossy(valRaw), valComplete, true, nil
+		}
+
+		nextValue, ok := skipJSONValue(objPrefix, i)
+		if !ok {
+			return "", false, false, nil
+		}
+		i = nextValue
+	}
+
+	return "", false, false, nil
+}
+
+func skipSpaces(s string, i int) int {
+	for i < len(s) {
+		switch s[i] {
+		case ' ', '\n', '\t', '\r':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+func scanJSONStringRaw(s string, start int) (raw string, next int, complete bool) {
+	if start >= len(s) || s[start] != '"' {
+		return "", start, false
+	}
+
+	var b strings.Builder
+	escaped := false
+	for i := start + 1; i < len(s); i++ {
+		ch := s[i]
+		if escaped {
+			b.WriteByte(ch)
+			escaped = false
+			continue
+		}
+		if ch == '\\' {
+			b.WriteByte(ch)
+			escaped = true
+			continue
+		}
+		if ch == '"' {
+			return b.String(), i + 1, true
+		}
+		b.WriteByte(ch)
+	}
+
+	return b.String(), len(s), false
+}
+
+func decodeJSONStringLossy(raw string) string {
+	decoded, err := strconv.Unquote("\"" + raw + "\"")
+	if err == nil {
+		return decoded
+	}
+
+	// Частично декодируем популярные escape-последовательности в незавершённых дельтах.
+	replacer := strings.NewReplacer(
+		`\\n`, "\n",
+		`\\r`, "\r",
+		`\\t`, "\t",
+		`\\\"`, `"`,
+		`\\\\`, `\\`,
+		`\\/`, `/`,
+	)
+	out := replacer.Replace(raw)
+	if strings.HasSuffix(out, "\\") {
+		out = strings.TrimSuffix(out, "\\")
+	}
+	return out
+}
+
+func skipJSONValue(s string, i int) (next int, ok bool) {
+	if i >= len(s) {
+		return i, false
+	}
+
+	switch s[i] {
+	case '"':
+		_, next, complete := scanJSONStringRaw(s, i)
+		return next, complete
+	case '{':
+		depth := 0
+		inString := false
+		escaped := false
+		for j := i; j < len(s); j++ {
+			ch := s[j]
+			if inString {
+				if escaped {
+					escaped = false
+					continue
+				}
+				if ch == '\\' {
+					escaped = true
+					continue
+				}
+				if ch == '"' {
+					inString = false
+				}
+				continue
+			}
+			switch ch {
+			case '"':
+				inString = true
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					return j + 1, true
+				}
+			}
+		}
+		return len(s), false
+	case '[':
+		depth := 0
+		inString := false
+		escaped := false
+		for j := i; j < len(s); j++ {
+			ch := s[j]
+			if inString {
+				if escaped {
+					escaped = false
+					continue
+				}
+				if ch == '\\' {
+					escaped = true
+					continue
+				}
+				if ch == '"' {
+					inString = false
+				}
+				continue
+			}
+			switch ch {
+			case '"':
+				inString = true
+			case '[':
+				depth++
+			case ']':
+				depth--
+				if depth == 0 {
+					return j + 1, true
+				}
+			}
+		}
+		return len(s), false
+	default:
+		for j := i; j < len(s); j++ {
+			switch s[j] {
+			case ',', '}':
+				return j, true
+			}
+		}
+		return len(s), true
+	}
 }
 
 // New создаёт новый экземпляр Start
@@ -1157,9 +1507,16 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 
 			// Отправляю вопрос клиента в виде сообщения
 			userMsg := s.Mod.NewMessage(msg.Operator, "user", &msg.Content, &msg.Name)
+
 			if err := usrCh.SendToTx(userMsg); err != nil {
-				//logger.Warn("Ошибка отправки вопроса в TxCh для dialogID %d: %v", treadId, err)
+				select {
+				case errCh <- fmt.Errorf("ошибка при отправке в канал TxCh: %v", err.Error()):
+				default:
+					//logger.Warn("Ошибка отправки ответа в TxCh для dialogID %d: %v", treadId, err)
+				}
+				continue
 			}
+
 		case quest := <-fullQuestCh: // Пришёл полный вопрос пользователя
 			// Отправляем в воркер — он сохранит строго по порядку поступления
 			creator := comdb.User
@@ -1176,7 +1533,12 @@ func (s *Start) Listener(u *model.RespModel, usrCh *model.Ch, respId uint64, tre
 
 			// Безопасная отправка ответа в TxCh
 			if err := usrCh.SendToTx(assistMsg); err != nil {
-				//logger.Warn("Ошибка отправки ответа в TxCh для dialogID %d: %v", treadId, err)
+				select {
+				case errCh <- fmt.Errorf("ошибка при отправке в канал TxCh: %v", err.Error()):
+				default:
+					//logger.Warn("Ошибка отправки ответа в TxCh для dialogID %d: %v", treadId, err)
+				}
+				continue
 			}
 
 			// Если ответ содержит ошибку модели — уведомляем вызывающий код и не сохраняем в историю
