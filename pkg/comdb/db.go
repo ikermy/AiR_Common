@@ -226,7 +226,7 @@ func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, tri
 	}
 
 	// Разбираем JSON
-	var modelData map[string]interface{}
+	var modelData map[string]any
 	if err := json.Unmarshal(decompressedData, &modelData); err != nil {
 		return "", nil, nil, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
 	}
@@ -240,7 +240,7 @@ func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, tri
 
 	// Извлекаем и конвертируем поле triggers
 	if t, ok := modelData["trig"]; ok {
-		if trigArray, ok := t.([]interface{}); ok {
+		if trigArray, ok := t.([]any); ok {
 			for _, item := range trigArray {
 				if str, ok := item.(string); ok {
 					triggers = append(triggers, str)
@@ -250,7 +250,7 @@ func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, tri
 	}
 
 	// Извлекаем поля espero
-	if esp, ok := modelData["espero"].(map[string]interface{}); ok {
+	if esp, ok := modelData["espero"].(map[string]any); ok {
 		if limit, ok := esp["limit"].(float64); ok {
 			espero.Limit = uint16(limit)
 		}
@@ -863,7 +863,7 @@ func (d *DB) UpdateUserGPT(userID uint32, modelId uint64, assistId string, allId
 
 	// Подготавливаем значение для БД
 	// Если allIds == nil, то сохраняем SQL NULL, иначе строку
-	var idsValue interface{}
+	var idsValue any
 	if allIds == nil || len(allIds) == 0 {
 		idsValue = nil // SQL NULL
 	} else {

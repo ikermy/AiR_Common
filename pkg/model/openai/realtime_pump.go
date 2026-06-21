@@ -77,7 +77,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			}
 			//logger.Warn("pumpFromOpenAI: watchdog level 1 — %s, отправляем response.cancel respId=%d", reason, rs.respId, rs.userID)
 			rs.IsGenerating.Store(false)
-			if err := rs.writeJSON(map[string]interface{}{"type": "response.cancel"}); err != nil {
+			if err := rs.writeJSON(map[string]any{"type": "response.cancel"}); err != nil {
 				//logger.Warn("pumpFromOpenAI: watchdog response.cancel error: %v respId=%d", err, rs.respId, rs.userID)
 			}
 
@@ -136,7 +136,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			return
 		}
 
-		var event map[string]interface{}
+		var event map[string]any
 		if err := json.Unmarshal(msg, &event); err != nil {
 			//logger.Warn("pumpFromOpenAI: ошибка парсинга события: %v raw=%s", err, string(msg), rs.userID)
 			continue
@@ -198,7 +198,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 
 		// ── Транскрипция пользователя: ошибка ────────────────────────────────
 		//case "conversation.item.input_audio_transcription.failed":
-		//	errObj, _ := event["error"].(map[string]interface{})
+		//	errObj, _ := event["error"].(map[string]any)
 		//	logger.Warn("pumpFromOpenAI: user transcription failed respId=%d err=%v", rs.respId, errObj, rs.userID)
 
 		// ── VAD: речь обнаружена ──────────────────────────────────────────────
@@ -227,15 +227,15 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 
 		// ── Output item добавлен ─────────────────────────────────────────────
 		//case "response.output_item.added":
-		//	item, _ := event["item"].(map[string]interface{})
+		//	item, _ := event["item"].(map[string]any)
 		//	itemType, _ := item["type"].(string)
 		//	logger.Debug("pumpFromOpenAI: output_item.added type=%s respId=%d", itemType, rs.respId, rs.userID)
 
 		// ── Ответ ассистента завершён ─────────────────────────────────────────
 		case "response.done":
-			resp, _ := event["response"].(map[string]interface{})
+			resp, _ := event["response"].(map[string]any)
 			status, _ := resp["status"].(string)
-			usage, _ := resp["usage"].(map[string]interface{})
+			usage, _ := resp["usage"].(map[string]any)
 
 			if status != "completed" {
 				// status="cancelled" → пользователь перебил модель (barge-in).
@@ -256,9 +256,9 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 
 			if len(pendingFuncResults) > 0 {
 				for _, fr := range pendingFuncResults {
-					if err := rs.writeJSON(map[string]interface{}{
+					if err := rs.writeJSON(map[string]any{
 						"type": "conversation.item.create",
-						"item": map[string]interface{}{
+						"item": map[string]any{
 							"type":    "function_call_output",
 							"call_id": fr.callID,
 							"output":  fr.result,
@@ -272,21 +272,21 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 				//	len(pendingFuncResults), rs.respId, rs.userID)
 				pendingFuncResults = pendingFuncResults[:0]
 
-				if err := rs.writeJSON(map[string]interface{}{
+				if err := rs.writeJSON(map[string]any{
 					"type":     "response.create",
-					"response": map[string]interface{}{},
+					"response": map[string]any{},
 				}); err != nil {
 					//logger.Warn("response.done: ошибка отправки response.create: %v", err, rs.userID)
 				}
 			}
 
 			var assistItemId string
-			if output, ok := resp["output"].([]interface{}); ok {
+			if output, ok := resp["output"].([]any); ok {
 				if len(output) == 0 {
 					//logger.Warn("pumpFromOpenAI: response.done completed с пустым output respId=%d", rs.respId, rs.userID)
 				}
 				for _, outRaw := range output {
-					out, ok := outRaw.(map[string]interface{})
+					out, ok := outRaw.(map[string]any)
 					if !ok {
 						continue
 					}
@@ -309,7 +309,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 			}
 
 			if usage != nil {
-				if usageJSON, err := json.Marshal(map[string]interface{}{"type": "token_usage", "usage": usage}); err == nil {
+				if usageJSON, err := json.Marshal(map[string]any{"type": "token_usage", "usage": usage}); err == nil {
 					rs.publishEvent(RealtimeEvent{Type: "token_usage", Data: usageJSON})
 				}
 			}
@@ -335,7 +335,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 
 		// ── Function call: output item готов ─────────────────────────────────
 		case "response.output_item.done":
-			item, ok := event["item"].(map[string]interface{})
+			item, ok := event["item"].(map[string]any)
 			if !ok {
 				continue
 			}
@@ -415,13 +415,13 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 
 		// ── Сессия создана/обновлена ──────────────────────────────────────────
 		//case "session.created":
-		//	sess, _ := event["session"].(map[string]interface{})
+		//	sess, _ := event["session"].(map[string]any)
 		//	modelName, _ := sess["model"].(string)
 		//	logger.Info("pumpFromOpenAI: сессия создана model=%s respId=%d", modelName, rs.respId, rs.userID)
 
 		case "session.updated":
-			//sess, _ := event["session"].(map[string]interface{})
-			//modalities, _ := sess["modalities"].([]interface{})
+			//sess, _ := event["session"].(map[string]any)
+			//modalities, _ := sess["modalities"].([]any)
 			//voice, _ := sess["voice"].(string)
 			//outFmt, _ := sess["output_audio_format"].(string)
 			//logger.Debug("pumpFromOpenAI: session.updated modalities=%v voice=%s outFmt=%s respId=%d",
@@ -436,9 +436,9 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 
 		// ── Rate limits ───────────────────────────────────────────────────────
 		//case "rate_limits.updated":
-		//	if rl, ok := event["rate_limits"].([]interface{}); ok {
+		//	if rl, ok := event["rate_limits"].([]any); ok {
 		//		for _, r := range rl {
-		//			rm, _ := r.(map[string]interface{})
+		//			rm, _ := r.(map[string]any)
 		//			name, _ := rm["name"].(string)
 		//			remaining, _ := rm["remaining"].(float64)
 		//			resetSec, _ := rm["reset_seconds"].(float64)
@@ -451,7 +451,7 @@ func (m *Model) pumpFromOpenAI(rs *RealtimeSession) {
 
 		// ── Ошибка от OpenAI ──────────────────────────────────────────────────
 		case "error":
-			errObj, _ := event["error"].(map[string]interface{})
+			errObj, _ := event["error"].(map[string]any)
 			errMsg := "unknown realtime error"
 			errCode := ""
 			if errObj != nil {
@@ -501,7 +501,7 @@ func (m *Model) pumpToOpenAI(rs *RealtimeSession) {
 		sentChunks++
 		encoded := base64.StdEncoding.EncodeToString(accumBuf)
 		accumBuf = accumBuf[:0]
-		if err := rs.writeJSON(map[string]interface{}{
+		if err := rs.writeJSON(map[string]any{
 			"type":  "input_audio_buffer.append",
 			"audio": encoded,
 		}); err != nil {
@@ -565,7 +565,7 @@ func (m *Model) saveRealtimeTranscript(rs *RealtimeSession, userText, assistText
 
 // realtimeDialogJSON формирует JSON в формате endpoint.Message для сохранения в БД.
 func realtimeDialogJSON(creator comdb.CreatorType, text string, ts time.Time) []byte {
-	msg := map[string]interface{}{
+	msg := map[string]any{
 		"creator": creator,
 		"message": model.AssistResponse{
 			Message: text,

@@ -13,8 +13,8 @@ import (
 
 // createConversationInputs создаёт структуру inputs для Mistral Conversations API StartConversation
 // Консолидирует повторяющийся код инициализации inputs для разных случаев ошибок
-func createConversationInputs(content interface{}) []map[string]interface{} {
-	return []map[string]interface{}{
+func createConversationInputs(content any) []map[string]any {
+	return []map[string]any{
 		{
 			"role":    "user",
 			"content": content,
@@ -27,7 +27,7 @@ func createConversationInputs(content interface{}) []map[string]interface{} {
 // prepareUserContent подготавливает userContent для отправки в Mistral API
 // Возвращает либо простой текст, либо структурированный контент с изображениями
 // Консолидирует дублирующееся преобразование text+files в userContent
-func prepareUserContent(text string, files []model.FileUpload) interface{} {
+func prepareUserContent(text string, files []model.FileUpload) any {
 	// Проверяем наличие изображений с URL
 	var hasImageURLs bool
 	for _, file := range files {
@@ -40,12 +40,12 @@ func prepareUserContent(text string, files []model.FileUpload) interface{} {
 	// Если есть изображения - формируем content с parts, иначе только текст
 	if hasImageURLs {
 		// Формируем content как массив parts (text + image_url)
-		contentParts := []map[string]interface{}{
+		contentParts := []map[string]any{
 			{"type": "text", "text": text},
 		}
 		for _, file := range files {
 			if file.HasURL() && file.IsImageMimeType() {
-				contentParts = append(contentParts, map[string]interface{}{
+				contentParts = append(contentParts, map[string]any{
 					"type":      "image_url",
 					"image_url": file.URL,
 				})
@@ -68,7 +68,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 
 	// Ищем RespModel по dialogID в Chan
 	var respModel *RespModel
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		rm := value.(*RespModel)
 
 		if rm.Chan != nil && rm.Chan.DialogID == dialogID {
@@ -194,7 +194,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 				m.saveConversationId(respModel.Chan.DialogID, "")
 
 				// Создаём новый conversation
-				inputs := []map[string]interface{}{
+				inputs := []map[string]any{
 					{
 						"type":    "user",
 						"content": userContent,
@@ -634,7 +634,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 
 	// Ищем RespModel по dialogID в Chan
 	var respModel *RespModel
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		rm := value.(*RespModel)
 		if rm.Chan != nil && rm.Chan.DialogID == dialogID {
 			respModel = rm
@@ -680,7 +680,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 
 		// Проверяем, является ли delta JSON событием (начинается с '{')
 		if len(delta) > 0 && delta[0] == '{' {
-			var event map[string]interface{}
+			var event map[string]any
 			if err := json.Unmarshal([]byte(delta), &event); err == nil {
 				if eventType, ok := event["type"].(string); ok && eventType == "function_call" {
 					// Это событие вызова функции - отправляем как есть (уже JSON)
@@ -751,9 +751,9 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 		if totalUsage == nil || onDelta == nil {
 			return
 		}
-		tokenUsage := map[string]interface{}{
+		tokenUsage := map[string]any{
 			"type": "token_usage",
-			"usage": map[string]interface{}{
+			"usage": map[string]any{
 				"prompt_tokens":     totalUsage.PromptTokens,
 				"completion_tokens": totalUsage.CompletionTokens,
 				"total_tokens":      totalUsage.TotalTokens,
@@ -811,7 +811,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 		//logger.Debug("Раунд вызовов функций #%d: обнаружено %d функций", functionCallRound, len(functionCalls), userID)
 
 		// Выполняем ВСЕ функции параллельно (или последовательно)
-		functionResults := make([]map[string]interface{}, 0, len(functionCalls))
+		functionResults := make([]map[string]any, 0, len(functionCalls))
 
 		for _, funcCall := range functionCalls {
 			//logger.Debug("Вызов функции #%d в раунде %d: %s с аргументами: %s",
@@ -821,7 +821,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 			//logger.Debug("Результат функции %s: %s", funcCall.Name, funcResult, userID)
 
 			// Сохраняем результат функции
-			functionResults = append(functionResults, map[string]interface{}{
+			functionResults = append(functionResults, map[string]any{
 				"tool_call_id": funcCall.ToolCallID,
 				"result":       funcResult,
 				"object":       "entry",
@@ -962,14 +962,14 @@ func (m *Model) syncAgentTools(respModel *RespModel) {
 		return
 	}
 
-	var tools []map[string]interface{}
+	var tools []map[string]any
 
 	// MCP function tools — основной источник runtime-инструментов
 	if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, respModel.Assist.UserID, create.ProviderMistral); err == nil {
 		for _, t := range mcpTools {
-			tools = append(tools, map[string]interface{}{
+			tools = append(tools, map[string]any{
 				"type": "function",
-				"function": map[string]interface{}{
+				"function": map[string]any{
 					"name":        t.Name,
 					"description": t.Description,
 					"parameters":  t.InputSchema,
@@ -983,16 +983,16 @@ func (m *Model) syncAgentTools(respModel *RespModel) {
 		if compressedData, _, err := m.db.ReadUserModelByProvider(respModel.Assist.UserID, create.ProviderMistral); err == nil && compressedData != nil {
 			if modelData, err := m.universalModel.DecompressModelData(compressedData, nil); err == nil {
 				if modelData.Interpreter {
-					tools = append(tools, map[string]interface{}{"type": "code_interpreter"})
+					tools = append(tools, map[string]any{"type": "code_interpreter"})
 				}
 				if modelData.Image {
-					tools = append(tools, map[string]interface{}{"type": "image_generation"})
+					tools = append(tools, map[string]any{"type": "image_generation"})
 				}
 				if modelData.WebSearch {
-					tools = append(tools, map[string]interface{}{"type": "web_search"})
+					tools = append(tools, map[string]any{"type": "web_search"})
 				}
 				if modelData.Search || len(modelData.VecIds.VectorId) > 0 {
-					documentLibraryTool := map[string]interface{}{
+					documentLibraryTool := map[string]any{
 						"type": "document_library",
 					}
 					if len(modelData.VecIds.VectorId) > 0 {

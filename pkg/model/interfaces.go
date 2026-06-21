@@ -76,9 +76,9 @@ type ActionHandler interface {
 // MCPToolDefinition описание инструмента от MCP сервера (tools/list).
 // inputSchema не содержит user_id — он передаётся через X-Session-ID заголовок.
 type MCPToolDefinition struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema interface{} `json:"inputSchema"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	InputSchema any    `json:"inputSchema"`
 }
 
 // MCPConfigProvider расширяет ActionHandler методами получения конфигурации от MCP-сервера.

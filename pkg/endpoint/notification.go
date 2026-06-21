@@ -15,7 +15,7 @@ import (
 )
 
 // sendHTTPRequest отправляет HTTP POST запрос с JSON payload
-func sendHTTPRequest(url string, payload map[string]interface{}) error {
+func sendHTTPRequest(url string, payload map[string]any) error {
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("ошибка при преобразовании данных в JSON: %w", err)
@@ -77,7 +77,7 @@ func (e *Endpoint) SendNotification(msg com.CarpCh) error {
 	}
 
 	// Парсим JSON
-	var channels []map[string]interface{}
+	var channels []map[string]any
 	err = json.Unmarshal(res, &channels)
 	if err != nil {
 		return fmt.Errorf("ошибка парсинга JSON: %v", err)
@@ -165,7 +165,7 @@ func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName
 	// Добавить userID для возможности смены языка уведомлений
 	url := fmt.Sprintf("http://airbff:%s/v1/notification/telega", mode.LandingPort)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"uid":    uid,
 		"tid":    tId,
 		"event":  event,
@@ -181,7 +181,7 @@ func SendEmailNotification(uid uint32, email, event, userName, assistName, targe
 	// Добавить userID для возможности смены языка уведомлений
 	url := fmt.Sprintf("http://airbff:%s/v1/notification/mail", mode.LandingPort)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"uid":    uid,
 		"email":  email,
 		"event":  event,
@@ -197,7 +197,7 @@ func SendInstantNotification(uid uint32, event, userName, assistName, target str
 	// Добавить userID для возможности смены языка уведомлений
 	url := fmt.Sprintf("http://airbff:%s/v1/notification/instant", mode.LandingPort)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"uid":    uid,
 		"event":  event,
 		"user":   userName,

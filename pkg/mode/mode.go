@@ -62,8 +62,8 @@ var (
 	AvitoPort   = "8094" // WEB_AVITO_PORT
 
 	// Логирование — инициализируются через InitFromEnv()
-	LogLevel = "info"                      // LOG_LEVEL: debug | info | warn | error
-	LogPath  = "/var/log/Marusia/Land.log" // LOG_PATH: путь к файлу лога
+	LogLevel = "info" // LOG_LEVEL: debug | info | warn | error
+	LogPath  = ""     // LOG_PATH: путь к файлу лога, не используется в режиме logger.StdOut()
 )
 
 func SetTextMode(enabled bool) {
@@ -102,7 +102,7 @@ func SetLandingPort(port string) {
 // недоступность соответствующего сервиса.
 //
 // Пример: mode.InitFromEnv(logger.Fatalf)
-func InitFromEnv(fatal func(format string, args ...interface{})) {
+func InitFromEnv(fatal func(format string, args ...any)) {
 	// Основной порт landing-сервера — дефолт из var
 	LandingPort = envVal("WEB_LAND_PORT", LandingPort)
 

@@ -378,7 +378,7 @@ func (c *CRM) Shutdown(shutCh chan<- com.LogMsg) {
 	c.cancel() // Отменяем контекст
 
 	// Завершаем всех пользователей
-	c.user.Range(func(key, value interface{}) bool {
+	c.user.Range(func(key, value any) bool {
 		userID := key.(uint32)
 		u := value.(*User)
 
@@ -474,7 +474,7 @@ func (u *User) cleanExpiredCache() {
 			now := time.Now()
 
 			// Очищаем contactCache
-			u.contactCache.Range(func(key, val interface{}) bool {
+			u.contactCache.Range(func(key, val any) bool {
 				entry := val.(*cacheEntry)
 				if now.Sub(entry.lastAccess) > u.cacheTTL {
 					u.contactCache.Delete(key)
@@ -483,7 +483,7 @@ func (u *User) cleanExpiredCache() {
 			})
 
 			// Очищаем altContactCache
-			u.altContactCache.Range(func(key, val interface{}) bool {
+			u.altContactCache.Range(func(key, val any) bool {
 				entry := val.(*cacheEntry)
 				if now.Sub(entry.lastAccess) > u.cacheTTL {
 					u.altContactCache.Delete(key)
@@ -492,7 +492,7 @@ func (u *User) cleanExpiredCache() {
 			})
 
 			// Очищаем leadCache
-			u.leadCache.Range(func(key, val interface{}) bool {
+			u.leadCache.Range(func(key, val any) bool {
 				entry := val.(*cacheEntry)
 				if now.Sub(entry.lastAccess) > u.cacheTTL {
 					u.leadCache.Delete(key)

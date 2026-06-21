@@ -46,7 +46,7 @@ func buildRealtimeSystemPrompt(config *AgentConfig) string {
 	// Шаг 2: универсальные голосовые инструкции по инструментам (если они есть)
 	hasFunctionTools := false
 	for _, t := range config.Tools {
-		if tm, ok := t.(map[string]interface{}); ok {
+		if tm, ok := t.(map[string]any); ok {
 			if tm["type"] == "function" {
 				hasFunctionTools = true
 				break
@@ -86,7 +86,7 @@ func buildRealtimeSystemPrompt(config *AgentConfig) string {
 // Возвращает:
 //   - files        — массив объектов {type, Url, file_name, caption} для отправки клиенту
 //   - voiceConfirm — текст для модели БЕЗ URL (чтобы не озвучивала ссылки)
-func extractFilesForRealtime(rawResult string) (files []map[string]interface{}, voiceConfirm string) {
+func extractFilesForRealtime(rawResult string) (files []map[string]any, voiceConfirm string) {
 	raw := strings.TrimSpace(rawResult)
 	if raw == "" {
 		return nil, ""
@@ -94,7 +94,7 @@ func extractFilesForRealtime(rawResult string) (files []map[string]interface{}, 
 
 	// Попытка 1: объект с "url"/"Url" → один файл
 	if strings.HasPrefix(raw, "{") {
-		var r map[string]interface{}
+		var r map[string]any
 		if err := json.Unmarshal([]byte(raw), &r); err == nil {
 			url, _ := r["url"].(string)
 			if url == "" {
@@ -109,7 +109,7 @@ func extractFilesForRealtime(rawResult string) (files []map[string]interface{}, 
 				if fileType == "" {
 					fileType = realtimeFileType(url)
 				}
-				files = []map[string]interface{}{{
+				files = []map[string]any{{
 					"type": fileType, "Url": url, "file_name": fileName, "caption": "",
 				}}
 				voiceConfirm = fmt.Sprintf(`{"status":"ok","file_name":%q,"type":%q}`, fileName, fileType)
@@ -124,7 +124,7 @@ func extractFilesForRealtime(rawResult string) (files []map[string]interface{}, 
 	if strings.HasPrefix(raw, "[") {
 		_ = json.Unmarshal([]byte(raw), &urlList)
 	} else if strings.HasPrefix(raw, "{") {
-		var wrapper map[string]interface{}
+		var wrapper map[string]any
 		if err := json.Unmarshal([]byte(raw), &wrapper); err == nil {
 			if outputStr, ok := wrapper["output"].(string); ok {
 				_ = json.Unmarshal([]byte(outputStr), &urlList)
@@ -144,7 +144,7 @@ func extractFilesForRealtime(rawResult string) (files []map[string]interface{}, 
 		}
 		fileName := filepath.Base(u)
 		fileType := realtimeFileType(u)
-		files = append(files, map[string]interface{}{
+		files = append(files, map[string]any{
 			"type": fileType, "Url": u, "file_name": fileName, "caption": "",
 		})
 		nameParts = append(nameParts, fmt.Sprintf("%q", fileName))

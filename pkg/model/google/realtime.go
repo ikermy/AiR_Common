@@ -65,7 +65,7 @@ func (rs *GoogleRealtimeSession) publishEvent(ev model.RealtimeEvent) {
 
 // writeJSON сериализует v и отправляет как TextMessage через googleConn.
 // Все записи в googleConn обязаны идти через этот метод — он держит writeMu.
-func (rs *GoogleRealtimeSession) writeJSON(v interface{}) error {
+func (rs *GoogleRealtimeSession) writeJSON(v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -293,29 +293,29 @@ func (m *Model) SetRealtimeDisconnectCallback(respId uint64, callback func(respI
 // normalizeLiveAPIToolKeys конвертирует snake_case ключи инструментов в camelCase
 // для WebSocket Live API. REST API принимает оба варианта, WebSocket — только camelCase.
 // Источник: google.golang.org/genai types.go — Tool struct использует json:"functionDeclarations","googleSearch" и т.д.
-func normalizeLiveAPIToolKeys(tools []map[string]interface{}) []map[string]interface{} {
+func normalizeLiveAPIToolKeys(tools []map[string]any) []map[string]any {
 	if len(tools) == 0 {
 		return tools
 	}
 
 	// Вспомогательная функция для перевода type в UPPERCASE
 	// (gRPC/Protobuf strict enum JSON pb parser требует "OBJECT" вместо "object").
-	var uppercaseSchemaTypes func(interface{})
-	uppercaseSchemaTypes = func(v interface{}) {
-		if m, ok := v.(map[string]interface{}); ok {
+	var uppercaseSchemaTypes func(any)
+	uppercaseSchemaTypes = func(v any) {
+		if m, ok := v.(map[string]any); ok {
 			// type in UPPERCASE
 			if t, ok := m["type"].(string); ok {
 				m["type"] = strings.ToUpper(t)
 			}
 			// Clean empty 'required' array (can cause 1011 if empty in strict parsers)
-			if req, ok := m["required"].([]interface{}); ok && len(req) == 0 {
+			if req, ok := m["required"].([]any); ok && len(req) == 0 {
 				delete(m, "required")
 			}
 			if req, ok := m["required"].([]string); ok && len(req) == 0 {
 				delete(m, "required")
 			}
 
-			if props, ok := m["properties"].(map[string]interface{}); ok {
+			if props, ok := m["properties"].(map[string]any); ok {
 				for _, prop := range props {
 					uppercaseSchemaTypes(prop)
 				}
@@ -332,9 +332,9 @@ func normalizeLiveAPIToolKeys(tools []map[string]interface{}) []map[string]inter
 		"code_execution":          "codeExecution",
 		"google_search_retrieval": "googleSearchRetrieval",
 	}
-	normalized := make([]map[string]interface{}, len(tools))
+	normalized := make([]map[string]any, len(tools))
 	for i, tool := range tools {
-		newTool := make(map[string]interface{}, len(tool))
+		newTool := make(map[string]any, len(tool))
 		for k, v := range tool {
 			camelKey := k
 			if camel, ok := snakeToCamel[k]; ok {
@@ -343,7 +343,7 @@ func normalizeLiveAPIToolKeys(tools []map[string]interface{}) []map[string]inter
 
 			// Если это functionDeclarations, обязательно исправляем type в schema на UPPERCASE
 			if camelKey == "functionDeclarations" {
-				if fds, ok := v.([]map[string]interface{}); ok {
+				if fds, ok := v.([]map[string]any); ok {
 					for _, fd := range fds {
 						if params, ok := fd["parameters"]; ok {
 							uppercaseSchemaTypes(params)
@@ -396,17 +396,17 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 	}
 
 	// ── speechConfig ─────────────────────────────────────────────────────
-	prebuiltVoiceConfig := map[string]interface{}{
+	prebuiltVoiceConfig := map[string]any{
 		"voiceName": voice,
 	}
-	voiceConfig := map[string]interface{}{
+	voiceConfig := map[string]any{
 		"prebuiltVoiceConfig": prebuiltVoiceConfig,
 	}
-	speechConfig := map[string]interface{}{
+	speechConfig := map[string]any{
 		"voiceConfig": voiceConfig,
 	}
 
-	generationConfig := map[string]interface{}{
+	generationConfig := map[string]any{
 		// TEXT + AUDIO: модель возвращает аудио (воспроизведение) и текст (история диалога).
 		"responseModalities": []string{"AUDIO"},
 		"temperature":        temperature,
@@ -452,18 +452,18 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 		activityHandling = "NO_INTERRUPTION"
 	}
 
-	var realtimeInputConfig map[string]interface{}
+	var realtimeInputConfig map[string]any
 	if autoVAD {
-		realtimeInputConfig = map[string]interface{}{
-			"automaticActivityDetection": map[string]interface{}{
+		realtimeInputConfig = map[string]any{
+			"automaticActivityDetection": map[string]any{
 				"silenceDurationMs": silenceDurationMs,
 			},
 			"activityHandling": activityHandling,
 		}
 	} else {
 		// Push-to-talk: автодетект речи выключен, но activityHandling всё равно применяется
-		realtimeInputConfig = map[string]interface{}{
-			"automaticActivityDetection": map[string]interface{}{
+		realtimeInputConfig = map[string]any{
+			"automaticActivityDetection": map[string]any{
 				"disabled": true,
 			},
 			"activityHandling": activityHandling,
@@ -491,7 +491,7 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 		realtimeModel = create.RealtimeGoogleModel
 	}
 
-	setup := map[string]interface{}{
+	setup := map[string]any{
 		"model":               fmt.Sprintf("models/%s", realtimeModel),
 		"generationConfig":    generationConfig,
 		"realtimeInputConfig": realtimeInputConfig,
@@ -499,17 +499,17 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 
 	// Транскрипция входящей речи
 	if inputTranscription {
-		setup["inputAudioTranscription"] = map[string]interface{}{}
+		setup["inputAudioTranscription"] = map[string]any{}
 	}
 	// Транскрипция исходящей речи (нужна для сохранения текста ответа в историю)
 	if outputTranscription {
-		setup["outputAudioTranscription"] = map[string]interface{}{}
+		setup["outputAudioTranscription"] = map[string]any{}
 	}
 
 	if cfg.SystemInstruction != nil {
 		// Convert to map to remove "role" field which might cause strict parser errors
 		if b, err := json.Marshal(cfg.SystemInstruction); err == nil {
-			var sysInst map[string]interface{}
+			var sysInst map[string]any
 			if err := json.Unmarshal(b, &sysInst); err == nil {
 				delete(sysInst, "role")
 				setup["systemInstruction"] = sysInst
@@ -526,7 +526,7 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 		setup["tools"] = normalizedTools
 	}
 
-	msg := map[string]interface{}{"setup": setup}
+	msg := map[string]any{"setup": setup}
 
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -602,12 +602,12 @@ func (m *Model) sendHistoryAndGreeting(rs *GoogleRealtimeSession) {
 	}
 
 	// ── 4. Один user-turn, turnComplete=true ─────────────────────────────────
-	msg := map[string]interface{}{
-		"clientContent": map[string]interface{}{
-			"turns": []map[string]interface{}{
+	msg := map[string]any{
+		"clientContent": map[string]any{
+			"turns": []map[string]any{
 				{
 					"role":  "user",
-					"parts": []map[string]interface{}{{"text": fullText}},
+					"parts": []map[string]any{{"text": fullText}},
 				},
 			},
 			"turnComplete": true,

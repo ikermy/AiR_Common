@@ -318,7 +318,7 @@ func tryParseStructuredStreamEvent(rawChunk string) (model.StreamDeltaResult, bo
 		return model.StreamDeltaResult{}, false, nil
 	}
 
-	var event map[string]interface{}
+	var event map[string]any
 	if err := json.Unmarshal([]byte(objPrefix), &event); err != nil {
 		return model.StreamDeltaResult{}, false, nil
 	}
@@ -374,7 +374,7 @@ func extractStreamText(raw string) (text string, complete bool, err error) {
 	return msg, msgComplete, nil
 }
 
-// firstJSONObjectPrefix возвращает префикс первой JSON-структуры (от '{' до текущего конца или полного закрытия). 
+// firstJSONObjectPrefix возвращает префикс первой JSON-структуры (от '{' до текущего конца или полного закрытия).
 func firstJSONObjectPrefix(s string) (prefix string, complete bool) {
 	if s == "" || s[0] != '{' {
 		return "", false
@@ -753,7 +753,7 @@ func (s *Start) ask(userID uint32, respId, dialogID uint64, arrAsk []string, fil
 				// События function calls начинаются с '{' и содержат поле "type"
 				isJSONEvent := false
 				if len(delta) > 0 && delta[0] == '{' {
-					var event map[string]interface{}
+					var event map[string]any
 					if err := json.Unmarshal([]byte(delta), &event); err == nil {
 						if eventType, ok := event["type"].(string); ok {
 							// Проверяем типы событий function calls и служебных сообщений

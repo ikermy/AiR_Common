@@ -295,12 +295,12 @@ func (m *Model) injectDialogHistory(rs *RealtimeSession, dialogID uint64) error 
 		if role == "user" {
 			contentType = "input_text"
 		}
-		item := map[string]interface{}{
+		item := map[string]any{
 			"type": "conversation.item.create",
-			"item": map[string]interface{}{
+			"item": map[string]any{
 				"type": "message",
 				"role": role,
-				"content": []map[string]interface{}{
+				"content": []map[string]any{
 					{"type": contentType, "text": msg.Content},
 				},
 			},
@@ -325,11 +325,11 @@ func (m *Model) CloseRealtimeSession(respId uint64) {
 
 	// Очищаем transcripts для предотвращения утечки памяти (sync.Map не требует явной очистки,
 	// но удаляем значения для гарантированного освобождения памяти)
-	rs.userTranscripts.Range(func(key, value interface{}) bool {
+	rs.userTranscripts.Range(func(key, value any) bool {
 		rs.userTranscripts.Delete(key)
 		return true
 	})
-	rs.assistTranscripts.Range(func(key, value interface{}) bool {
+	rs.assistTranscripts.Range(func(key, value any) bool {
 		rs.assistTranscripts.Delete(key)
 		return true
 	})
@@ -415,26 +415,26 @@ func (m *Model) sendSessionUpdate(rs *RealtimeSession) error {
 
 	// GA API: turn_detection теперь внутри audio.input
 	// ВАЖНО: gpt-realtime-mini не принимает silence_duration_ms в turn_detection (unknown_parameter)
-	turnDetection := map[string]interface{}{
+	turnDetection := map[string]any{
 		"type": "semantic_vad",
 	}
 	_ = silenceDurationMs // резервируем для будущих версий API
 
 	// GA API: структура session полностью изменилась по сравнению с Beta
-	sessionMap := map[string]interface{}{
+	sessionMap := map[string]any{
 		"type":              "realtime",
 		"instructions":      instructions,
 		"output_modalities": []string{"audio"},
-		"audio": map[string]interface{}{
-			"input": map[string]interface{}{
-				"format": map[string]interface{}{
+		"audio": map[string]any{
+			"input": map[string]any{
+				"format": map[string]any{
 					"type": "audio/pcm",
 					"rate": 24000,
 				},
 				"turn_detection": turnDetection,
 			},
-			"output": map[string]interface{}{
-				"format": map[string]interface{}{
+			"output": map[string]any{
+				"format": map[string]any{
 					"type": "audio/pcm",
 					"rate": 24000,
 				},
@@ -448,7 +448,7 @@ func (m *Model) sendSessionUpdate(rs *RealtimeSession) error {
 		sessionMap["tools"] = tools
 	}
 
-	event := map[string]interface{}{
+	event := map[string]any{
 		"type":    "session.update",
 		"session": sessionMap,
 	}
@@ -477,7 +477,7 @@ func (m *Model) sendSessionUpdate(rs *RealtimeSession) error {
 
 // writeJSON сериализует v и отправляет как TextMessage через openaiConn.
 // Все записи в openaiConn обязаны идти через этот метод — он держит writeMu.
-func (rs *RealtimeSession) writeJSON(v interface{}) error {
+func (rs *RealtimeSession) writeJSON(v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -495,10 +495,10 @@ func (rs *RealtimeSession) writeJSON(v interface{}) error {
 //   - "strict" и "additionalProperties" не поддерживаются → удаляются
 //   - "const" в properties не поддерживается → заменяем на description "MUST be exactly: ..."
 //   - union types ["string","null"] не поддерживаются → берём первый тип
-func buildRealtimeTools(tools []interface{}) []interface{} {
-	var result []interface{}
+func buildRealtimeTools(tools []any) []any {
+	var result []any
 	for _, t := range tools {
-		toolMap, ok := t.(map[string]interface{})
+		toolMap, ok := t.(map[string]any)
 		if !ok || toolMap["type"] != "function" {
 			continue
 		}
@@ -512,13 +512,13 @@ func buildRealtimeTools(tools []interface{}) []interface{} {
 		description, _ := toolMap["description"].(string)
 
 		parameters := toolMap["parameters"]
-		if paramsMap, ok := parameters.(map[string]interface{}); ok {
+		if paramsMap, ok := parameters.(map[string]any); ok {
 			paramsCopy := copyMapDeep(paramsMap)
 			// Realtime API не поддерживает "additionalProperties"
 			delete(paramsCopy, "additionalProperties")
-			if props, ok := paramsCopy["properties"].(map[string]interface{}); ok {
+			if props, ok := paramsCopy["properties"].(map[string]any); ok {
 				for propName, propRaw := range props {
-					prop, ok := propRaw.(map[string]interface{})
+					prop, ok := propRaw.(map[string]any)
 					if !ok {
 						continue
 					}
@@ -532,7 +532,7 @@ func buildRealtimeTools(tools []interface{}) []interface{} {
 					}
 					// Конвертируем union type ["string","null"] → "string"
 					// Realtime API принимает только скалярный "type"
-					if typeArr, ok := prop["type"].([]interface{}); ok && len(typeArr) > 0 {
+					if typeArr, ok := prop["type"].([]any); ok && len(typeArr) > 0 {
 						prop["type"] = typeArr[0]
 					}
 					if typeArr, ok := prop["type"].([]string); ok && len(typeArr) > 0 {
@@ -544,7 +544,7 @@ func buildRealtimeTools(tools []interface{}) []interface{} {
 			parameters = paramsCopy
 		}
 
-		result = append(result, map[string]interface{}{
+		result = append(result, map[string]any{
 			"type":        "function",
 			"name":        name,
 			"description": description,
@@ -557,18 +557,18 @@ func buildRealtimeTools(tools []interface{}) []interface{} {
 	// Добавляем всегда, когда есть хоть один function-tool — модель сама решит вызывать ли его.
 	// Обрабатывается в realtime_pump.go локально, до вызова RunAction.
 	if len(result) > 0 {
-		result = append(result, map[string]interface{}{
+		result = append(result, map[string]any{
 			"type":        "function",
 			"name":        "send_file_to_user",
 			"description": "Send a specific file to the user by URL. Call this when you have a file URL to deliver to the user (e.g. after listing files). Use the exact URL as received.",
-			"parameters": map[string]interface{}{
+			"parameters": map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"url": map[string]interface{}{
+				"properties": map[string]any{
+					"url": map[string]any{
 						"type":        "string",
 						"description": "Exact URL of the file to send",
 					},
-					"file_name": map[string]interface{}{
+					"file_name": map[string]any{
 						"type":        "string",
 						"description": "File name to display to the user",
 					},
@@ -581,15 +581,15 @@ func buildRealtimeTools(tools []interface{}) []interface{} {
 	return result
 }
 
-// copyMapDeep делает глубокую копию map[string]interface{} для безопасного изменения.
-func copyMapDeep(m map[string]interface{}) map[string]interface{} {
-	result := make(map[string]interface{}, len(m))
+// copyMapDeep делает глубокую копию map[string]any для безопасного изменения.
+func copyMapDeep(m map[string]any) map[string]any {
+	result := make(map[string]any, len(m))
 	for k, v := range m {
 		switch val := v.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			result[k] = copyMapDeep(val)
-		case []interface{}:
-			cp := make([]interface{}, len(val))
+		case []any:
+			cp := make([]any, len(val))
 			copy(cp, val)
 			result[k] = cp
 		default:
@@ -619,21 +619,21 @@ func (m *Model) sendInitialGreeting(rs *RealtimeSession) {
 		rs.agentConfig.RealtimeVAD.Greeting != nil &&
 		*rs.agentConfig.RealtimeVAD.Greeting != ""
 
-	var event map[string]interface{}
+	var event map[string]any
 
 	if hasExplicitGreeting {
 		greetingText := *rs.agentConfig.RealtimeVAD.Greeting
 		// GA API: modalities не принимается в response.create → только instructions
-		event = map[string]interface{}{
+		event = map[string]any{
 			"type": "response.create",
-			"response": map[string]interface{}{
+			"response": map[string]any{
 				"instructions": "Your ONLY output is this exact phrase, nothing else, no commentary: " + greetingText,
 			},
 		}
 	} else {
-		event = map[string]interface{}{
+		event = map[string]any{
 			"type": "response.create",
-			"response": map[string]interface{}{
+			"response": map[string]any{
 				"instructions": "Greet the user warmly and briefly (1-2 sentences). " +
 					"Introduce yourself by name if you have one. " +
 					"Ask how you can help. Speak naturally, no JSON.",

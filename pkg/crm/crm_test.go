@@ -15,17 +15,17 @@ func setCRMPort(port string) {
 
 // testGetCacheStats возвращает статистику использования кэша
 func (u *User) testGetCacheStats() (contactCount, altContactCount, leadCount int) {
-	u.contactCache.Range(func(key, val interface{}) bool {
+	u.contactCache.Range(func(key, val any) bool {
 		contactCount++
 		return true
 	})
 
-	u.altContactCache.Range(func(key, val interface{}) bool {
+	u.altContactCache.Range(func(key, val any) bool {
 		altContactCount++
 		return true
 	})
 
-	u.leadCache.Range(func(key, val interface{}) bool {
+	u.leadCache.Range(func(key, val any) bool {
 		leadCount++
 		return true
 	})
@@ -35,17 +35,17 @@ func (u *User) testGetCacheStats() (contactCount, altContactCount, leadCount int
 
 // testClearCache очищает весь кэш
 func (u *User) testClearCache() {
-	u.contactCache.Range(func(key, val interface{}) bool {
+	u.contactCache.Range(func(key, val any) bool {
 		u.contactCache.Delete(key)
 		return true
 	})
 
-	u.altContactCache.Range(func(key, val interface{}) bool {
+	u.altContactCache.Range(func(key, val any) bool {
 		u.altContactCache.Delete(key)
 		return true
 	})
 
-	u.leadCache.Range(func(key, val interface{}) bool {
+	u.leadCache.Range(func(key, val any) bool {
 		u.leadCache.Delete(key)
 		return true
 	})

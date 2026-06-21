@@ -138,7 +138,7 @@ func RegisterConfigServiceServer(s grpc.ServiceRegistrar, srv ConfigServiceServe
 	s.RegisterService(&ConfigService_ServiceDesc, srv)
 }
 
-func _ConfigService_GetBotConfig_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _ConfigService_GetBotConfig_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetBotConfigRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -150,13 +150,13 @@ func _ConfigService_GetBotConfig_Handler(srv interface{}, ctx context.Context, d
 		Server:     srv,
 		FullMethod: ConfigService_GetBotConfig_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(ConfigServiceServer).GetBotConfig(ctx, req.(*GetBotConfigRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _ConfigService_GetUserMasterKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _ConfigService_GetUserMasterKey_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(GetUserMasterKeyRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -168,13 +168,13 @@ func _ConfigService_GetUserMasterKey_Handler(srv interface{}, ctx context.Contex
 		Server:     srv,
 		FullMethod: ConfigService_GetUserMasterKey_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(ConfigServiceServer).GetUserMasterKey(ctx, req.(*GetUserMasterKeyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-func _ConfigService_GetServiceHealth_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+func _ConfigService_GetServiceHealth_Handler(srv any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 	in := new(HealthRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -186,7 +186,7 @@ func _ConfigService_GetServiceHealth_Handler(srv interface{}, ctx context.Contex
 		Server:     srv,
 		FullMethod: ConfigService_GetServiceHealth_FullMethodName,
 	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+	handler := func(ctx context.Context, req any) (any, error) {
 		return srv.(ConfigServiceServer).GetServiceHealth(ctx, req.(*HealthRequest))
 	}
 	return interceptor(ctx, in, info, handler)

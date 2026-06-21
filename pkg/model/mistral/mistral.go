@@ -113,7 +113,7 @@ type MistralDocument struct {
 func (m *MistralAgentClient) CreateLibrary(name, description string) (*MistralLibrary, error) {
 	const librariesURL = "https://api.mistral.ai/v1/libraries"
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name": name,
 	}
 	if description != "" {
@@ -355,12 +355,12 @@ type ConversationContent struct {
 
 // StartConversation начинает новый диалог с агентом через Conversations API
 // Документация: https://docs.mistral.ai/api/#tag/conversations
-func (m *MistralAgentClient) StartConversation(agentID string, inputs interface{}, userID uint32) (ConversationResponse, error) {
+func (m *MistralAgentClient) StartConversation(agentID string, inputs any, userID uint32) (ConversationResponse, error) {
 	conversationsURL := mode.MistralConversationsURL
 
 	// Формат payload согласно документации:
 	// inputs может быть строкой или массивом объектов с полями role, content, object, type
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"agent_id": agentID,
 		"inputs":   inputs,
 		"stream":   false,
@@ -406,10 +406,10 @@ func (m *MistralAgentClient) StartConversation(agentID string, inputs interface{
 }
 
 // ContinueConversation продолжает существующий диалог через Conversations API
-func (m *MistralAgentClient) ContinueConversation(conversationID string, inputs interface{}, userID uint32) (ConversationResponse, error) {
+func (m *MistralAgentClient) ContinueConversation(conversationID string, inputs any, userID uint32) (ConversationResponse, error) {
 	conversationsURL := fmt.Sprintf("%s/%s", mode.MistralConversationsURL, conversationID)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"inputs": inputs,
 		"stream": false,
 		"store":  true,
@@ -459,7 +459,7 @@ func (m *MistralAgentClient) ContinueConversation(conversationID string, inputs 
 func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallID string, functionResult string, userID uint32) (ConversationResponse, error) {
 	conversationsURL := fmt.Sprintf("%s/%s", mode.MistralConversationsURL, conversationID)
 
-	inputs := []map[string]interface{}{
+	inputs := []map[string]any{
 		{
 			"tool_call_id": toolCallID,
 			"result":       functionResult,
@@ -468,7 +468,7 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 		},
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"inputs":            inputs,
 		"stream":            false,
 		"store":             true,
@@ -520,10 +520,10 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 
 // PatchAgent обновляет конфигурацию Mistral Agent через PATCH /v1/agents/{agent_id}.
 // Используется для синхронизации инструментов (tools) с текущим набором MCP-функций.
-func (m *MistralAgentClient) PatchAgent(agentID string, tools []map[string]interface{}) error {
+func (m *MistralAgentClient) PatchAgent(agentID string, tools []map[string]any) error {
 	patchURL := fmt.Sprintf("%s/%s", mode.MistralAgentsBaseURL, agentID)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"tools": tools,
 	}
 
@@ -557,10 +557,10 @@ func (m *MistralAgentClient) PatchAgent(agentID string, tools []map[string]inter
 // StartConversationStreaming начинает новый диалог с агентом в streaming режиме
 // onDelta вызывается для каждого delta события с текстом или JSON событиями function calls
 // Возвращает ConversationResponse с накопленными данными и usage токенов
-func (m *MistralAgentClient) StartConversationStreaming(agentID string, inputs interface{}, onDelta func(string) error, userID uint32) (ConversationResponse, error) {
+func (m *MistralAgentClient) StartConversationStreaming(agentID string, inputs any, onDelta func(string) error, userID uint32) (ConversationResponse, error) {
 	conversationsURL := mode.MistralConversationsURL
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"agent_id":          agentID,
 		"inputs":            inputs,
 		"stream":            true,
@@ -597,10 +597,10 @@ func (m *MistralAgentClient) StartConversationStreaming(agentID string, inputs i
 }
 
 // ContinueConversationStreaming продолжает диалог в streaming режиме
-func (m *MistralAgentClient) ContinueConversationStreaming(conversationID string, inputs interface{}, onDelta func(string) error, userID uint32) (ConversationResponse, error) {
+func (m *MistralAgentClient) ContinueConversationStreaming(conversationID string, inputs any, onDelta func(string) error, userID uint32) (ConversationResponse, error) {
 	conversationsURL := fmt.Sprintf("%s/%s", mode.MistralConversationsURL, conversationID)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"inputs":            inputs,
 		"stream":            true,
 		"store":             true,
@@ -637,10 +637,10 @@ func (m *MistralAgentClient) ContinueConversationStreaming(conversationID string
 
 // SendMultipleFunctionResultsStreaming отправляет результаты НЕСКОЛЬКИХ функций в streaming режиме
 // functionResults - массив объектов с полями: tool_call_id, result, object, type
-func (m *MistralAgentClient) SendMultipleFunctionResultsStreaming(conversationID string, functionResults []map[string]interface{}, onDelta func(string) error, userID uint32) (ConversationResponse, error) {
+func (m *MistralAgentClient) SendMultipleFunctionResultsStreaming(conversationID string, functionResults []map[string]any, onDelta func(string) error, userID uint32) (ConversationResponse, error) {
 	conversationsURL := fmt.Sprintf("%s/%s", mode.MistralConversationsURL, conversationID)
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"inputs": functionResults,
 		"stream": true,
 		"store":  true,
@@ -707,7 +707,7 @@ func (m *MistralAgentClient) readStreamingResponse(body io.Reader, onDelta func(
 		}
 
 		// Парсим JSON событие
-		var event map[string]interface{}
+		var event map[string]any
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			//logger.Warn("readStreamingResponse: ошибка парсинга SSE события: %v, data: %s", err, data)
 			continue
@@ -737,7 +737,7 @@ func (m *MistralAgentClient) readStreamingResponse(body io.Reader, onDelta func(
 
 		case "conversation.response.done":
 			// Завершение ответа - извлекаем usage
-			if usage, ok := event["usage"].(map[string]interface{}); ok {
+			if usage, ok := event["usage"].(map[string]any); ok {
 				usageData = &TokenUsage{}
 				if pt, ok := usage["prompt_tokens"].(float64); ok {
 					usageData.PromptTokens = int(pt)
@@ -808,7 +808,7 @@ func (m *MistralAgentClient) readStreamingResponse(body io.Reader, onDelta func(
 
 			// Отправляем событие вызова функции через callback
 			if onDelta != nil {
-				eventJSON, _ := json.Marshal(map[string]interface{}{
+				eventJSON, _ := json.Marshal(map[string]any{
 					"type":         "function_call",
 					"name":         output.Name,
 					"tool_call_id": output.ToolCallID,
@@ -831,7 +831,7 @@ func (m *MistralAgentClient) readStreamingResponse(body io.Reader, onDelta func(
 
 		// Отправляем событие вызова функции через callback
 		if onDelta != nil {
-			eventJSON, _ := json.Marshal(map[string]interface{}{
+			eventJSON, _ := json.Marshal(map[string]any{
 				"type":         "function_call",
 				"name":         funcCall.Name,
 				"tool_call_id": funcCall.ToolCallID,

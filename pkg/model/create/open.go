@@ -42,7 +42,7 @@ func generateOpenAIEmbedding(ctx context.Context, apiKey, text, model string, di
 
 	embedURL := "https://api.openai.com/v1/embeddings"
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"input":      text,
 		"model":      model,
 		"dimensions": dimensions,
@@ -127,14 +127,14 @@ type AssistantTool struct {
 
 // FunctionDefinition определение функции
 type FunctionDefinition struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description,omitempty"`
-	Parameters  interface{} `json:"parameters,omitempty"`
-	Strict      bool        `json:"strict,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Parameters  any    `json:"parameters,omitempty"`
+	Strict      bool   `json:"strict,omitempty"`
 }
 
 // getStringField safely extracts string field from map
-func getStringField(m map[string]interface{}, key string) string {
+func getStringField(m map[string]any, key string) string {
 	if val, ok := m[key].(string); ok {
 		return val
 	}
@@ -187,7 +187,7 @@ func (c *OpenAIAgentClient) HasAPIKey(userID uint32) bool {
 }
 
 // doRequest выполняет HTTP запрос к OpenAI API
-func (c *OpenAIAgentClient) doRequest(ctx context.Context, method, path string, body interface{}, userID uint32) (*http.Response, error) {
+func (c *OpenAIAgentClient) doRequest(ctx context.Context, method, path string, body any, userID uint32) (*http.Response, error) {
 	url := c.url + path
 
 	var reqBody io.Reader
@@ -332,23 +332,23 @@ const maxToolCallDepth = 5
 func (c *OpenAIAgentClient) CreateResponse(
 	ctx context.Context,
 	input string,
-	agentConfig interface{},
+	agentConfig any,
 	onDelta func(string) error,
-	onToolCall func([]interface{}) ([]interface{}, error),
+	onToolCall func([]any) ([]any, error),
 	userID uint32,
-) (interface{}, string, error) {
+) (any, string, error) {
 	return c.createResponseInternal(ctx, input, agentConfig, onDelta, onToolCall, userID, 0)
 }
 
 func (c *OpenAIAgentClient) createResponseInternal(
 	ctx context.Context,
 	input string,
-	agentConfig interface{}, // *OpenAIAgentConfig
+	agentConfig any, // *OpenAIAgentConfig
 	onDelta func(string) error,
-	onToolCall func([]interface{}) ([]interface{}, error),
+	onToolCall func([]any) ([]any, error),
 	userID uint32,
 	depth int,
-) (interface{}, string, error) {
+) (any, string, error) {
 	// Защита от бесконечной рекурсии при многократных вызовах инструментов
 	if depth >= maxToolCallDepth {
 		return nil, "", fmt.Errorf("превышен лимит вложенных вызовов инструментов (%d)", maxToolCallDepth)
@@ -359,7 +359,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 	// Вместо этого используем type assertion напрямую
 
 	// Type assertion к OpenAIAgentConfig из пакета openai
-	// Но так как мы в пакете create, нужно использовать interface{} и рефлексию
+	// Но так как мы в пакете create, нужно использовать any и рефлексию
 	// Альтернативно: Marshal только для извлечения простых полей, tools берем отдельно
 
 	configBytes, err := json.Marshal(agentConfig)
@@ -368,13 +368,13 @@ func (c *OpenAIAgentClient) createResponseInternal(
 	}
 
 	// Временная структура для извлечения полей БЕЗ tools
-	var configMap map[string]interface{}
+	var configMap map[string]any
 	if err := json.Unmarshal(configBytes, &configMap); err != nil {
 		return nil, "", fmt.Errorf("failed to unmarshal agentConfig: %w", err)
 	}
 
 	// Формируем payload для Responses API
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"model":  configMap["model_name"],
 		"input":  input,
 		"stream": true, // КРИТИЧНО: Включаем streaming
@@ -429,7 +429,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		if configStruct.Kind() == reflect.Struct {
 			toolsField := configStruct.FieldByName("Tools")
 			if toolsField.IsValid() && toolsField.Kind() == reflect.Slice && toolsField.Len() > 0 {
-				// Берем tools напрямую как interface{}, сохраняя тип FunctionTool
+				// Берем tools напрямую как any, сохраняя тип FunctionTool
 				payload["tools"] = toolsField.Interface()
 			}
 		}
@@ -438,12 +438,12 @@ func (c *OpenAIAgentClient) createResponseInternal(
 	// Всегда добавляем text.format для получения структурированного JSON ответа
 	// ВАЖНО: В Responses API text.format НЕ блокирует вызовы функций (в отличие от Chat Completions API)
 	// Модель может сначала вызвать функции, а затем вернуть JSON согласно schema
-	if responseFormat, ok := configMap["response_format"].(map[string]interface{}); ok {
+	if responseFormat, ok := configMap["response_format"].(map[string]any); ok {
 		// Извлекаем json_schema из response_format
-		if jsonSchema, ok := responseFormat["json_schema"].(map[string]interface{}); ok {
+		if jsonSchema, ok := responseFormat["json_schema"].(map[string]any); ok {
 			// Извлекаем name и schema из json_schema
 			name, _ := jsonSchema["name"].(string)
-			schema, _ := jsonSchema["schema"].(map[string]interface{})
+			schema, _ := jsonSchema["schema"].(map[string]any)
 
 			// strict=false когда в запросе есть tools (function-инструменты из MCP/calendar/sheets
 			// могут иметь схемы без additionalProperties:false, что несовместимо с strict=true).
@@ -451,8 +451,8 @@ func (c *OpenAIAgentClient) createResponseInternal(
 			_, hasTools := payload["tools"]
 			strictMode := !hasTools
 
-			payload["text"] = map[string]interface{}{
-				"format": map[string]interface{}{
+			payload["text"] = map[string]any{
+				"format": map[string]any{
 					"type":   "json_schema",
 					"name":   name,
 					"schema": schema,
@@ -487,8 +487,8 @@ func (c *OpenAIAgentClient) createResponseInternal(
 	// Читаем streaming ответ (Server-Sent Events)
 	fullText := ""
 	scanner := bufio.NewScanner(resp.Body)
-	var result map[string]interface{}
-	var tokenUsageData map[string]interface{} // Сохраняем информацию о токенах
+	var result map[string]any
+	var tokenUsageData map[string]any // Сохраняем информацию о токенах
 
 	// Накопление function calls (output_index -> function call с накопленными аргументами)
 	// По аналогии с документацией OpenAI для Responses API
@@ -511,7 +511,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		}
 
 		// Парсим JSON событие
-		var event map[string]interface{}
+		var event map[string]any
 		if err := json.Unmarshal([]byte(data), &event); err != nil {
 			//logger.Warn("[CreateResponse] Ошибка парсинга SSE события: %v, data: %s", err, data, userID)
 			continue
@@ -539,7 +539,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 			// Начало нового вызова функции - транслируем событие клиенту
 			if outputIndexFloat, ok := event["output_index"].(float64); ok {
 				outputIndex := int(outputIndexFloat)
-				if item, ok := event["item"].(map[string]interface{}); ok {
+				if item, ok := event["item"].(map[string]any); ok {
 					if itemType, ok := item["type"].(string); ok && itemType == "function_call" {
 						// Инициализируем функцию в map для накопления
 						functionCallsMap[outputIndex] = &StreamingFunctionCall{
@@ -607,7 +607,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 
 		case "response.output_item.done":
 			// Завершение элемента вывода - транслируем событие клиенту
-			if item, ok := event["item"].(map[string]interface{}); ok {
+			if item, ok := event["item"].(map[string]any); ok {
 				if itemType, ok := item["type"].(string); ok && itemType == "function_call" {
 					// Транслируем событие клиенту в формате OpenAI
 					if onDelta != nil {
@@ -624,7 +624,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		case "error":
 			// Обработка события ошибки
 			errorMsg := "unknown error"
-			if err, ok := event["error"].(map[string]interface{}); ok {
+			if err, ok := event["error"].(map[string]any); ok {
 				if msg, ok := err["message"].(string); ok {
 					errorMsg = msg
 				}
@@ -637,8 +637,8 @@ func (c *OpenAIAgentClient) createResponseInternal(
 
 		case "response.failed":
 			// Обработка события response.failed
-			if response, ok := event["response"].(map[string]interface{}); ok {
-				if lastError, ok := response["last_error"].(map[string]interface{}); ok {
+			if response, ok := event["response"].(map[string]any); ok {
+				if lastError, ok := response["last_error"].(map[string]any); ok {
 					errorMsg := "unknown error"
 					if msg, ok := lastError["message"].(string); ok {
 						errorMsg = msg
@@ -659,8 +659,8 @@ func (c *OpenAIAgentClient) createResponseInternal(
 
 			// Извлекаем и логируем информацию о расходе токенов
 			// В Responses API usage находится в event.response.usage
-			if response, ok := event["response"].(map[string]interface{}); ok {
-				if usage, ok := response["usage"].(map[string]interface{}); ok {
+			if response, ok := event["response"].(map[string]any); ok {
+				if usage, ok := response["usage"].(map[string]any); ok {
 					// Сохраняем usage для передачи клиенту
 					tokenUsageData = usage
 
@@ -681,7 +681,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 					//}
 					//
 					//// Извлекаем информацию о кэшированных токенах
-					//if inputDetails, ok := usage["input_tokens_details"].(map[string]interface{}); ok {
+					//if inputDetails, ok := usage["input_tokens_details"].(map[string]any); ok {
 					//	if val, ok := inputDetails["cached_tokens"].(float64); ok {
 					//		cachedTokens = int(val)
 					//	}
@@ -714,11 +714,11 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		//logger.Debug("🔧 [CreateResponse] Обнаружено %d function calls, начинаю обработку...", len(functionCallsMap), userID)
 
 		// Преобразуем map в массив (извлекаем все значения)
-		var functionCallsArray []interface{}
+		var functionCallsArray []any
 		//for outputIndex, fn := range functionCallsMap {
 		for _, fn := range functionCallsMap {
-			// Преобразуем *StreamingFunctionCall в map[string]interface{} для совместимости с onToolCall
-			toolCallMap := map[string]interface{}{
+			// Преобразуем *StreamingFunctionCall в map[string]any для совместимости с onToolCall
+			toolCallMap := map[string]any{
 				"call_id":   fn.CallID,
 				"name":      fn.Name,
 				"arguments": fn.Arguments,
@@ -740,13 +740,13 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		// Отправляем результаты функций клиенту через streaming (ДО обработки моделью)
 		if onDelta != nil {
 			for _, output := range toolOutputs {
-				if outputMap, ok := output.(map[string]interface{}); ok {
+				if outputMap, ok := output.(map[string]any); ok {
 					callID, _ := outputMap["call_id"].(string)
 					name, _ := outputMap["name"].(string)
 					content, _ := outputMap["content"].(string)
 
 					// Формируем JSON событие с результатом функции
-					functionResult := map[string]interface{}{
+					functionResult := map[string]any{
 						"type":      "function_result",
 						"call_id":   callID,
 						"name":      name,
@@ -776,21 +776,21 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		toolResultsContext.WriteString("\n\n## РЕЗУЛЬТАТЫ ВЫЗОВА ФУНКЦИЙ (используй их в финальном ответе!):\n```json\n")
 
 		// Формируем массив результатов в JSON
-		toolResults := make([]map[string]interface{}, 0, len(toolOutputs))
+		toolResults := make([]map[string]any, 0, len(toolOutputs))
 		for _, output := range toolOutputs {
-			if outputMap, ok := output.(map[string]interface{}); ok {
+			if outputMap, ok := output.(map[string]any); ok {
 				callID, _ := outputMap["call_id"].(string)
 				content, _ := outputMap["content"].(string)
 
 				// Парсим content как JSON если возможно
-				var contentJSON interface{}
+				var contentJSON any
 				if err := json.Unmarshal([]byte(content), &contentJSON); err == nil {
-					toolResults = append(toolResults, map[string]interface{}{
+					toolResults = append(toolResults, map[string]any{
 						"call_id": callID,
 						"result":  contentJSON,
 					})
 				} else {
-					toolResults = append(toolResults, map[string]interface{}{
+					toolResults = append(toolResults, map[string]any{
 						"call_id": callID,
 						"result":  content,
 					})
@@ -815,7 +815,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 
 	// Отправляем информацию о токенах клиенту в финальной дельте
 	if tokenUsageData != nil && onDelta != nil {
-		tokenUsage := map[string]interface{}{
+		tokenUsage := map[string]any{
 			"type":  "token_usage",
 			"usage": tokenUsageData,
 		}
@@ -826,7 +826,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 				//} else {
 				//	// Проверяем наличие cached_tokens для логирования
 				//	hasCachedTokens := false
-				//	if inputDetails, ok := tokenUsageData["input_tokens_details"].(map[string]interface{}); ok {
+				//	if inputDetails, ok := tokenUsageData["input_tokens_details"].(map[string]any); ok {
 				//		if cached, ok := inputDetails["cached_tokens"].(float64); ok && cached > 0 {
 				//			hasCachedTokens = true
 				//		}
@@ -845,7 +845,7 @@ func (c *OpenAIAgentClient) createResponseInternal(
 }
 
 // GenerateModelSchema генерирует JSON Schema с учётом параметров модели
-func GenerateModelSchema(hasMetaAction bool, hasOperator bool) map[string]interface{} {
+func GenerateModelSchema(hasMetaAction bool, hasOperator bool) map[string]any {
 	// Формируем список required полей
 	requiredFields := []string{"message", "action", "target"}
 
@@ -854,31 +854,31 @@ func GenerateModelSchema(hasMetaAction bool, hasOperator bool) map[string]interf
 		requiredFields = append(requiredFields, "operator")
 	}
 
-	schema := map[string]interface{}{
+	schema := map[string]any{
 		"type": "object",
-		"properties": map[string]interface{}{
-			"message": map[string]interface{}{
+		"properties": map[string]any{
+			"message": map[string]any{
 				"type": "string",
 			},
-			"action": map[string]interface{}{
+			"action": map[string]any{
 				"type": "object",
-				"properties": map[string]interface{}{
-					"send_files": map[string]interface{}{
+				"properties": map[string]any{
+					"send_files": map[string]any{
 						"type": "array",
-						"items": map[string]interface{}{
+						"items": map[string]any{
 							"type": "object",
-							"properties": map[string]interface{}{
-								"type": map[string]interface{}{
+							"properties": map[string]any{
+								"type": map[string]any{
 									"type": "string",
 									"enum": []string{"photo", "video", "audio", "doc"},
 								},
-								"Url": map[string]interface{}{
+								"Url": map[string]any{
 									"type": "string",
 								},
-								"file_name": map[string]interface{}{
+								"file_name": map[string]any{
 									"type": "string",
 								},
-								"caption": map[string]interface{}{
+								"caption": map[string]any{
 									"type": "string",
 								},
 							},
@@ -898,21 +898,21 @@ func GenerateModelSchema(hasMetaAction bool, hasOperator bool) map[string]interf
 	// Настраиваем поле target
 	if hasMetaAction {
 		// Если есть MetaAction - target может быть true или false
-		schema["properties"].(map[string]interface{})["target"] = map[string]interface{}{
+		schema["properties"].(map[string]any)["target"] = map[string]any{
 			"type": "boolean",
 		}
 	} else {
 		// Если нет MetaAction - target ВСЕГДА false
-		schema["properties"].(map[string]interface{})["target"] = map[string]interface{}{
+		schema["properties"].(map[string]any)["target"] = map[string]any{
 			"type": "boolean",
-			"enum": []interface{}{false},
+			"enum": []any{false},
 		}
 	}
 
 	// Настраиваем поле operator ТОЛЬКО если оно включено
 	if hasOperator {
 		// Если Operator включен - operator может быть true или false
-		schema["properties"].(map[string]interface{})["operator"] = map[string]interface{}{
+		schema["properties"].(map[string]any)["operator"] = map[string]any{
 			"type": "boolean",
 		}
 	}

@@ -57,7 +57,6 @@ func NewModelRouter(ctx context.Context, db DB, options ...RouterOption) *Router
 		log.Fatalf("DB не реализует create.DB, невозможна инициализация ModelRouter")
 	}
 
-
 	if router.google != nil {
 		if googleModel, ok := router.google.(interface{ SetUniversalModel(*create.UniversalModel) }); ok {
 			if router.modelsManager == nil {
@@ -190,7 +189,7 @@ func (r *Router) getModel(provider create.ProviderType) (Inter, error) {
 }
 
 // GetProviderModel возвращает модель конкретного провайдера (для тестирования)
-func (r *Router) GetProviderModel(provider create.ProviderType) interface{} {
+func (r *Router) GetProviderModel(provider create.ProviderType) any {
 	switch provider {
 	case create.ProviderOpenAI:
 		return r.openai

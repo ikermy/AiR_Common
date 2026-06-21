@@ -175,7 +175,7 @@ func (s *CalendarService) CreateEvent(params CreateEventParams) (string, error) 
 	//logger.Debug("Calendar: создано событие '%s' (ID: %s)", params.Title, createdEvent.Id, params.userID)
 
 	// Возвращаем JSON с результатом
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success":  true,
 		"event_id": createdEvent.Id,
 		"title":    createdEvent.Summary,
@@ -235,7 +235,7 @@ func (s *CalendarService) ListEvents(params ListEventsParams) (string, error) {
 	}
 
 	// Формируем результат
-	eventsList := make([]map[string]interface{}, 0, len(events.Items))
+	eventsList := make([]map[string]any, 0, len(events.Items))
 	for _, event := range events.Items {
 		startTime := event.Start.DateTime
 		if startTime == "" {
@@ -247,7 +247,7 @@ func (s *CalendarService) ListEvents(params ListEventsParams) (string, error) {
 			endTime = event.End.Date
 		}
 
-		eventsList = append(eventsList, map[string]interface{}{
+		eventsList = append(eventsList, map[string]any{
 			"id":          event.Id,
 			"title":       event.Summary,
 			"description": event.Description,
@@ -258,7 +258,7 @@ func (s *CalendarService) ListEvents(params ListEventsParams) (string, error) {
 		})
 	}
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success": true,
 		"count":   len(eventsList),
 		"events":  eventsList,
@@ -292,7 +292,7 @@ func (s *CalendarService) DeleteEvent(params DeleteEventParams) (string, error) 
 
 	//logger.Debug("Calendar: удалено событие ID: %s", params.EventID, params.userID)
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success": true,
 		"message": fmt.Sprintf("Событие %s успешно удалено", params.EventID),
 	}
@@ -338,7 +338,7 @@ func (s *CalendarService) GetEvent(params GetEventParams) (string, error) {
 		attendees = append(attendees, attendee.Email)
 	}
 
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success":     true,
 		"id":          event.Id,
 		"title":       event.Summary,

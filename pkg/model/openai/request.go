@@ -90,7 +90,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 		start := time.Now()
 		var found *RespModel
 
-		m.responders.Range(func(key, value interface{}) bool {
+		m.responders.Range(func(key, value any) bool {
 			rm := value.(*RespModel)
 			if rm.Chan != nil && rm.Chan.DialogID == dialogID {
 				found = rm
@@ -281,7 +281,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 			// Текстовые дельты приходят как обычные строки
 			if len(delta) > 0 && delta[0] == '{' {
 				// Это JSON событие - парсим для определения типа
-				var event map[string]interface{}
+				var event map[string]any
 				if err := json.Unmarshal([]byte(delta), &event); err == nil {
 					eventType, _ := event["type"].(string)
 
@@ -301,15 +301,15 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	}
 
 	// Создаём обработчик вызовов функций
-	onToolCall := func(toolCalls []interface{}) ([]interface{}, error) {
+	onToolCall := func(toolCalls []any) ([]any, error) {
 		//logger.Debug("🔧 [onToolCall] ВЫЗВАН! Количество tool calls: %d", len(toolCalls), userID)
 
-		var toolOutputs []interface{}
+		var toolOutputs []any
 
 		for _, toolCall := range toolCalls {
-			toolCallMap, ok := toolCall.(map[string]interface{})
+			toolCallMap, ok := toolCall.(map[string]any)
 			if !ok {
-				//logger.Warn("[onToolCall] Некорректный формат tool call #%d (ожидается map[string]interface{}): тип=%T, значение=%+v",
+				//logger.Warn("[onToolCall] Некорректный формат tool call #%d (ожидается map[string]any): тип=%T, значение=%+v",
 				//	i, toolCall, toolCall, userID)
 				continue
 			}
@@ -347,7 +347,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 
 			// Формируем tool output
 			// Для Responses API используем формат с role: "tool"
-			toolOutput := map[string]interface{}{
+			toolOutput := map[string]any{
 				"call_id": callID,
 				"content": result,
 			}
@@ -436,11 +436,11 @@ func (m *Model) createUserMessageWithFiles(text string, files []model.FileUpload
 	}
 
 	// Если есть файлы - формируем multi-part content
-	var contentParts []interface{}
+	var contentParts []any
 
 	// Добавляем текстовую часть
 	if text != "" {
-		contentParts = append(contentParts, map[string]interface{}{
+		contentParts = append(contentParts, map[string]any{
 			"type": "text",
 			"text": text,
 		})
@@ -450,9 +450,9 @@ func (m *Model) createUserMessageWithFiles(text string, files []model.FileUpload
 	for _, file := range files {
 		// Изображения с URL
 		if file.HasURL() && file.IsImageMimeType() {
-			contentParts = append(contentParts, map[string]interface{}{
+			contentParts = append(contentParts, map[string]any{
 				"type": "image_url",
-				"image_url": map[string]interface{}{
+				"image_url": map[string]any{
 					"url": file.URL,
 				},
 			})
@@ -514,7 +514,7 @@ func (m *Model) ConvertDialogToOpenAIFormat(dialogID uint64) ([]ChatMessage, err
 
 		// Извлекаем текст сообщения
 		var content string
-		if msgMap, ok := msg.Message.(map[string]interface{}); ok {
+		if msgMap, ok := msg.Message.(map[string]any); ok {
 			if msgText, ok := msgMap["message"].(string); ok {
 				content = msgText
 			} else {

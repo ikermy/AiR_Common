@@ -76,7 +76,7 @@ func GetChannel(
 	ctx context.Context,
 	waitChannels *sync.Map,
 	responders *sync.Map,
-	extractChannel func(interface{}) (*Ch, error),
+	extractChannel func(any) (*Ch, error),
 ) (*Ch, error) {
 	// Пытаемся получить или создать wait channel
 	waitChInterface, exists := waitChannels.Load(respId)
@@ -115,7 +115,7 @@ func GetChannel(
 func getTryChannel(
 	respId uint64,
 	responders *sync.Map,
-	extractChannel func(interface{}) (*Ch, error),
+	extractChannel func(any) (*Ch, error),
 ) (*Ch, error) {
 	val, ok := responders.Load(respId)
 	if !ok {
@@ -161,7 +161,7 @@ func GetRespIdBydialogIDUniversal(dialogID uint64, responders *sync.Map) (uint64
 	var foundRespId uint64
 	found := false
 
-	responders.Range(func(key, value interface{}) bool {
+	responders.Range(func(key, value any) bool {
 		// Используем интерфейс ChannelProvider для унифицированного доступа к каналу
 		if provider, ok := value.(ChannelProvider); ok {
 			mainChan := provider.GetChannel()
@@ -215,7 +215,7 @@ func CloseResponderChannelsUniversal(provider ChannelProvider) {
 func CleanupWaitChannelsUniversal(waitChannels *sync.Map, responders *sync.Map) int {
 	deletedCount := 0
 
-	waitChannels.Range(func(key, value interface{}) bool {
+	waitChannels.Range(func(key, value any) bool {
 		respId, ok := key.(uint64)
 		if !ok {
 			return true
@@ -245,10 +245,10 @@ func CleanupWaitChannelsUniversal(waitChannels *sync.Map, responders *sync.Map) 
 // CleanupAllRespondersUniversal универсальная функция для очистки всех респондеров при shutdown
 func CleanupAllRespondersUniversal(
 	responders *sync.Map,
-	cancelFunc func(interface{}),
-	closeChannels func(interface{}),
+	cancelFunc func(any),
+	closeChannels func(any),
 ) {
-	responders.Range(func(key, value interface{}) bool {
+	responders.Range(func(key, value any) bool {
 		// Отменяем контекст
 		if cancelFunc != nil {
 			cancelFunc(value)
@@ -274,9 +274,9 @@ func CleanupAllRespondersUniversal(
 
 // DialogMessageBase общая структура для парсинга истории диалога из БД
 type DialogMessageBase struct {
-	Creator   interface{} `json:"creator"`
-	Message   interface{} `json:"message"`
-	Timestamp string      `json:"timestamp"`
+	Creator   any    `json:"creator"`
+	Message   any    `json:"message"`
+	Timestamp string `json:"timestamp"`
 }
 
 // ParseDialogHistory парсит историю диалога из БД JSON в структурированный формат

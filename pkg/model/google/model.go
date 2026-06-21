@@ -68,14 +68,14 @@ func (r *GoogleRespModel) GetChannelMap() map[uint64]*model.Ch {
 // Примечание: Google модель хранит эмбеддинги в собственной БД (не в AllIds)
 // AllIds для Google всегда nil/пуст, поэтому конфигурация создаётся на основе AssistId
 type GoogleAgentConfig struct {
-	ModelId           uint64                   `json:"model_id"` // ID модели в БД для связи с vector_embeddings
-	ModelName         string                   `json:"model_name"`
-	SystemInstruction map[string]interface{}   `json:"system_instruction"`
-	GenerationConfig  map[string]interface{}   `json:"generation_config"`
-	Tools             []map[string]interface{} `json:"tools"`
-	VectorIds         []string                 `json:"vector_id,omitempty"`  // ID векторных хранилищ в Google Vector Store
-	FileIds           []interface{}            `json:"file_ids,omitempty"`   // ID файлов в Google Vector Store
-	HasVector         bool                     `json:"has_vector,omitempty"` // Флаг наличия Vector Store (управляется отдельно)
+	ModelId           uint64           `json:"model_id"` // ID модели в БД для связи с vector_embeddings
+	ModelName         string           `json:"model_name"`
+	SystemInstruction map[string]any   `json:"system_instruction"`
+	GenerationConfig  map[string]any   `json:"generation_config"`
+	Tools             []map[string]any `json:"tools"`
+	VectorIds         []string         `json:"vector_id,omitempty"`  // ID векторных хранилищ в Google Vector Store
+	FileIds           []any            `json:"file_ids,omitempty"`   // ID файлов в Google Vector Store
+	HasVector         bool             `json:"has_vector,omitempty"` // Флаг наличия Vector Store (управляется отдельно)
 
 	// Дополнительные возможности Google модели
 	Image      bool   `json:"image"`       // Генерация изображений (Imagen 3)
@@ -112,8 +112,8 @@ type CachedEmbedding struct {
 
 // GoogleContent представляет сообщение в формате Google Gemini
 type GoogleContent struct {
-	Role  string                   `json:"role"`  // "user" или "model"
-	Parts []map[string]interface{} `json:"parts"` // Массив частей сообщения
+	Role  string           `json:"role"`  // "user" или "model"
+	Parts []map[string]any `json:"parts"` // Массив частей сообщения
 }
 
 type Services struct {
@@ -285,8 +285,8 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 					}
 				}
 				if promptText != "" {
-					agentConfig.SystemInstruction = map[string]interface{}{
-						"parts": []map[string]interface{}{
+					agentConfig.SystemInstruction = map[string]any{
+						"parts": []map[string]any{
 							{
 								"text": promptText,
 							},
@@ -320,18 +320,18 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	// Формируем массив Tools на основе загруженных параметров
 	// ВАЖНО: WebSearch (google_search) добавляем только если он включен
 	if agentConfig.WebSearch {
-		agentConfig.Tools = append(agentConfig.Tools, map[string]interface{}{
-			"google_search": map[string]interface{}{},
+		agentConfig.Tools = append(agentConfig.Tools, map[string]any{
+			"google_search": map[string]any{},
 		})
 	}
 
 	// Формируем function_declarations от MCP сервера.
 	// Если MCP недоступен — function tools не добавляются (модель работает только с modelData.Prompt).
-	var functionDeclarations []map[string]interface{}
+	var functionDeclarations []map[string]any
 	if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
 		if mcpTools, fetchErr := mcpProvider.FetchToolsList(m.ctx, userID, create.ProviderGoogle); fetchErr == nil {
 			for _, t := range mcpTools {
-				functionDeclarations = append(functionDeclarations, map[string]interface{}{
+				functionDeclarations = append(functionDeclarations, map[string]any{
 					"name":        t.Name,
 					"description": t.Description,
 					"parameters":  t.InputSchema,
@@ -342,7 +342,7 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 
 	// 4. Если есть function_declarations, добавляем их в Tools
 	if len(functionDeclarations) > 0 {
-		agentConfig.Tools = append(agentConfig.Tools, map[string]interface{}{
+		agentConfig.Tools = append(agentConfig.Tools, map[string]any{
 			"function_declarations": functionDeclarations,
 		})
 	}
@@ -351,8 +351,8 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	// ВАЖНО: Google Gemini НЕ поддерживает одновременное использование
 	// function_declarations и code_execution в одном запросе
 	if agentConfig.Interpreter && len(functionDeclarations) == 0 {
-		agentConfig.Tools = append(agentConfig.Tools, map[string]interface{}{
-			"code_execution": map[string]interface{}{},
+		agentConfig.Tools = append(agentConfig.Tools, map[string]any{
+			"code_execution": map[string]any{},
 		})
 	}
 
@@ -399,7 +399,7 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 
 // CleanupExpiredResponders удаляет неактивных респондентов
 func (m *Model) CleanupExpiredResponders() {
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respId := key.(uint64)
 		respModel := value.(*GoogleRespModel)
 
@@ -429,7 +429,7 @@ func (m *Model) Shutdown(shutCh chan<- com.LogMsg) {
 	})
 
 	// Останавливаем все респонденты
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respModel := value.(*GoogleRespModel)
 		if respModel.Cancel != nil {
 			respModel.Cancel()
@@ -543,7 +543,7 @@ func (m *Model) GetCh(respId uint64) (*model.Ch, error) {
 		m.ctx,
 		&m.waitChannels,
 		&m.responders,
-		func(val interface{}) (*model.Ch, error) {
+		func(val any) (*model.Ch, error) {
 			respModel := val.(*GoogleRespModel)
 			return model.ExtractChannelWithPriority(respModel)
 		},
@@ -556,7 +556,7 @@ func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
 	var foundRespId uint64
 	found := false
 
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respModel := value.(*GoogleRespModel)
 
 		if respModel.Chan != nil && respModel.Chan.DialogID == dialogID {
@@ -621,7 +621,7 @@ func (m *Model) CleanUp() {
 
 // cleanupExpiredWaitChannels удаляет заблокированные waitChannels для несуществующих respId
 func (m *Model) cleanupExpiredWaitChannels() {
-	m.waitChannels.Range(func(key, value interface{}) bool {
+	m.waitChannels.Range(func(key, value any) bool {
 		respId := key.(uint64)
 		// Если респондента нет, это значит что waitCh никогда не будет закрыт
 		// Удаляем такой waitCh чтобы не было утечек памяти
@@ -765,7 +765,7 @@ func (m *Model) periodicFlush() {
 			expiredEmbeddingCount := 0
 
 			// Очистка кэша диалогов
-			m.dialogCache.Range(func(key, value interface{}) bool {
+			m.dialogCache.Range(func(key, value any) bool {
 				dialogID := key.(uint64)
 				cache := value.(*DialogCache)
 
@@ -779,7 +779,7 @@ func (m *Model) periodicFlush() {
 			})
 
 			// Очистка кэша эмбеддингов
-			m.embeddingCache.Range(func(key, value interface{}) bool {
+			m.embeddingCache.Range(func(key, value any) bool {
 				cached := value.(*CachedEmbedding)
 
 				if now.After(cached.ExpireAt) {
@@ -791,7 +791,7 @@ func (m *Model) periodicFlush() {
 			})
 
 			// Очистка истекших респондентов (аналогично OpenAI)
-			m.responders.Range(func(key, value interface{}) bool {
+			m.responders.Range(func(key, value any) bool {
 				responder := value.(*GoogleRespModel)
 				ttlExpired := responder.TTL.Before(now)
 
@@ -838,7 +838,7 @@ func (m *Model) periodicFlush() {
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
 func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 	var invalidatedCount int
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respModel := value.(*GoogleRespModel)
 		if respModel.Assist.UserID == userID {
 			m.responders.Delete(key)
@@ -857,7 +857,7 @@ func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 // 3. Удаляет респондентов из кэша
 func (m *Model) DisconnectUser(userID uint32) {
 	// Шаг 1: закрываем realtime-сессии пользователя
-	m.realtimeSessions.Range(func(key, value interface{}) bool {
+	m.realtimeSessions.Range(func(key, value any) bool {
 		rs := value.(*GoogleRealtimeSession)
 		if rs.userID == userID {
 			respId := key.(uint64)
@@ -867,7 +867,7 @@ func (m *Model) DisconnectUser(userID uint32) {
 	})
 
 	// Шаг 2: отменяем контексты и удаляем респондентов
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respModel := value.(*GoogleRespModel)
 		if respModel.Assist.UserID == userID {
 			if respModel.Cancel != nil {

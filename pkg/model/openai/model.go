@@ -65,13 +65,13 @@ func (r *RespModel) GetChannelMap() map[uint64]*model.Ch {
 // AgentConfig хранит конфигурацию агента для OpenAI модели
 // В отличие от Assistants API, конфигурация хранится в БД и передается с каждым запросом
 type AgentConfig struct {
-	ModelId        uint64                 `json:"model_id"`   // ID модели в БД
-	ModelName      string                 `json:"model_name"` // Имя модели OpenAI (gpt-4o-mini и т.д.)
-	SystemPrompt   string                 `json:"system_prompt"`
-	Tools          []interface{}          `json:"tools"`
-	ResponseFormat map[string]interface{} `json:"response_format"`
-	VectorStoreIds []string               `json:"vector_store_ids,omitempty"`
-	FileIds        []interface{}          `json:"file_ids,omitempty"`
+	ModelId        uint64         `json:"model_id"`   // ID модели в БД
+	ModelName      string         `json:"model_name"` // Имя модели OpenAI (gpt-4o-mini и т.д.)
+	SystemPrompt   string         `json:"system_prompt"`
+	Tools          []any          `json:"tools"`
+	ResponseFormat map[string]any `json:"response_format"`
+	VectorStoreIds []string       `json:"vector_store_ids,omitempty"`
+	FileIds        []any          `json:"file_ids,omitempty"`
 
 	// Дополнительные возможности
 	Search      bool   `json:"search"`      // Поиск по векторному хранилищу
@@ -111,11 +111,11 @@ type DialogCache struct {
 
 // ChatMessage представляет сообщение в формате OpenAI Chat Completions
 type ChatMessage struct {
-	Role       string        `json:"role"`    // "system", "user", "assistant"
-	Content    interface{}   `json:"content"` // string или массив content parts
-	Name       string        `json:"name,omitempty"`
-	ToolCalls  []interface{} `json:"tool_calls,omitempty"`
-	ToolCallId string        `json:"tool_call_id,omitempty"`
+	Role       string `json:"role"`    // "system", "user", "assistant"
+	Content    any    `json:"content"` // string или массив content parts
+	Name       string `json:"name,omitempty"`
+	ToolCalls  []any  `json:"tool_calls,omitempty"`
+	ToolCallId string `json:"tool_call_id,omitempty"`
 }
 
 type Services struct {
@@ -288,7 +288,7 @@ func (m *Model) GetCh(respId uint64) (*model.Ch, error) {
 		m.ctx,
 		&m.waitChannels,
 		&m.responders,
-		func(val interface{}) (*model.Ch, error) {
+		func(val any) (*model.Ch, error) {
 			respModel := val.(*RespModel)
 			return model.ExtractChannelWithPriority(respModel)
 		},
@@ -384,8 +384,8 @@ func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool
 		var vecIds create.VecIds
 		if err := json.Unmarshal(found.AllIds, &vecIds); err == nil {
 			agentConfig.VectorStoreIds = vecIds.VectorId
-			// Конвертируем []Ids в []interface{}
-			agentConfig.FileIds = make([]interface{}, len(found.FileIds))
+			// Конвертируем []Ids в []any
+			agentConfig.FileIds = make([]any, len(found.FileIds))
 			for i, fileId := range found.FileIds {
 				agentConfig.FileIds[i] = fileId
 			}
@@ -433,14 +433,14 @@ func (m *Model) buildAgentConfiguration(userID uint32, config *AgentConfig, comp
 	// TOOLS — нативные OpenAI инструменты (всегда локально).
 	// Function-инструменты добавляются только если MCP доступен.
 	// =========================================================================
-	var tools []interface{}
+	var tools []any
 
 	// Code Interpreter — нативный OpenAI инструмент, не через MCP
 	// ВАЖНО: Responses API требует поле "container" для code_interpreter!
 	if config.Interpreter {
-		tools = append(tools, map[string]interface{}{
+		tools = append(tools, map[string]any{
 			"type": "code_interpreter",
-			"container": map[string]interface{}{
+			"container": map[string]any{
 				"type":         "auto",
 				"memory_limit": "1g",
 			},
@@ -449,7 +449,7 @@ func (m *Model) buildAgentConfiguration(userID uint32, config *AgentConfig, comp
 
 	// Web Search — нативный OpenAI инструмент, не через MCP
 	if config.WebSearch {
-		tools = append(tools, map[string]interface{}{
+		tools = append(tools, map[string]any{
 			"type": "web_search",
 		})
 	}
@@ -459,7 +459,7 @@ func (m *Model) buildAgentConfiguration(userID uint32, config *AgentConfig, comp
 		if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
 			if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, userID, create.ProviderOpenAI); err == nil {
 				for _, t := range mcpTools {
-					tools = append(tools, map[string]interface{}{
+					tools = append(tools, map[string]any{
 						"type":        "function",
 						"name":        t.Name,
 						"description": t.Description,
@@ -478,9 +478,9 @@ func (m *Model) buildAgentConfiguration(userID uint32, config *AgentConfig, comp
 	hasOperator := config.Operator
 	dynamicSchema := create.GenerateModelSchema(hasMetaAction, hasOperator)
 
-	config.ResponseFormat = map[string]interface{}{
+	config.ResponseFormat = map[string]any{
 		"type": "json_schema",
-		"json_schema": map[string]interface{}{
+		"json_schema": map[string]any{
 			"name":   "assist_response",
 			"strict": true,
 			"schema": dynamicSchema,
@@ -512,7 +512,7 @@ func (m *Model) periodicFlush() {
 			now := time.Now()
 			flushedCount := 0
 
-			m.dialogCache.Range(func(key, value interface{}) bool {
+			m.dialogCache.Range(func(key, value any) bool {
 				cache := value.(*DialogCache)
 				if cache.ExpireAt.Before(now) {
 					m.dialogCache.Delete(key)
@@ -692,7 +692,7 @@ func (m *Model) Shutdown(shutCh chan<- com.LogMsg) {
 		}
 
 		// Закрываем все активные Realtime-сессии
-		m.realtimeSessions.Range(func(key, value interface{}) bool {
+		m.realtimeSessions.Range(func(key, value any) bool {
 			if rs, ok := value.(*RealtimeSession); ok {
 				rs.cancel()
 				_ = rs.openaiConn.Close()
@@ -780,7 +780,7 @@ func (m *Model) CleanUp() {
 			deletedRespCount := 0
 			checkedRespCount := 0
 
-			m.responders.Range(func(key, value interface{}) bool {
+			m.responders.Range(func(key, value any) bool {
 				responder := value.(*RespModel)
 				checkedRespCount++
 				ttlExpired := responder.TTL.Before(now)
@@ -828,12 +828,12 @@ func (m *Model) cleanupWaitChannels() {
 func (m *Model) cleanupAllResponders() {
 	model.CleanupAllRespondersUniversal(
 		&m.responders,
-		func(val interface{}) {
+		func(val any) {
 			if respModel, ok := val.(*RespModel); ok && respModel.Cancel != nil {
 				respModel.Cancel()
 			}
 		},
-		func(val interface{}) {
+		func(val any) {
 			if respModel, ok := val.(*RespModel); ok {
 				m.closeResponderChannels(respModel)
 			}
@@ -850,7 +850,7 @@ func (m *Model) cleanupAllResponders() {
 // Удаляет все кэшированные респондентов пользователя из m.responders
 func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 	var invalidatedCount int
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respModel := value.(*RespModel)
 		if respModel.Assist.UserID == userID {
 			// Удаляем кэшированный респондент для этого пользователя
@@ -871,7 +871,7 @@ func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 // 3. Удаляет респондентов из кэша
 func (m *Model) DisconnectUser(userID uint32) {
 	// Шаг 1: закрываем realtime-сессии пользователя
-	m.realtimeSessions.Range(func(key, value interface{}) bool {
+	m.realtimeSessions.Range(func(key, value any) bool {
 		rs := value.(*RealtimeSession)
 		if rs.userID == userID {
 			respId := key.(uint64)
@@ -881,7 +881,7 @@ func (m *Model) DisconnectUser(userID uint32) {
 	})
 
 	// Шаг 2: отменяем контексты и удаляем респондентов
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respModel := value.(*RespModel)
 		if respModel.Assist.UserID == userID {
 			if respModel.Cancel != nil {

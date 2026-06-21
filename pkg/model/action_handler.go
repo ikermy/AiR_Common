@@ -42,7 +42,7 @@ func (h *UniversalActionHandler) mcpURL() string {
 // UserID и provider передаются через заголовок X-Session-ID — инструменты не получают user_id в аргументах.
 func (h *UniversalActionHandler) callMCP(ctx context.Context, toolName, arguments string, provider create.ProviderType, userID uint32) string {
 	// Парсим строку аргументов в map
-	var args map[string]interface{}
+	var args map[string]any
 	if arguments != "" && arguments != "{}" {
 		if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 			result, _ := json.Marshal(map[string]string{"error": "invalid arguments: " + err.Error()})
@@ -50,15 +50,15 @@ func (h *UniversalActionHandler) callMCP(ctx context.Context, toolName, argument
 		}
 	}
 	if args == nil {
-		args = map[string]interface{}{}
+		args = map[string]any{}
 	}
 
 	// Строим JSON-RPC запрос
-	reqBody := map[string]interface{}{
+	reqBody := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "1",
 		"method":  "tools/call",
-		"params": map[string]interface{}{
+		"params": map[string]any{
 			"name":      toolName,
 			"arguments": args,
 		},
@@ -132,8 +132,8 @@ func (h *UniversalActionHandler) callMCP(ctx context.Context, toolName, argument
 
 // callMCPMethod отправляет произвольный JSON-RPC запрос к MCP серверу.
 // Используется как внутренний транспорт для FetchToolsList и FetchSystemPrompt.
-func (h *UniversalActionHandler) callMCPMethod(ctx context.Context, method string, params map[string]interface{}, provider create.ProviderType, userID uint32) ([]byte, error) {
-	reqBody := map[string]interface{}{
+func (h *UniversalActionHandler) callMCPMethod(ctx context.Context, method string, params map[string]any, provider create.ProviderType, userID uint32) ([]byte, error) {
+	reqBody := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "1",
 		"method":  method,
@@ -169,7 +169,7 @@ func (h *UniversalActionHandler) callMCPMethod(ctx context.Context, method strin
 // function-инструменты для данного пользователя (без user_id в inputSchema).
 // Нативные OpenAI инструменты (code_interpreter, web_search) не включаются.
 func (h *UniversalActionHandler) FetchToolsList(ctx context.Context, userID uint32, provider create.ProviderType) ([]MCPToolDefinition, error) {
-	body, err := h.callMCPMethod(ctx, "tools/list", map[string]interface{}{}, provider, userID)
+	body, err := h.callMCPMethod(ctx, "tools/list", map[string]any{}, provider, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -177,9 +177,9 @@ func (h *UniversalActionHandler) FetchToolsList(ctx context.Context, userID uint
 	var rpcResp struct {
 		Result *struct {
 			Tools []struct {
-				Name        string      `json:"name"`
-				Description string      `json:"description"`
-				InputSchema interface{} `json:"inputSchema"`
+				Name        string `json:"name"`
+				Description string `json:"description"`
+				InputSchema any    `json:"inputSchema"`
 			} `json:"tools"`
 		} `json:"result"`
 		Error *struct {
@@ -213,7 +213,7 @@ func (h *UniversalActionHandler) FetchToolsList(ctx context.Context, userID uint
 // и возвращает prompt hint для данного пользователя.
 // Вызывающий код сам добавляет modelData.Prompt перед ним.
 func (h *UniversalActionHandler) FetchSystemPrompt(ctx context.Context, userID uint32, provider create.ProviderType) (string, error) {
-	body, err := h.callMCPMethod(ctx, "prompts/get", map[string]interface{}{"name": "system"}, provider, userID)
+	body, err := h.callMCPMethod(ctx, "prompts/get", map[string]any{"name": "system"}, provider, userID)
 	if err != nil {
 		return "", err
 	}

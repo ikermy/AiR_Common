@@ -33,10 +33,10 @@ func mcpClient() *http.Client {
 }
 
 // mcpRequest отправляет JSON-RPC запрос к MCP серверу и возвращает тело ответа.
-func mcpRequest(t *testing.T, method string, params interface{}, withSession bool) map[string]interface{} {
+func mcpRequest(t *testing.T, method string, params any, withSession bool) map[string]any {
 	t.Helper()
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "1",
 		"method":  method,
@@ -61,7 +61,7 @@ func mcpRequest(t *testing.T, method string, params interface{}, withSession boo
 
 	t.Logf("→ %s  ← HTTP %d  body: %s", method, resp.StatusCode, string(data))
 
-	var result map[string]interface{}
+	var result map[string]any
 	require.NoError(t, json.Unmarshal(data, &result), "ответ не является валидным JSON")
 	return result
 }
@@ -70,7 +70,7 @@ func mcpRequest(t *testing.T, method string, params interface{}, withSession boo
 func mcpNotification(t *testing.T, method string) {
 	t.Helper()
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  method,
 	}
@@ -95,16 +95,16 @@ func mcpNotification(t *testing.T, method string) {
 // ============================================================================
 
 func TestMCP_Initialize(t *testing.T) {
-	resp := mcpRequest(t, "initialize", map[string]interface{}{
+	resp := mcpRequest(t, "initialize", map[string]any{
 		"protocolVersion": "2025-03-26",
-		"clientInfo": map[string]interface{}{
+		"clientInfo": map[string]any{
 			"name":    "AiR-Common-Test",
 			"version": "1.0.0",
 		},
-		"capabilities": map[string]interface{}{},
+		"capabilities": map[string]any{},
 	}, false)
 
-	result, ok := resp["result"].(map[string]interface{})
+	result, ok := resp["result"].(map[string]any)
 	require.True(t, ok, "result должен присутствовать в ответе initialize")
 
 	assert.NotEmpty(t, result["serverInfo"], "serverInfo должен быть непустым")
@@ -121,21 +121,21 @@ func TestMCP_NotificationsInitialized(t *testing.T) {
 // ============================================================================
 
 func TestMCP_ToolsList(t *testing.T) {
-	resp := mcpRequest(t, "tools/list", map[string]interface{}{}, true)
+	resp := mcpRequest(t, "tools/list", map[string]any{}, true)
 
 	require.Nil(t, resp["error"], "tools/list не должен возвращать ошибку")
 
-	result, ok := resp["result"].(map[string]interface{})
+	result, ok := resp["result"].(map[string]any)
 	require.True(t, ok, "result должен присутствовать")
 
-	tools, ok := result["tools"].([]interface{})
+	tools, ok := result["tools"].([]any)
 	require.True(t, ok, "result.tools должен быть массивом")
 	require.NotEmpty(t, tools, "список инструментов не должен быть пустым для uid=%d", testUID)
 
 	t.Logf("Инструментов: %d", len(tools))
 	toolNames := make(map[string]bool, len(tools))
 	for _, rawTool := range tools {
-		tool, ok := rawTool.(map[string]interface{})
+		tool, ok := rawTool.(map[string]any)
 		require.True(t, ok)
 		name, _ := tool["name"].(string)
 		toolNames[name] = true
@@ -147,8 +147,8 @@ func TestMCP_ToolsList(t *testing.T) {
 		assert.NotNil(t, tool["inputSchema"], "inputSchema инструмента %q не должна быть nil", name)
 
 		// user_id НЕ должен быть в параметрах — MCP берёт его из X-Session-ID
-		if schema, ok := tool["inputSchema"].(map[string]interface{}); ok {
-			if props, ok := schema["properties"].(map[string]interface{}); ok {
+		if schema, ok := tool["inputSchema"].(map[string]any); ok {
+			if props, ok := schema["properties"].(map[string]any); ok {
 				_, hasUID := props["user_id"]
 				assert.False(t, hasUID,
 					"инструмент %q не должен содержать user_id в inputSchema", name)
@@ -168,11 +168,11 @@ func TestMCP_ToolsList(t *testing.T) {
 }
 
 func TestMCP_ToolsList_NoSession(t *testing.T) {
-	resp := mcpRequest(t, "tools/list", map[string]interface{}{}, false)
+	resp := mcpRequest(t, "tools/list", map[string]any{}, false)
 	// Без X-Session-ID должна быть ошибка
 	assert.NotNil(t, resp["error"],
 		"tools/list без X-Session-ID должен вернуть ошибку")
-	if rpcErr, ok := resp["error"].(map[string]interface{}); ok {
+	if rpcErr, ok := resp["error"].(map[string]any); ok {
 		t.Logf("Код ошибки: %v, Сообщение: %v", rpcErr["code"], rpcErr["message"])
 	}
 }
@@ -182,9 +182,9 @@ func TestMCP_ToolsList_NoSession(t *testing.T) {
 // ============================================================================
 
 func TestMCP_Call_GetCurrentTime(t *testing.T) {
-	resp := mcpRequest(t, "tools/call", map[string]interface{}{
+	resp := mcpRequest(t, "tools/call", map[string]any{
 		"name":      "get_current_time",
-		"arguments": map[string]interface{}{},
+		"arguments": map[string]any{},
 	}, true)
 
 	require.Nil(t, resp["error"], "get_current_time не должен возвращать ошибку протокола")
@@ -196,9 +196,9 @@ func TestMCP_Call_GetCurrentTime(t *testing.T) {
 }
 
 func TestMCP_Call_GetS3Files(t *testing.T) {
-	resp := mcpRequest(t, "tools/call", map[string]interface{}{
+	resp := mcpRequest(t, "tools/call", map[string]any{
 		"name":      "get_s3_files",
-		"arguments": map[string]interface{}{},
+		"arguments": map[string]any{},
 	}, true)
 
 	require.Nil(t, resp["error"], "get_s3_files не должен возвращать ошибку протокола")
@@ -211,9 +211,9 @@ func TestMCP_Call_GetS3Files(t *testing.T) {
 }
 
 func TestMCP_Call_UnknownTool(t *testing.T) {
-	resp := mcpRequest(t, "tools/call", map[string]interface{}{
+	resp := mcpRequest(t, "tools/call", map[string]any{
 		"name":      "non_existent_tool_xyz",
-		"arguments": map[string]interface{}{},
+		"arguments": map[string]any{},
 	}, true)
 
 	// Должна быть ошибка: инструмент не существует
@@ -222,7 +222,7 @@ func TestMCP_Call_UnknownTool(t *testing.T) {
 		t.Logf("Ожидаемая ошибка протокола: %v", rpcErr)
 	} else {
 		// Или isError=true в result
-		if result, ok := resp["result"].(map[string]interface{}); ok {
+		if result, ok := resp["result"].(map[string]any); ok {
 			isError, _ := result["isError"].(bool)
 			assert.True(t, isError, "неизвестный инструмент должен вернуть isError=true")
 		}
@@ -234,28 +234,28 @@ func TestMCP_Call_UnknownTool(t *testing.T) {
 // ============================================================================
 
 func TestMCP_PromptsList(t *testing.T) {
-	resp := mcpRequest(t, "prompts/list", map[string]interface{}{}, true)
+	resp := mcpRequest(t, "prompts/list", map[string]any{}, true)
 
 	if rpcErr := resp["error"]; rpcErr != nil {
 		t.Skipf("prompts/list не реализован (ожидается): %v", rpcErr)
 	}
 
-	result, ok := resp["result"].(map[string]interface{})
+	result, ok := resp["result"].(map[string]any)
 	require.True(t, ok)
 
-	prompts, ok := result["prompts"].([]interface{})
+	prompts, ok := result["prompts"].([]any)
 	require.True(t, ok, "result.prompts должен быть массивом")
 
 	t.Logf("Промптов: %d", len(prompts))
 	for _, p := range prompts {
-		if pm, ok := p.(map[string]interface{}); ok {
+		if pm, ok := p.(map[string]any); ok {
 			t.Logf("  • %s: %s", pm["name"], pm["description"])
 		}
 	}
 }
 
 func TestMCP_PromptsGet_System(t *testing.T) {
-	resp := mcpRequest(t, "prompts/get", map[string]interface{}{
+	resp := mcpRequest(t, "prompts/get", map[string]any{
 		"name": "system",
 	}, true)
 
@@ -263,17 +263,17 @@ func TestMCP_PromptsGet_System(t *testing.T) {
 		t.Skipf("prompts/get не реализован (ожидается): %v", rpcErr)
 	}
 
-	result, ok := resp["result"].(map[string]interface{})
+	result, ok := resp["result"].(map[string]any)
 	require.True(t, ok)
 
-	messages, ok := result["messages"].([]interface{})
+	messages, ok := result["messages"].([]any)
 	require.True(t, ok, "result.messages должен быть массивом")
 	require.NotEmpty(t, messages, "messages не должен быть пустым")
 
-	first, ok := messages[0].(map[string]interface{})
+	first, ok := messages[0].(map[string]any)
 	require.True(t, ok)
 
-	content, ok := first["content"].(map[string]interface{})
+	content, ok := first["content"].(map[string]any)
 	require.True(t, ok, "content должен присутствовать в первом сообщении")
 
 	text, _ := content["text"].(string)
@@ -295,7 +295,7 @@ func TestMCP_PromptsGet_System(t *testing.T) {
 }
 
 func TestMCP_PromptsGet_UnknownName(t *testing.T) {
-	resp := mcpRequest(t, "prompts/get", map[string]interface{}{
+	resp := mcpRequest(t, "prompts/get", map[string]any{
 		"name": "non_existent_prompt",
 	}, true)
 
@@ -313,10 +313,10 @@ func TestMCP_PromptsGet_UnknownName(t *testing.T) {
 
 func TestMCP_FullCycle(t *testing.T) {
 	t.Log("=== Шаг 1: initialize ===")
-	initResp := mcpRequest(t, "initialize", map[string]interface{}{
+	initResp := mcpRequest(t, "initialize", map[string]any{
 		"protocolVersion": "2025-03-26",
-		"clientInfo":      map[string]interface{}{"name": "test", "version": "0.1"},
-		"capabilities":    map[string]interface{}{},
+		"clientInfo":      map[string]any{"name": "test", "version": "0.1"},
+		"capabilities":    map[string]any{},
 	}, false)
 	require.Nil(t, initResp["error"])
 
@@ -324,17 +324,17 @@ func TestMCP_FullCycle(t *testing.T) {
 	mcpNotification(t, "notifications/initialized")
 
 	t.Log("=== Шаг 3: tools/list ===")
-	listResp := mcpRequest(t, "tools/list", map[string]interface{}{}, true)
+	listResp := mcpRequest(t, "tools/list", map[string]any{}, true)
 	require.Nil(t, listResp["error"])
 
-	listResult := listResp["result"].(map[string]interface{})
-	tools := listResult["tools"].([]interface{})
+	listResult := listResp["result"].(map[string]any)
+	tools := listResult["tools"].([]any)
 	require.NotEmpty(t, tools)
 
 	// Собираем имена инструментов
 	toolNames := make([]string, 0, len(tools))
 	for _, raw := range tools {
-		if tm, ok := raw.(map[string]interface{}); ok {
+		if tm, ok := raw.(map[string]any); ok {
 			if name, ok := tm["name"].(string); ok {
 				toolNames = append(toolNames, name)
 			}
@@ -343,9 +343,9 @@ func TestMCP_FullCycle(t *testing.T) {
 	t.Logf("Доступные инструменты: %v", toolNames)
 
 	t.Log("=== Шаг 4: tools/call get_current_time ===")
-	timeResp := mcpRequest(t, "tools/call", map[string]interface{}{
+	timeResp := mcpRequest(t, "tools/call", map[string]any{
 		"name":      "get_current_time",
-		"arguments": map[string]interface{}{},
+		"arguments": map[string]any{},
 	}, true)
 	require.Nil(t, timeResp["error"])
 	timeResult := requireToolResult(t, timeResp)
@@ -360,17 +360,17 @@ func TestMCP_FullCycle(t *testing.T) {
 // ============================================================================
 
 // requireToolResult извлекает text из result.content[0].text и проверяет структуру.
-func requireToolResult(t *testing.T, resp map[string]interface{}) string {
+func requireToolResult(t *testing.T, resp map[string]any) string {
 	t.Helper()
 
-	result, ok := resp["result"].(map[string]interface{})
+	result, ok := resp["result"].(map[string]any)
 	require.True(t, ok, "result должен присутствовать в ответе tools/call, got: %v", resp)
 
-	content, ok := result["content"].([]interface{})
+	content, ok := result["content"].([]any)
 	require.True(t, ok, "result.content должен быть массивом")
 	require.NotEmpty(t, content, "result.content не должен быть пустым")
 
-	first, ok := content[0].(map[string]interface{})
+	first, ok := content[0].(map[string]any)
 	require.True(t, ok)
 
 	assert.Equal(t, "text", first["type"], "тип контента должен быть text")
@@ -428,13 +428,13 @@ func TestMCP_ErrorCodes(t *testing.T) {
 			data, _ := io.ReadAll(resp.Body)
 			t.Logf("%s → HTTP %d: %s", tc.desc, resp.StatusCode, string(data))
 
-			var result map[string]interface{}
+			var result map[string]any
 			if err := json.Unmarshal(data, &result); err != nil {
 				// Для -32700 сервер может вернуть не-JSON, это допустимо
 				return
 			}
 
-			if rpcErr, ok := result["error"].(map[string]interface{}); ok {
+			if rpcErr, ok := result["error"].(map[string]any); ok {
 				code, _ := rpcErr["code"].(float64)
 				assert.Equal(t, tc.wantErrCode, code,
 					"%s: ожидался код %v, получен %v", tc.desc, tc.wantErrCode, code)
@@ -446,13 +446,13 @@ func TestMCP_ErrorCodes(t *testing.T) {
 // BenchmarkMCP_GetCurrentTime измеряет латентность вызова get_current_time.
 func BenchmarkMCP_GetCurrentTime(b *testing.B) {
 	client := mcpClient()
-	body := map[string]interface{}{
+	body := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "1",
 		"method":  "tools/call",
-		"params": map[string]interface{}{
+		"params": map[string]any{
 			"name":      "get_current_time",
-			"arguments": map[string]interface{}{},
+			"arguments": map[string]any{},
 		},
 	}
 	raw, _ := json.Marshal(body)

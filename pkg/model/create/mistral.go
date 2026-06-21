@@ -337,7 +337,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 		MistralSchemaJSON + "\n\n" +
 		"Always return response strictly in this JSON format. You may use markdown: ```json\\n{...}\\n```"
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"name":         modelData.Name,
 		"model":        modelData.GptType.Name,
 		"description":  description,
@@ -347,14 +347,14 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	// ============================================================================
 	// FUNCTION TOOLS — только от MCP. Нет fallback-хардкода.
 	// ============================================================================
-	var tools []map[string]interface{}
+	var tools []map[string]any
 
 	if m.toolsFetcher != nil {
 		if mcpFunctions, fetchErr := m.toolsFetcher(m.ctx, userID, ProviderMistral); fetchErr == nil {
 			for _, f := range mcpFunctions {
-				tools = append(tools, map[string]interface{}{
+				tools = append(tools, map[string]any{
 					"type": "function",
-					"function": map[string]interface{}{
+					"function": map[string]any{
 						"name":        f.Name,
 						"description": f.Description,
 						"parameters":  f.Parameters,
@@ -368,18 +368,18 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 	// BUILT-IN MISTRAL TOOLS — нативные возможности API, не MCP-функции.
 	// ============================================================================
 	if modelData.Interpreter {
-		tools = append(tools, map[string]interface{}{"type": "code_interpreter"})
+		tools = append(tools, map[string]any{"type": "code_interpreter"})
 	}
 	if modelData.Image {
-		tools = append(tools, map[string]interface{}{"type": "image_generation"})
+		tools = append(tools, map[string]any{"type": "image_generation"})
 	}
 	if modelData.WebSearch {
-		tools = append(tools, map[string]interface{}{"type": "web_search"})
+		tools = append(tools, map[string]any{"type": "web_search"})
 	}
 
 	// document_library — если включён поиск по документам
 	if modelData.Search || len(fileIDs) > 0 || len(modelData.VecIds.VectorId) > 0 {
-		documentLibraryTool := map[string]interface{}{
+		documentLibraryTool := map[string]any{
 			"type": "document_library",
 		}
 		if len(modelData.VecIds.VectorId) > 0 {
@@ -420,7 +420,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 		return UMCR{}, fmt.Errorf("API вернул статус %d: %s", resp.StatusCode, string(responseBody))
 	}
 
-	var response map[string]interface{}
+	var response map[string]any
 	if err := json.Unmarshal(responseBody, &response); err != nil {
 		return UMCR{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}

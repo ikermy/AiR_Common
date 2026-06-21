@@ -34,17 +34,17 @@ func TestMCP_GOAuth_CalendarSheetsFromMCP(t *testing.T) {
 	// Mistral (23:2) имеет GOAuth.Calendar=true и GOAuth.Sheets=true
 	mistralSession := "23:2"
 
-	resp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, mistralSession)
+	resp := mcpRequestWithSession(t, "tools/list", map[string]any{}, mistralSession)
 	require.Nil(t, resp["error"], "tools/list не должен возвращать ошибку")
 
-	result, ok := resp["result"].(map[string]interface{})
+	result, ok := resp["result"].(map[string]any)
 	require.True(t, ok)
-	tools, ok := result["tools"].([]interface{})
+	tools, ok := result["tools"].([]any)
 	require.True(t, ok)
 
 	toolNames := make(map[string]bool, len(tools))
 	for _, rawTool := range tools {
-		tool, _ := rawTool.(map[string]interface{})
+		tool, _ := rawTool.(map[string]any)
 		name, _ := tool["name"].(string)
 		toolNames[name] = true
 	}
@@ -75,17 +75,17 @@ func TestMCP_GOAuth_CalendarSheetsFromMCP(t *testing.T) {
 func TestMCP_GOAuth_GoogleProviderToolsFromMCP(t *testing.T) {
 	googleSession := "23:3"
 
-	resp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, googleSession)
+	resp := mcpRequestWithSession(t, "tools/list", map[string]any{}, googleSession)
 	require.Nil(t, resp["error"])
 
-	result, ok := resp["result"].(map[string]interface{})
+	result, ok := resp["result"].(map[string]any)
 	require.True(t, ok)
-	tools, ok := result["tools"].([]interface{})
+	tools, ok := result["tools"].([]any)
 	require.True(t, ok)
 
 	toolNames := make(map[string]bool, len(tools))
 	for _, rawTool := range tools {
-		tool, _ := rawTool.(map[string]interface{})
+		tool, _ := rawTool.(map[string]any)
 		name, _ := tool["name"].(string)
 		toolNames[name] = true
 		t.Logf("[Google] tool: %s", name)
@@ -118,7 +118,7 @@ func TestMCP_GOAuth_SystemPromptNoHardcodedCalendarSheets(t *testing.T) {
 	for _, prov := range allProviders {
 		prov := prov
 		t.Run(prov.name, func(t *testing.T) {
-			resp := mcpRequestWithSession(t, "prompts/get", map[string]interface{}{
+			resp := mcpRequestWithSession(t, "prompts/get", map[string]any{
 				"name": "system",
 			}, prov.session)
 
@@ -126,17 +126,17 @@ func TestMCP_GOAuth_SystemPromptNoHardcodedCalendarSheets(t *testing.T) {
 				t.Skipf("[%s] prompts/get не реализован: %v", prov.name, rpcErr)
 			}
 
-			result, ok := resp["result"].(map[string]interface{})
+			result, ok := resp["result"].(map[string]any)
 			require.True(t, ok)
 
-			messages, ok := result["messages"].([]interface{})
+			messages, ok := result["messages"].([]any)
 			require.True(t, ok)
 			require.NotEmpty(t, messages)
 
-			first, ok := messages[0].(map[string]interface{})
+			first, ok := messages[0].(map[string]any)
 			require.True(t, ok)
 
-			content, ok := first["content"].(map[string]interface{})
+			content, ok := first["content"].(map[string]any)
 			require.True(t, ok)
 
 			text, _ := content["text"].(string)
@@ -170,17 +170,17 @@ func TestMCP_GOAuth_SystemPromptNoHardcodedCalendarSheets(t *testing.T) {
 
 func TestMCP_GOAuth_CalendarToolSchemaNouserID(t *testing.T) {
 	// Mistral имеет calendar инструменты
-	resp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, "23:2")
+	resp := mcpRequestWithSession(t, "tools/list", map[string]any{}, "23:2")
 	require.Nil(t, resp["error"])
 
-	result, ok := resp["result"].(map[string]interface{})
+	result, ok := resp["result"].(map[string]any)
 	require.True(t, ok)
-	tools, ok := result["tools"].([]interface{})
+	tools, ok := result["tools"].([]any)
 	require.True(t, ok)
 
 	calendarChecked := 0
 	for _, rawTool := range tools {
-		tool, _ := rawTool.(map[string]interface{})
+		tool, _ := rawTool.(map[string]any)
 		name, _ := tool["name"].(string)
 
 		if !strings.HasPrefix(name, "calendar_") && !strings.HasPrefix(name, "sheets_") {
@@ -188,11 +188,11 @@ func TestMCP_GOAuth_CalendarToolSchemaNouserID(t *testing.T) {
 		}
 
 		calendarChecked++
-		schema, ok := tool["inputSchema"].(map[string]interface{})
+		schema, ok := tool["inputSchema"].(map[string]any)
 		if !ok {
 			continue
 		}
-		props, ok := schema["properties"].(map[string]interface{})
+		props, ok := schema["properties"].(map[string]any)
 		if !ok {
 			continue
 		}
@@ -220,14 +220,14 @@ func TestMCP_GOAuth_CalendarCall(t *testing.T) {
 	mistralSession := "23:2"
 
 	// Сначала убеждаемся что инструмент доступен
-	listResp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, mistralSession)
+	listResp := mcpRequestWithSession(t, "tools/list", map[string]any{}, mistralSession)
 	require.Nil(t, listResp["error"])
 
-	listResult, _ := listResp["result"].(map[string]interface{})
-	tools, _ := listResult["tools"].([]interface{})
+	listResult, _ := listResp["result"].(map[string]any)
+	tools, _ := listResult["tools"].([]any)
 	hasCalendar := false
 	for _, rawTool := range tools {
-		if tool, _ := rawTool.(map[string]interface{}); tool["name"] == "calendar_list" {
+		if tool, _ := rawTool.(map[string]any); tool["name"] == "calendar_list" {
 			hasCalendar = true
 			break
 		}
@@ -237,9 +237,9 @@ func TestMCP_GOAuth_CalendarCall(t *testing.T) {
 	}
 
 	// Вызываем calendar_list
-	resp := mcpRequestWithSession(t, "tools/call", map[string]interface{}{
+	resp := mcpRequestWithSession(t, "tools/call", map[string]any{
 		"name": "calendar_list",
-		"arguments": map[string]interface{}{
+		"arguments": map[string]any{
 			"max_results": 5,
 		},
 	}, mistralSession)
@@ -248,14 +248,14 @@ func TestMCP_GOAuth_CalendarCall(t *testing.T) {
 	require.Nil(t, resp["error"],
 		"calendar_list не должен возвращать JSON-RPC ошибку протокола")
 
-	result, ok := resp["result"].(map[string]interface{})
+	result, ok := resp["result"].(map[string]any)
 	require.True(t, ok, "result должен присутствовать")
 
-	content, ok := result["content"].([]interface{})
+	content, ok := result["content"].([]any)
 	require.True(t, ok, "result.content должен быть массивом")
 	require.NotEmpty(t, content)
 
-	first, _ := content[0].(map[string]interface{})
+	first, _ := content[0].(map[string]any)
 	text, _ := first["text"].(string)
 
 	// isError может быть true если нет OAuth токена для uid=23 — это нормально
@@ -286,18 +286,18 @@ func TestMCP_GOAuth_ToolsPerProviderSummary(t *testing.T) {
 	var summaries []summary
 
 	for _, prov := range allProviders {
-		resp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, prov.session)
+		resp := mcpRequestWithSession(t, "tools/list", map[string]any{}, prov.session)
 		if resp["error"] != nil {
 			t.Logf("[%s] ОШИБКА: %v", prov.name, resp["error"])
 			continue
 		}
 
-		result, _ := resp["result"].(map[string]interface{})
-		tools, _ := result["tools"].([]interface{})
+		result, _ := resp["result"].(map[string]any)
+		tools, _ := result["tools"].([]any)
 
 		names := make([]string, 0, len(tools))
 		for _, rawTool := range tools {
-			if tool, ok := rawTool.(map[string]interface{}); ok {
+			if tool, ok := rawTool.(map[string]any); ok {
 				if name, ok := tool["name"].(string); ok {
 					names = append(names, name)
 				}

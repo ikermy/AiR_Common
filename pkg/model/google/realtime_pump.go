@@ -63,7 +63,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 			return
 		}
 
-		var event map[string]interface{}
+		var event map[string]any
 		if err := json.Unmarshal(msg, &event); err != nil {
 			//logger.Warn("pumpFromGoogle: ошибка парсинга события: %v raw=%s", err, string(msg), rs.userID)
 			continue
@@ -84,8 +84,8 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 		}
 
 		// ── usageMetadata ─────────────────────────────────────────────────────
-		if usage, ok := event["usageMetadata"].(map[string]interface{}); ok {
-			if usageJSON, err := json.Marshal(map[string]interface{}{"type": "token_usage", "usage": usage}); err == nil {
+		if usage, ok := event["usageMetadata"].(map[string]any); ok {
+			if usageJSON, err := json.Marshal(map[string]any{"type": "token_usage", "usage": usage}); err == nil {
 				rs.publishEvent(model.RealtimeEvent{Type: "token_usage", Data: usageJSON})
 			}
 			continue
@@ -93,7 +93,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 
 		// ── inputAudioTranscription — транскрипция речи пользователя ──────────
 		// Google Live API присылает этот event параллельно с обработкой аудио.
-		if inputTransRaw, ok := event["inputAudioTranscription"].(map[string]interface{}); ok {
+		if inputTransRaw, ok := event["inputAudioTranscription"].(map[string]any); ok {
 			if transcript, _ := inputTransRaw["transcript"].(string); transcript != "" {
 				m.saveGoogleRealtimeTranscript(rs, transcript, "")
 				rs.publishEvent(model.RealtimeEvent{Type: "input_transcript_done", Text: transcript})
@@ -104,7 +104,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 		// ── outputAudioTranscription — текстовая расшифровка речи модели ──────
 		// Приходит параллельно с аудио-дельтами при responseModalities=["TEXT","AUDIO"].
 		// Используем как основной источник транскрипта (точнее чем TEXT-части modelTurn).
-		if outputTransRaw, ok := event["outputAudioTranscription"].(map[string]interface{}); ok {
+		if outputTransRaw, ok := event["outputAudioTranscription"].(map[string]any); ok {
 			if text, _ := outputTransRaw["text"].(string); text != "" {
 				assistTextBuf.WriteString(text)
 				rs.publishEvent(model.RealtimeEvent{Type: "transcript_delta", Text: text})
@@ -114,7 +114,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 
 		// ── toolCall — вызовы функций ────────────────────────────────────────
 		// Google Live API отправляет tool calls как отдельный top-level event.
-		if toolCallRaw, ok := event["toolCall"].(map[string]interface{}); ok {
+		if toolCallRaw, ok := event["toolCall"].(map[string]any); ok {
 			m.handleGoogleToolCall(rs, toolCallRaw, &pendingFiles)
 			continue
 		}
@@ -126,7 +126,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 		}
 
 		// ── serverContent — основной ответ модели ────────────────────────────
-		serverContent, ok := event["serverContent"].(map[string]interface{})
+		serverContent, ok := event["serverContent"].(map[string]any)
 		if !ok {
 			continue
 		}
@@ -159,18 +159,18 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 		}
 
 		// modelTurn — аудио-дельты, текст и возможный function call
-		if modelTurnRaw, ok := serverContent["modelTurn"].(map[string]interface{}); ok {
+		if modelTurnRaw, ok := serverContent["modelTurn"].(map[string]any); ok {
 			rs.IsGenerating.Store(true)
-			parts, _ := modelTurnRaw["parts"].([]interface{})
+			parts, _ := modelTurnRaw["parts"].([]any)
 
 			for _, partRaw := range parts {
-				part, ok := partRaw.(map[string]interface{})
+				part, ok := partRaw.(map[string]any)
 				if !ok {
 					continue
 				}
 
 				// Audio delta (PCM16 @ 24kHz, base64)
-				if inlineData, ok := part["inlineData"].(map[string]interface{}); ok {
+				if inlineData, ok := part["inlineData"].(map[string]any); ok {
 					data, _ := inlineData["data"].(string)
 					if data == "" {
 						continue
@@ -202,7 +202,7 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 				}
 
 				// functionCall в составе modelTurn (альтернативный формат ряда версий API)
-				if funcCall, ok := part["functionCall"].(map[string]interface{}); ok {
+				if funcCall, ok := part["functionCall"].(map[string]any); ok {
 					m.handleGoogleFunctionCallPart(rs, funcCall, &pendingFiles)
 					continue
 				}
@@ -228,16 +228,16 @@ func (m *Model) pumpFromGoogle(rs *GoogleRealtimeSession) {
 }
 
 // handleGoogleToolCall обрабатывает top-level toolCall event (основной формат Google Live API).
-func (m *Model) handleGoogleToolCall(rs *GoogleRealtimeSession, toolCall map[string]interface{}, pendingFiles *[]model.File) {
-	funcCallsRaw, ok := toolCall["functionCalls"].([]interface{})
+func (m *Model) handleGoogleToolCall(rs *GoogleRealtimeSession, toolCall map[string]any, pendingFiles *[]model.File) {
+	funcCallsRaw, ok := toolCall["functionCalls"].([]any)
 	if !ok {
 		return
 	}
 
-	var funcResponses []map[string]interface{}
+	var funcResponses []map[string]any
 
 	for _, fcRaw := range funcCallsRaw {
-		fc, ok := fcRaw.(map[string]interface{})
+		fc, ok := fcRaw.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -255,10 +255,10 @@ func (m *Model) handleGoogleToolCall(rs *GoogleRealtimeSession, toolCall map[str
 		result, files := m.execGoogleTool(rs, name, argsJSON, callID)
 		*pendingFiles = append(*pendingFiles, files...)
 
-		funcResponses = append(funcResponses, map[string]interface{}{
+		funcResponses = append(funcResponses, map[string]any{
 			"id":   callID,
 			"name": name,
-			"response": map[string]interface{}{
+			"response": map[string]any{
 				"output": result,
 			},
 		})
@@ -268,8 +268,8 @@ func (m *Model) handleGoogleToolCall(rs *GoogleRealtimeSession, toolCall map[str
 		return
 	}
 
-	toolResp := map[string]interface{}{
-		"toolResponse": map[string]interface{}{
+	toolResp := map[string]any{
+		"toolResponse": map[string]any{
 			"functionResponses": funcResponses,
 		},
 	}
@@ -279,7 +279,7 @@ func (m *Model) handleGoogleToolCall(rs *GoogleRealtimeSession, toolCall map[str
 }
 
 // handleGoogleFunctionCallPart обрабатывает functionCall из modelTurn.parts (альтернативный формат).
-func (m *Model) handleGoogleFunctionCallPart(rs *GoogleRealtimeSession, funcCall map[string]interface{}, pendingFiles *[]model.File) {
+func (m *Model) handleGoogleFunctionCallPart(rs *GoogleRealtimeSession, funcCall map[string]any, pendingFiles *[]model.File) {
 	callID, _ := funcCall["id"].(string)
 	name, _ := funcCall["name"].(string)
 
@@ -293,13 +293,13 @@ func (m *Model) handleGoogleFunctionCallPart(rs *GoogleRealtimeSession, funcCall
 	result, files := m.execGoogleTool(rs, name, argsJSON, callID)
 	*pendingFiles = append(*pendingFiles, files...)
 
-	toolResp := map[string]interface{}{
-		"toolResponse": map[string]interface{}{
-			"functionResponses": []map[string]interface{}{
+	toolResp := map[string]any{
+		"toolResponse": map[string]any{
+			"functionResponses": []map[string]any{
 				{
 					"id":   callID,
 					"name": name,
-					"response": map[string]interface{}{
+					"response": map[string]any{
 						"output": result,
 					},
 				},
@@ -400,9 +400,9 @@ func (m *Model) pumpToGoogle(rs *GoogleRealtimeSession) {
 		}
 		encoded := base64.StdEncoding.EncodeToString(accumBuf)
 		accumBuf = accumBuf[:0]
-		msg := map[string]interface{}{
-			"realtimeInput": map[string]interface{}{
-				"audio": map[string]interface{}{
+		msg := map[string]any{
+			"realtimeInput": map[string]any{
+				"audio": map[string]any{
 					"mimeType": mimeType,
 					"data":     encoded,
 				},
@@ -457,7 +457,7 @@ func (m *Model) saveGoogleRealtimeTranscript(rs *GoogleRealtimeSession, userText
 	if userText != "" {
 		m.addMessageToCache(rs.dialogID, GoogleContent{
 			Role:  "user",
-			Parts: []map[string]interface{}{{"text": userText}},
+			Parts: []map[string]any{{"text": userText}},
 		})
 		msg := googleRealtimeDialogJSON(comdb.SpeechRealTimeUser, userText, now)
 		if err := m.db.SaveDialog(rs.dialogID, msg); err != nil {
@@ -469,7 +469,7 @@ func (m *Model) saveGoogleRealtimeTranscript(rs *GoogleRealtimeSession, userText
 	if assistText != "" {
 		m.addMessageToCache(rs.dialogID, GoogleContent{
 			Role:  "model",
-			Parts: []map[string]interface{}{{"text": assistText}},
+			Parts: []map[string]any{{"text": assistText}},
 		})
 		msg := googleRealtimeDialogJSON(comdb.SpeechRealTimeAI, assistText, now)
 		if err := m.db.SaveDialog(rs.dialogID, msg); err != nil {
@@ -481,7 +481,7 @@ func (m *Model) saveGoogleRealtimeTranscript(rs *GoogleRealtimeSession, userText
 
 // googleRealtimeDialogJSON формирует JSON в формате endpoint.Message для сохранения в БД.
 func googleRealtimeDialogJSON(creator comdb.CreatorType, text string, ts time.Time) []byte {
-	msg := map[string]interface{}{
+	msg := map[string]any{
 		"creator": creator,
 		"message": model.AssistResponse{
 			Message: text,
@@ -499,7 +499,7 @@ func googleRealtimeDialogJSON(creator comdb.CreatorType, text string, ts time.Ti
 
 // googleExtractFilesForRealtime пытается извлечь файлы из результата MCP-инструмента.
 // Аналог extractFilesForRealtime из openai пакета.
-func googleExtractFilesForRealtime(rawResult string) (files []map[string]interface{}, voiceConfirm string) {
+func googleExtractFilesForRealtime(rawResult string) (files []map[string]any, voiceConfirm string) {
 	raw := strings.TrimSpace(rawResult)
 	if raw == "" {
 		return nil, ""
@@ -507,7 +507,7 @@ func googleExtractFilesForRealtime(rawResult string) (files []map[string]interfa
 
 	// Попытка 1: объект с "url"/"Url" → один файл
 	if strings.HasPrefix(raw, "{") {
-		var r map[string]interface{}
+		var r map[string]any
 		if err := json.Unmarshal([]byte(raw), &r); err == nil {
 			url, _ := r["url"].(string)
 			if url == "" {
@@ -522,7 +522,7 @@ func googleExtractFilesForRealtime(rawResult string) (files []map[string]interfa
 				if fileType == "" {
 					fileType = googleRealtimeFileType(url)
 				}
-				files = []map[string]interface{}{{
+				files = []map[string]any{{
 					"type": fileType, "Url": url, "file_name": fileName, "caption": "",
 				}}
 				voiceConfirm = fmt.Sprintf(`{"status":"ok","file_name":%q,"type":%q}`, fileName, fileType)
@@ -536,7 +536,7 @@ func googleExtractFilesForRealtime(rawResult string) (files []map[string]interfa
 	if strings.HasPrefix(raw, "[") {
 		_ = json.Unmarshal([]byte(raw), &urlList)
 	} else if strings.HasPrefix(raw, "{") {
-		var wrapper map[string]interface{}
+		var wrapper map[string]any
 		if err := json.Unmarshal([]byte(raw), &wrapper); err == nil {
 			if outputStr, ok := wrapper["output"].(string); ok {
 				_ = json.Unmarshal([]byte(outputStr), &urlList)
@@ -555,7 +555,7 @@ func googleExtractFilesForRealtime(rawResult string) (files []map[string]interfa
 		}
 		fileName := filepath.Base(u)
 		fileType := googleRealtimeFileType(u)
-		files = append(files, map[string]interface{}{
+		files = append(files, map[string]any{
 			"type": fileType, "Url": u, "file_name": fileName, "caption": "",
 		})
 		nameParts = append(nameParts, fmt.Sprintf("%q", fileName))

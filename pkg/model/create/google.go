@@ -106,9 +106,9 @@ type FunctionParameters struct {
 
 // FunctionDeclaration описывает одну функцию для Function Calling
 type FunctionDeclaration struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	Parameters  interface{} `json:"parameters"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  any    `json:"parameters"`
 }
 
 // GoogleTool описывает инструмент (tool) для Google Gemini API
@@ -170,7 +170,7 @@ func (m *GoogleAgentClient) SetUniversalModel(um *UniversalModel) {
 // ============================================================================
 
 // executeGoogleAPIRequest выполняет POST запрос к Google API с валидацией
-func executeGoogleAPIRequest(ctx context.Context, url string, payload interface{}) ([]byte, error) {
+func executeGoogleAPIRequest(ctx context.Context, url string, payload any) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка сериализации payload: %w", err)
@@ -271,9 +271,9 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 
 	// Build payload for agent creation
 	// Google Gemini API uses system_instruction for prompt
-	payload := map[string]interface{}{
-		"system_instruction": map[string]interface{}{
-			"parts": []map[string]interface{}{
+	payload := map[string]any{
+		"system_instruction": map[string]any{
+			"parts": []map[string]any{
 				{
 					"text": enhancedPrompt,
 				},
@@ -325,21 +325,21 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 
 	if !hasTools {
 		// Только без tools можем добавить response_schema при создании
-		payload["generation_config"] = map[string]interface{}{
+		payload["generation_config"] = map[string]any{
 			"response_mime_type": "application/json",
 			"response_schema":    ParseModelSchemaJSON(false), // false = БЕЗ additionalProperties для Google
 		}
 	}
 
 	// Конвертируем googleTools в формат для JSON API
-	var toolsForPayload []interface{}
+	var toolsForPayload []any
 	for _, tool := range googleTools {
 		if tool.GoogleSearch != nil {
-			toolsForPayload = append(toolsForPayload, map[string]interface{}{
-				"google_search": map[string]interface{}{},
+			toolsForPayload = append(toolsForPayload, map[string]any{
+				"google_search": map[string]any{},
 			})
 		} else if len(tool.FunctionDeclarations) > 0 {
-			toolsForPayload = append(toolsForPayload, map[string]interface{}{
+			toolsForPayload = append(toolsForPayload, map[string]any{
 				"function_declarations": tool.FunctionDeclarations,
 			})
 		}
@@ -347,8 +347,8 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 
 	// Добавляем code_execution отдельно если нужно
 	if modelData.Interpreter && !hasAnyFunctionDeclarations {
-		toolsForPayload = append(toolsForPayload, map[string]interface{}{
-			"code_execution": map[string]interface{}{},
+		toolsForPayload = append(toolsForPayload, map[string]any{
+			"code_execution": map[string]any{},
 		})
 	}
 
@@ -369,10 +369,10 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	testURL := fmt.Sprintf("%s/%s:generateContent?key=%s", m.url, agentID, m.resolveKey(userID))
 
 	// Формируем тестовый payload для проверки конфигурации
-	testPayload := map[string]interface{}{
-		"contents": []map[string]interface{}{
+	testPayload := map[string]any{
+		"contents": []map[string]any{
 			{
-				"parts": []map[string]interface{}{
+				"parts": []map[string]any{
 					{"text": "test"},
 				},
 			},
@@ -396,7 +396,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	}
 
 	// Проверяем, что ответ валидный
-	var response map[string]interface{}
+	var response map[string]any
 	if err := json.Unmarshal(responseBody, &response); err != nil {
 		return UMCR{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
@@ -515,17 +515,17 @@ Please create a visually stunning video that captures the essence of the descrip
 		prompt, duration, aspectRatio)
 
 	// Формируем запрос
-	payload := map[string]interface{}{
-		"contents": []map[string]interface{}{
+	payload := map[string]any{
+		"contents": []map[string]any{
 			{
-				"parts": []map[string]interface{}{
+				"parts": []map[string]any{
 					{
 						"text": videoPrompt,
 					},
 				},
 			},
 		},
-		"generationConfig": map[string]interface{}{
+		"generationConfig": map[string]any{
 			"temperature":     0.9,
 			"topK":            40,
 			"topP":            0.95,
@@ -681,10 +681,10 @@ func (m *GoogleAgentClient) TranscribeAudio(audioData []byte, mimeType string) (
 	audioBase64 := base64.StdEncoding.EncodeToString(audioData)
 
 	// Формируем запрос
-	payload := map[string]interface{}{
-		"contents": []map[string]interface{}{
+	payload := map[string]any{
+		"contents": []map[string]any{
 			{
-				"parts": []map[string]interface{}{
+				"parts": []map[string]any{
 					{
 						"text": "Транскрибируй это аудио в текст. Верни только текст без дополнительных комментариев.",
 					},
@@ -727,10 +727,10 @@ func (m *GoogleAgentClient) TranscribeAudioFile(fileURI string) (string, error) 
 	audioModel := "gemini-2.5-flash-lite"
 
 	// Формируем запрос с file_data
-	payload := map[string]interface{}{
-		"contents": []map[string]interface{}{
+	payload := map[string]any{
+		"contents": []map[string]any{
 			{
-				"parts": []map[string]interface{}{
+				"parts": []map[string]any{
 					{
 						"text": "Транскрибируй это аудио в текст. Верни только текст без дополнительных комментариев.",
 					},
@@ -795,9 +795,9 @@ func GenerateGoogleEmbedding(ctx context.Context, apiKey, text string) ([]float3
 	// Документация: https://ai.google.dev/gemini-api/docs/embeddings
 	embedURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=%s", apiKey)
 
-	payload := map[string]interface{}{
-		"content": map[string]interface{}{
-			"parts": []map[string]interface{}{
+	payload := map[string]any{
+		"content": map[string]any{
+			"parts": []map[string]any{
 				{"text": text},
 			},
 		},
@@ -904,9 +904,9 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 						continue
 					}
 
-				// fileID.ID это URI файла в Google Files API
-				fileURI := fileID.ID
-				downloadURL := fmt.Sprintf("%s?key=%s", fileURI, m.googleClient.resolveKey(userID))
+					// fileID.ID это URI файла в Google Files API
+					fileURI := fileID.ID
+					downloadURL := fmt.Sprintf("%s?key=%s", fileURI, m.googleClient.resolveKey(userID))
 
 					fileReq, err := http.NewRequestWithContext(m.ctx, http.MethodGet, downloadURL, nil)
 					if err != nil {
@@ -948,8 +948,8 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 
 					content := string(fileContent)
 
-				// Генерируем эмбеддинг через функцию GenerateGoogleEmbedding
-				embedding, err := GenerateGoogleEmbedding(m.ctx, m.googleClient.resolveKey(userID), content)
+					// Генерируем эмбеддинг через функцию GenerateGoogleEmbedding
+					embedding, err := GenerateGoogleEmbedding(m.ctx, m.googleClient.resolveKey(userID), content)
 					if err != nil {
 						//logger.Warn("Не удалось сгенерировать эмбеддинг для файла %s: %v", docName, err)
 						continue
@@ -1085,17 +1085,17 @@ func (m *GoogleAgentClient) GenerateImage(prompt string, aspectRatio string) ([]
 	enhancedPrompt += "\nStyle: photorealistic, high detail, vibrant colors, professional quality"
 
 	// Формируем payload для Gemini API с запросом изображения
-	payload := map[string]interface{}{
-		"contents": []map[string]interface{}{
+	payload := map[string]any{
+		"contents": []map[string]any{
 			{
-				"parts": []map[string]interface{}{
+				"parts": []map[string]any{
 					{
 						"text": enhancedPrompt,
 					},
 				},
 			},
 		},
-		"generationConfig": map[string]interface{}{
+		"generationConfig": map[string]any{
 			"temperature": 0.4,
 		},
 	}

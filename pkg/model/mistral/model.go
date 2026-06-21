@@ -317,7 +317,7 @@ func (m *Model) GetCh(respId uint64) (*model.Ch, error) {
 		m.ctx,
 		&m.waitChannels,
 		&m.responders,
-		func(val interface{}) (*model.Ch, error) {
+		func(val any) (*model.Ch, error) {
 			respModel := val.(*RespModel)
 			return model.ExtractChannelWithPriority(respModel)
 		},
@@ -331,7 +331,7 @@ func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
 
 // SaveAllContextDuringExit сохраняет контекст при выходе (реализация model.UniversalModel)
 func (m *Model) SaveAllContextDuringExit() {
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respModel := value.(*RespModel)
 
 		if respModel.Chan != nil {
@@ -339,7 +339,7 @@ func (m *Model) SaveAllContextDuringExit() {
 
 			// Сохраняем conversation_id (если есть)
 			if respModel.ConversationId != "" {
-				contextObj := map[string]interface{}{
+				contextObj := map[string]any{
 					"conversation_id": respModel.ConversationId,
 				}
 
@@ -375,7 +375,7 @@ func (m *Model) SaveAllContextDuringExit() {
 // CleanDialogData очищает данные конкретного диалога (реализация model.UniversalModel)
 func (m *Model) CleanDialogData(dialogID uint64) {
 	// Ищем responder по dialogID в Chan
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respModel := value.(*RespModel)
 
 		if respModel.Chan != nil && respModel.Chan.DialogID == dialogID {
@@ -391,7 +391,7 @@ func (m *Model) CleanDialogData(dialogID uint64) {
 func (m *Model) saveConversationId(dialogID uint64, conversationId string) {
 	if conversationId == "" {
 		// Удаляем conversation_id из БД (сброс)
-		contextObj := map[string]interface{}{
+		contextObj := map[string]any{
 			"conversation_id": "",
 		}
 
@@ -408,7 +408,7 @@ func (m *Model) saveConversationId(dialogID uint64, conversationId string) {
 		return
 	}
 
-	contextObj := map[string]interface{}{
+	contextObj := map[string]any{
 		"conversation_id": conversationId,
 	}
 
@@ -545,7 +545,7 @@ func (m *Model) CleanUp() {
 		case <-ticker.C:
 			now := time.Now()
 
-			m.responders.Range(func(key, value interface{}) bool {
+			m.responders.Range(func(key, value any) bool {
 				responder := value.(*RespModel)
 				ttlExpired := responder.TTL.Before(now)
 
@@ -633,12 +633,12 @@ func (m *Model) closeResponderChannels(respModel *RespModel) {
 func (m *Model) cleanupAllResponders() {
 	model.CleanupAllRespondersUniversal(
 		&m.responders,
-		func(val interface{}) {
+		func(val any) {
 			if respModel, ok := val.(*RespModel); ok && respModel.Cancel != nil {
 				respModel.Cancel()
 			}
 		},
-		func(val interface{}) {
+		func(val any) {
 			if respModel, ok := val.(*RespModel); ok {
 				m.closeResponderChannels(respModel)
 			}
@@ -670,7 +670,7 @@ func (m *Model) GetRealUserID(userID uint32) (uint64, error) {
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя
 func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 	var invalidatedCount int
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respModel := value.(*RespModel)
 		if respModel.Assist.UserID == userID {
 			m.responders.Delete(key)
@@ -687,7 +687,7 @@ func (m *Model) InvalidateUserAgentConfigCache(userID uint32) {
 // отменяет контексты всех респондентов и удаляет их из кэша.
 // Mistral не поддерживает realtime-сессии.
 func (m *Model) DisconnectUser(userID uint32) {
-	m.responders.Range(func(key, value interface{}) bool {
+	m.responders.Range(func(key, value any) bool {
 		respModel := value.(*RespModel)
 		if respModel.Assist.UserID == userID {
 			if respModel.Cancel != nil {

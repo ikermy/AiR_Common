@@ -17,9 +17,9 @@ import (
 
 // DialogMessage представляет сообщение из истории диалога (формат БД)
 type DialogMessage struct {
-	Creator   interface{}            `json:"creator"`   // 1 = "assistant", 2 = "user", или строка "user"/"assistant"
-	Message   map[string]interface{} `json:"message"`   // AssistResponse в виде map
-	Timestamp string                 `json:"timestamp"` // ISO 8601 timestamp
+	Creator   any            `json:"creator"`   // 1 = "assistant", 2 = "user", или строка "user"/"assistant"
+	Message   map[string]any `json:"message"`   // AssistResponse в виде map
+	Timestamp string         `json:"timestamp"` // ISO 8601 timestamp
 }
 
 // GetCreator возвращает creator в виде строки (нормализует 1->assistant, 2->user)
@@ -90,7 +90,7 @@ func (m *Model) ConvertDialogToGoogleFormat(dialogID uint64) ([]GoogleContent, e
 
 		// Извлекаем текст сообщения
 		var messageText string
-		if msgInterface, ok := msg.Message.(map[string]interface{}); ok {
+		if msgInterface, ok := msg.Message.(map[string]any); ok {
 			if msgStr, ok := msgInterface["message"].(string); ok {
 				messageText = msgStr
 			}
@@ -101,7 +101,7 @@ func (m *Model) ConvertDialogToGoogleFormat(dialogID uint64) ([]GoogleContent, e
 		}
 
 		// Формируем parts
-		parts := []map[string]interface{}{
+		parts := []map[string]any{
 			{"text": messageText},
 		}
 
@@ -116,7 +116,7 @@ func (m *Model) ConvertDialogToGoogleFormat(dialogID uint64) ([]GoogleContent, e
 
 // createUserMessage создаёт сообщение пользователя в формате Google
 func (m *Model) createUserMessage(text string, files []model.FileUpload) GoogleContent {
-	parts := []map[string]interface{}{
+	parts := []map[string]any{
 		{"text": text},
 	}
 
@@ -124,7 +124,7 @@ func (m *Model) createUserMessage(text string, files []model.FileUpload) GoogleC
 	for _, file := range files {
 		// Если это изображение с URL - используем fileUri
 		if file.HasURL() && file.IsImageMimeType() {
-			parts = append(parts, map[string]interface{}{
+			parts = append(parts, map[string]any{
 				"fileData": map[string]string{
 					"mimeType": file.MimeType,
 					"fileUri":  file.URL,
@@ -137,7 +137,7 @@ func (m *Model) createUserMessage(text string, files []model.FileUpload) GoogleC
 				//logger.Warn("Не удалось прочитать содержимое файла %s: %v, пропускаем", file.Name, err)
 				continue
 			}
-			parts = append(parts, map[string]interface{}{
+			parts = append(parts, map[string]any{
 				"inline_data": map[string]string{
 					"mime_type": file.MimeType,
 					"data":      base64.StdEncoding.EncodeToString(data),
@@ -160,7 +160,7 @@ func (m *Model) createModelMessage(assistResponse model.AssistResponse) GoogleCo
 		messageText = "(null answer)"
 	}
 
-	parts := []map[string]interface{}{
+	parts := []map[string]any{
 		{"text": messageText},
 	}
 
@@ -172,7 +172,7 @@ func (m *Model) createModelMessage(assistResponse model.AssistResponse) GoogleCo
 
 // sendToGeminiAPI отправляет запрос к Google Gemini API
 // Автоматически обрабатывает ошибку 429 (quota exceeded) с retry логикой
-func (m *Model) sendToGeminiAPI(modelName string, payload map[string]interface{}, userID uint32) ([]byte, error) {
+func (m *Model) sendToGeminiAPI(modelName string, payload map[string]any, userID uint32) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка сериализации запроса: %v", err)
@@ -212,7 +212,7 @@ func (m *Model) sendToGeminiAPI(modelName string, payload map[string]interface{}
 			// Пытаемся извлечь retryDelay из ответа
 			var errorResp struct {
 				Error struct {
-					Details []map[string]interface{} `json:"details"`
+					Details []map[string]any `json:"details"`
 				} `json:"error"`
 			}
 
@@ -249,7 +249,7 @@ func (m *Model) sendToGeminiAPI(modelName string, payload map[string]interface{}
 // Использует endpoint streamGenerateContent для получения ответа в режиме реального времени
 // onDelta вызывается для каждого delta-события, onComplete - для финального ответа с токенами
 // Возвращает: fullText, usageMetadata, functionCalls, error
-func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]interface{}, onDelta func(delta string) error, userID uint32) (string, map[string]interface{}, []map[string]interface{}, error) {
+func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]any, onDelta func(delta string) error, userID uint32) (string, map[string]any, []map[string]any, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("ошибка сериализации запроса: %v", err)
@@ -283,7 +283,7 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 			if resp.StatusCode == 429 && attempt < maxRetries {
 				var errorResp struct {
 					Error struct {
-						Details []map[string]interface{} `json:"details"`
+						Details []map[string]any `json:"details"`
 					} `json:"error"`
 				}
 
@@ -313,7 +313,7 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 
 		// Обрабатываем SSE поток в отдельной функции, чтобы defer корректно
 		// закрывал тело ответа в конце каждой итерации, а не в конце внешней функции.
-		fullText, usageMetadata, functionCalls, err := func(body io.ReadCloser) (string, map[string]interface{}, []map[string]interface{}, error) {
+		fullText, usageMetadata, functionCalls, err := func(body io.ReadCloser) (string, map[string]any, []map[string]any, error) {
 			defer func() { _ = body.Close() }()
 
 			scanner := bufio.NewScanner(body)
@@ -323,8 +323,8 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 			scanner.Buffer(buf, maxCapacity)
 
 			var fullText strings.Builder
-			var usageMetadata map[string]interface{}
-			var functionCalls []map[string]interface{}
+			var usageMetadata map[string]any
+			var functionCalls []map[string]any
 
 			eventCount := 0
 
@@ -349,12 +349,12 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 					Candidates []struct {
 						Content struct {
 							Parts []struct {
-								Text         string                 `json:"text,omitempty"`
-								FunctionCall map[string]interface{} `json:"functionCall,omitempty"`
+								Text         string         `json:"text,omitempty"`
+								FunctionCall map[string]any `json:"functionCall,omitempty"`
 							} `json:"parts"`
 						} `json:"content"`
 					} `json:"candidates"`
-					UsageMetadata map[string]interface{} `json:"usageMetadata,omitempty"`
+					UsageMetadata map[string]any `json:"usageMetadata,omitempty"`
 				}
 
 				if err := json.Unmarshal([]byte(data), &sseEvent); err != nil {
@@ -450,7 +450,7 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]in
 // parseGeminiResponseWithFunctionHandling парсит ответ и обрабатывает function calls через multi-turn conversation
 // Если модель вызывает функцию без текста, отправляем результат обратно модели для продолжения
 func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, history []GoogleContent,
-	payload map[string]interface{}, modelName string, provider create.ProviderType, userID uint32) (model.AssistResponse, error) {
+	payload map[string]any, modelName string, provider create.ProviderType, userID uint32) (model.AssistResponse, error) {
 
 	var emptyResponse model.AssistResponse
 
@@ -458,8 +458,8 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 		Candidates []struct {
 			Content struct {
 				Parts []struct {
-					Text         string                 `json:"text,omitempty"`
-					FunctionCall map[string]interface{} `json:"functionCall,omitempty"`
+					Text         string         `json:"text,omitempty"`
+					FunctionCall map[string]any `json:"functionCall,omitempty"`
 				} `json:"parts"`
 			} `json:"content"`
 		} `json:"candidates"`
@@ -477,7 +477,7 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 
 	// Собираем текстовые ответы и function calls
 	var textParts []string
-	var functionCalls []map[string]interface{}
+	var functionCalls []map[string]any
 
 	for _, part := range apiResp.Candidates[0].Content.Parts {
 		if part.Text != "" {
@@ -493,9 +493,9 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 	// Если есть function calls БЕЗ текста - отправляем результаты модели для продолжения
 	if len(functionCalls) > 0 && len(textParts) == 0 {
 		// Добавляем model response в историю со ВСЕМИ функциями
-		modelResponseParts := make([]map[string]interface{}, len(functionCalls))
+		modelResponseParts := make([]map[string]any, len(functionCalls))
 		for i, fc := range functionCalls {
-			modelResponseParts[i] = map[string]interface{}{"functionCall": fc}
+			modelResponseParts[i] = map[string]any{"functionCall": fc}
 		}
 
 		history = append(history, GoogleContent{
@@ -515,9 +515,9 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 			// Google использует functionResponse (не functionResult)
 			history = append(history, GoogleContent{
 				Role: "user",
-				Parts: []map[string]interface{}{
+				Parts: []map[string]any{
 					{
-						"functionResponse": map[string]interface{}{
+						"functionResponse": map[string]any{
 							"name":     fc["name"],
 							"response": result,
 						},
@@ -564,7 +564,7 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 
 	// Пытаемся распарсить как JSON (если модель вернула структурированный ответ)
 	var assistResp model.AssistResponse
-	var rawResp map[string]interface{}
+	var rawResp map[string]any
 
 	// Сначала пытаемся распарсить ПЕРВУЮ текстовую часть как JSON
 	// (модель может отправить текст + JSON в разных частях)
@@ -605,10 +605,10 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 		}
 
 		// Парсим action если есть
-		if actionData, ok := rawResp["action"].(map[string]interface{}); ok {
-			if sendFiles, ok := actionData["send_files"].([]interface{}); ok {
+		if actionData, ok := rawResp["action"].(map[string]any); ok {
+			if sendFiles, ok := actionData["send_files"].([]any); ok {
 				for _, fileIface := range sendFiles {
-					if fileMap, ok := fileIface.(map[string]interface{}); ok {
+					if fileMap, ok := fileIface.(map[string]any); ok {
 						file := model.File{
 							Type:     model.FileType(getStringField(fileMap, "type")),
 							URL:      getStringField(fileMap, "url"),
@@ -645,7 +645,7 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 }
 
 // handleFunctionCall обрабатывает вызов функции от модели
-func (m *Model) handleFunctionCall(functionCall map[string]interface{}, provider create.ProviderType, userID uint32) (map[string]interface{}, error) {
+func (m *Model) handleFunctionCall(functionCall map[string]any, provider create.ProviderType, userID uint32) (map[string]any, error) {
 	functionName, ok := functionCall["name"].(string)
 	if !ok {
 		return nil, fmt.Errorf("function call не содержит имени")
@@ -665,10 +665,10 @@ func (m *Model) handleFunctionCall(functionCall map[string]interface{}, provider
 	if m.actionHandler != nil {
 		result := m.actionHandler.RunAction(m.ctx, functionName, string(argsJSON), provider, userID)
 
-		var resultMap map[string]interface{}
+		var resultMap map[string]any
 		if err := json.Unmarshal([]byte(result), &resultMap); err != nil {
 			// Если результат не JSON, оборачиваем в объект
-			resultMap = map[string]interface{}{
+			resultMap = map[string]any{
 				"result": result,
 			}
 		}
@@ -842,7 +842,7 @@ func (m *Model) isVideoEnabled(config *GoogleAgentConfig) bool {
 }
 
 // getStringField извлекает строковое значение из map
-func getStringField(m map[string]interface{}, key string) string {
+func getStringField(m map[string]any, key string) string {
 	if val, ok := m[key].(string); ok {
 		return val
 	}
@@ -1268,11 +1268,11 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	// Создаём callback для выполнения функций через MCP action handler.
 	// ВАЖНО: определяем ПОСЛЕ получения resp из applyRAG, чтобы иметь доступ к
 	// resp.Assist.Provider и userID для вызова RunAction.
-	onToolCall := func(toolCalls []interface{}) ([]interface{}, error) {
+	onToolCall := func(toolCalls []any) ([]any, error) {
 		//logger.Debug("🔧 [RequestStreaming/Google] ВЫЗВАН onToolCall! Количество tool calls: %d", len(toolCalls), userID)
-		var toolOutputs []interface{}
+		var toolOutputs []any
 		for _, toolCall := range toolCalls {
-			toolCallMap, ok := toolCall.(map[string]interface{})
+			toolCallMap, ok := toolCall.(map[string]any)
 			if !ok {
 				continue
 			}
@@ -1288,7 +1288,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 			}
 
 			//logger.Debug("🔧 [Google] Выполнена функция %s → %s", functionName, result, userID)
-			toolOutputs = append(toolOutputs, map[string]interface{}{
+			toolOutputs = append(toolOutputs, map[string]any{
 				"call_id": callID,
 				"name":    functionName,
 				"content": result,
@@ -1338,7 +1338,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 
 	// ВАЖНО: Формируем payload ПОСЛЕ всех модификаций history!
 	// Сначала добавляем конфигурацию агента
-	payload := map[string]interface{}{}
+	payload := map[string]any{}
 
 	if resp.AgentConfig.SystemInstruction != nil {
 		payload["system_instruction"] = resp.AgentConfig.SystemInstruction
@@ -1353,7 +1353,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	if hasTools {
 		payload["tools"] = resp.AgentConfig.Tools
 
-		if genConfig, ok := payload["generationConfig"].(map[string]interface{}); ok {
+		if genConfig, ok := payload["generationConfig"].(map[string]any); ok {
 			delete(genConfig, "response_schema")
 			delete(genConfig, "response_mime_type")
 		}
@@ -1365,7 +1365,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 
 		jsonReminderMessage := GoogleContent{
 			Role: "user",
-			Parts: []map[string]interface{}{
+			Parts: []map[string]any{
 				{
 					"text": jsonReminderText,
 				},
@@ -1373,7 +1373,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 		}
 		jsonReminderResponse := GoogleContent{
 			Role: "model",
-			Parts: []map[string]interface{}{
+			Parts: []map[string]any{
 				{
 					"text": `{"message":"Understood, all my responses will be strictly in JSON format","action":{"send_files":[]},"target":false,"operator":false}`,
 				},
@@ -1392,10 +1392,10 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	} else {
 		// Если нет tools, можно безопасно использовать response_schema для гарантированного JSON
 		if payload["generationConfig"] == nil {
-			payload["generationConfig"] = map[string]interface{}{}
+			payload["generationConfig"] = map[string]any{}
 		}
 
-		genConfig := payload["generationConfig"].(map[string]interface{})
+		genConfig := payload["generationConfig"].(map[string]any)
 		genConfig["response_mime_type"] = "application/json"
 		genConfig["response_schema"] = create.ParseModelSchemaJSON(false) // false = БЕЗ additionalProperties для Google
 	}
@@ -1419,9 +1419,9 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 		//logger.Debug("Обнаружен вызов функций без текста, начинаем multi-turn conversation", userID)
 
 		// Добавляем model response в историю со ВСЕМИ функциями
-		modelResponseParts := make([]map[string]interface{}, len(functionCalls))
+		modelResponseParts := make([]map[string]any, len(functionCalls))
 		for i, fc := range functionCalls {
-			modelResponseParts[i] = map[string]interface{}{"functionCall": fc}
+			modelResponseParts[i] = map[string]any{"functionCall": fc}
 		}
 
 		history = append(history, GoogleContent{
@@ -1434,14 +1434,14 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 			//logger.Debug("🔧 [RequestStreaming] Обнаружено %d function calls, вызываю onToolCall...", len(functionCalls), userID)
 
 			// Преобразуем functionCalls в формат совместимый с OpenAI (для единообразия)
-			var toolCalls []interface{}
+			var toolCalls []any
 			for i, fc := range functionCalls {
 				functionName, _ := fc["name"].(string)
 
 				// Сериализуем аргументы в JSON строку (как в OpenAI)
 				argsJSON, _ := json.Marshal(fc["args"])
 
-				toolCall := map[string]interface{}{
+				toolCall := map[string]any{
 					"call_id":   fmt.Sprintf("gemini-fc-%d-%d", time.Now().UnixNano(), i),
 					"name":      functionName,
 					"arguments": string(argsJSON),
@@ -1459,15 +1459,15 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 			// Отправляем результаты функций клиенту через streaming
 			if onDelta != nil {
 				for i, output := range toolOutputs {
-					if outputMap, ok := output.(map[string]interface{}); ok {
+					if outputMap, ok := output.(map[string]any); ok {
 						callID, _ := outputMap["call_id"].(string)
 						content, _ := outputMap["content"].(string)
 
 						// Формируем JSON событие с результатом функции
-						functionResult := map[string]interface{}{
+						functionResult := map[string]any{
 							"type":      "function_result",
 							"call_id":   callID,
-							"name":      toolCalls[i].(map[string]interface{})["name"],
+							"name":      toolCalls[i].(map[string]any)["name"],
 							"content":   content,
 							"timestamp": time.Now().Format(time.RFC3339),
 						}
@@ -1487,18 +1487,18 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 
 			// Добавляем результаты функций в историю для повторного запроса
 			for i, output := range toolOutputs {
-				if outputMap, ok := output.(map[string]interface{}); ok {
+				if outputMap, ok := output.(map[string]any); ok {
 					content, _ := outputMap["content"].(string)
 
 					// Парсим content как JSON если возможно
-					var contentJSON interface{}
+					var contentJSON any
 					if err := json.Unmarshal([]byte(content), &contentJSON); err == nil {
 						// Добавляем результат функции в историю (в правильном формате для Google Gemini)
 						history = append(history, GoogleContent{
 							Role: "user",
-							Parts: []map[string]interface{}{
+							Parts: []map[string]any{
 								{
-									"functionResponse": map[string]interface{}{
+									"functionResponse": map[string]any{
 										"name":     functionCalls[i]["name"],
 										"response": contentJSON,
 									},
@@ -1509,11 +1509,11 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 						// Если не JSON - добавляем как строку
 						history = append(history, GoogleContent{
 							Role: "user",
-							Parts: []map[string]interface{}{
+							Parts: []map[string]any{
 								{
-									"functionResponse": map[string]interface{}{
+									"functionResponse": map[string]any{
 										"name":     functionCalls[i]["name"],
-										"response": map[string]interface{}{"result": content},
+										"response": map[string]any{"result": content},
 									},
 								},
 							},
@@ -1537,9 +1537,9 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 				// Добавляем результат функции в историю (в правильном формате для Google Gemini)
 				history = append(history, GoogleContent{
 					Role: "user",
-					Parts: []map[string]interface{}{
+					Parts: []map[string]any{
 						{
-							"functionResponse": map[string]interface{}{
+							"functionResponse": map[string]any{
 								"name":     fc["name"],
 								"response": result,
 							},
@@ -1682,7 +1682,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 
 		// Преобразуем в OpenAI-совместимый формат для клиента
 		// Клиент ожидает: input_tokens, output_tokens, total_tokens
-		openAIUsage := map[string]interface{}{
+		openAIUsage := map[string]any{
 			"input_tokens":  promptTokenCount,
 			"output_tokens": candidatesTokenCount,
 			"total_tokens":  totalTokenCount,
@@ -1690,20 +1690,20 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 
 		// Добавляем input_tokens_details если есть кэшированный контент
 		if cachedContentTokenCount > 0 {
-			openAIUsage["input_tokens_details"] = map[string]interface{}{
+			openAIUsage["input_tokens_details"] = map[string]any{
 				"cached_tokens": cachedContentTokenCount,
 			}
 		}
 
 		// Добавляем output_tokens_details если есть reasoning tokens (thoughtsTokenCount)
 		if thoughtsTokenCount > 0 {
-			openAIUsage["output_tokens_details"] = map[string]interface{}{
+			openAIUsage["output_tokens_details"] = map[string]any{
 				"reasoning_tokens": thoughtsTokenCount,
 			}
 		}
 
 		// Формируем событие в OpenAI-совместимом формате
-		tokenUsage := map[string]interface{}{
+		tokenUsage := map[string]any{
 			"type":  "token_usage",
 			"usage": openAIUsage,
 		}

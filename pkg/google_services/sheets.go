@@ -128,7 +128,7 @@ func (s *SheetsService) ReadRange(params ReadRangeParams) (string, error) {
 	}
 
 	// Формируем результат
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success": true,
 		"range":   resp.Range,
 		"values":  resp.Values,
@@ -146,10 +146,10 @@ func (s *SheetsService) ReadRange(params ReadRangeParams) (string, error) {
 
 // WriteRangeParams параметры для записи данных
 type WriteRangeParams struct {
-	UserID        uint32          `json:"user_id,string"`
-	SpreadsheetID string          `json:"spreadsheet_id"`
-	Range         string          `json:"range"`  // Например: "Sheet1!A1"
-	Values        [][]interface{} `json:"values"` // Двумерный массив значений
+	UserID        uint32  `json:"user_id,string"`
+	SpreadsheetID string  `json:"spreadsheet_id"`
+	Range         string  `json:"range"`  // Например: "Sheet1!A1"
+	Values        [][]any `json:"values"` // Двумерный массив значений
 }
 
 // WriteRange записывает данные в указанный диапазон
@@ -178,7 +178,7 @@ func (s *SheetsService) WriteRange(params WriteRangeParams) (string, error) {
 	}
 
 	// Формируем результат
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success":       true,
 		"updated_range": resp.UpdatedRange,
 		"updated_rows":  resp.UpdatedRows,
@@ -193,10 +193,10 @@ func (s *SheetsService) WriteRange(params WriteRangeParams) (string, error) {
 
 // AppendRangeParams параметры для добавления данных в конец таблицы
 type AppendRangeParams struct {
-	UserID        uint32          `json:"user_id,string"`
-	SpreadsheetID string          `json:"spreadsheet_id"`
-	Range         string          `json:"range"` // Например: "Sheet1!A:D"
-	Values        [][]interface{} `json:"values"`
+	UserID        uint32  `json:"user_id,string"`
+	SpreadsheetID string  `json:"spreadsheet_id"`
+	Range         string  `json:"range"` // Например: "Sheet1!A:D"
+	Values        [][]any `json:"values"`
 }
 
 // AppendRange добавляет данные в конец таблицы
@@ -225,7 +225,7 @@ func (s *SheetsService) AppendRange(params AppendRangeParams) (string, error) {
 	}
 
 	// Формируем результат
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success":       true,
 		"updated_range": resp.Updates.UpdatedRange,
 		"updated_rows":  resp.Updates.UpdatedRows,
@@ -280,7 +280,7 @@ func (s *SheetsService) CreateSpreadsheet(params CreateSpreadsheetParams) (strin
 	}
 
 	// Формируем результат
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success":        true,
 		"spreadsheet_id": resp.SpreadsheetId,
 		"title":          resp.Properties.Title,
@@ -315,9 +315,9 @@ func (s *SheetsService) GetSpreadsheetInfo(params GetSpreadsheetInfoParams) (str
 	}
 
 	// Собираем информацию о листах
-	sheetsList := make([]map[string]interface{}, len(resp.Sheets))
+	sheetsList := make([]map[string]any, len(resp.Sheets))
 	for i, sheet := range resp.Sheets {
-		sheetsList[i] = map[string]interface{}{
+		sheetsList[i] = map[string]any{
 			"title":     sheet.Properties.Title,
 			"sheet_id":  sheet.Properties.SheetId,
 			"index":     sheet.Properties.Index,
@@ -327,7 +327,7 @@ func (s *SheetsService) GetSpreadsheetInfo(params GetSpreadsheetInfoParams) (str
 	}
 
 	// Формируем результат
-	result := map[string]interface{}{
+	result := map[string]any{
 		"success":        true,
 		"spreadsheet_id": resp.SpreadsheetId,
 		"title":          resp.Properties.Title,

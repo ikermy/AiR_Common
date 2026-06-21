@@ -210,7 +210,7 @@ type VectorDocument struct {
 	Content   string           `json:"content"`
 	Embedding []float32        `json:"embedding"`
 	Metadata  DocumentMetadata `json:"metadata,omitempty"`
-	CreatedAt interface{}      `json:"created_at"` // time.Time в БД, но может быть string в JSON
+	CreatedAt any              `json:"created_at"` // time.Time в БД, но может быть string в JSON
 }
 
 // UserModelRecord представляет запись из таблицы user_models
@@ -1167,12 +1167,12 @@ func (m *UniversalModel) GetRealUserID(userID uint32) (uint64, error) {
 	return value, nil
 }
 
-// ParseModelSchemaJSON парсит статическую JSON Schema в map[string]interface{}
+// ParseModelSchemaJSON парсит статическую JSON Schema в map[string]any
 // для использования в response_schema (Google) и json_schema.schema (OpenAI)
 // Универсальный метод для обоих провайдеров
 // ПРИМЕЧАНИЕ: Эта статическая схема используется только для некоторых случаев.
 // OpenAI модели используют динамическую схему из generateModelSchema (open.go)
-func ParseModelSchemaJSON(includeAdditionalProperties bool) map[string]interface{} {
+func ParseModelSchemaJSON(includeAdditionalProperties bool) map[string]any {
 	// Базовая схема БЕЗ additionalProperties (для Google)
 	var modelSchemaJSON string
 
@@ -1265,12 +1265,12 @@ func ParseModelSchemaJSON(includeAdditionalProperties bool) map[string]interface
 	}`
 	}
 
-	var schema map[string]interface{}
+	var schema map[string]any
 	err := json.Unmarshal([]byte(modelSchemaJSON), &schema)
 	if err != nil {
 		// Это не должно произойти, т.к. modelSchemaJSON - валидный JSON
 		//logger.Error("[ParseModelSchemaJSON] Ошибка парсинга ModelSchemaJSON: %v", err)
-		return map[string]interface{}{} // Возвращаем пустую схему в крайнем случае
+		return map[string]any{} // Возвращаем пустую схему в крайнем случае
 	}
 	return schema
 }

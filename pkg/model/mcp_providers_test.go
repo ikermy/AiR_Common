@@ -51,10 +51,10 @@ var allProviders = []providerCase{
 }
 
 // mcpRequestWithSession — как mcpRequest, но принимает произвольный sessionID.
-func mcpRequestWithSession(t *testing.T, method string, params interface{}, sid string) map[string]interface{} {
+func mcpRequestWithSession(t *testing.T, method string, params any, sid string) map[string]any {
 	t.Helper()
 
-	body := map[string]interface{}{
+	body := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      "1",
 		"method":  method,
@@ -80,7 +80,7 @@ func mcpRequestWithSession(t *testing.T, method string, params interface{}, sid 
 
 	t.Logf("[%s] → %s  ← HTTP %d  body: %s", sid, method, resp.StatusCode, string(data))
 
-	var result map[string]interface{}
+	var result map[string]any
 	require.NoError(t, json.Unmarshal(data, &result), "ответ не является валидным JSON")
 	return result
 }
@@ -93,15 +93,15 @@ func TestMCP_Providers_ToolsList(t *testing.T) {
 	for _, prov := range allProviders {
 		prov := prov // capture
 		t.Run(prov.name, func(t *testing.T) {
-			resp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, prov.session)
+			resp := mcpRequestWithSession(t, "tools/list", map[string]any{}, prov.session)
 
 			require.Nil(t, resp["error"],
 				"[%s] tools/list не должен возвращать ошибку", prov.name)
 
-			result, ok := resp["result"].(map[string]interface{})
+			result, ok := resp["result"].(map[string]any)
 			require.True(t, ok, "[%s] result должен присутствовать", prov.name)
 
-			tools, ok := result["tools"].([]interface{})
+			tools, ok := result["tools"].([]any)
 			require.True(t, ok, "[%s] result.tools должен быть массивом", prov.name)
 			require.NotEmpty(t, tools,
 				"[%s] список инструментов не должен быть пустым для uid=%d", prov.name, testUID)
@@ -110,7 +110,7 @@ func TestMCP_Providers_ToolsList(t *testing.T) {
 
 			toolNames := make(map[string]bool, len(tools))
 			for _, rawTool := range tools {
-				tool, ok := rawTool.(map[string]interface{})
+				tool, ok := rawTool.(map[string]any)
 				require.True(t, ok, "[%s] каждый элемент tools должен быть объектом", prov.name)
 
 				name, _ := tool["name"].(string)
@@ -126,8 +126,8 @@ func TestMCP_Providers_ToolsList(t *testing.T) {
 					"[%s] inputSchema инструмента %q не должна быть nil", prov.name, name)
 
 				// user_id НЕ должен быть в inputSchema — MCP извлекает из X-Session-ID
-				if schema, ok := tool["inputSchema"].(map[string]interface{}); ok {
-					if props, ok := schema["properties"].(map[string]interface{}); ok {
+				if schema, ok := tool["inputSchema"].(map[string]any); ok {
+					if props, ok := schema["properties"].(map[string]any); ok {
 						_, hasUID := props["user_id"]
 						assert.False(t, hasUID,
 							"[%s] инструмент %q не должен содержать user_id в inputSchema", prov.name, name)
@@ -160,22 +160,22 @@ func TestMCP_Providers_CallGetCurrentTime(t *testing.T) {
 	for _, prov := range allProviders {
 		prov := prov
 		t.Run(prov.name, func(t *testing.T) {
-			resp := mcpRequestWithSession(t, "tools/call", map[string]interface{}{
+			resp := mcpRequestWithSession(t, "tools/call", map[string]any{
 				"name":      "get_current_time",
-				"arguments": map[string]interface{}{},
+				"arguments": map[string]any{},
 			}, prov.session)
 
 			require.Nil(t, resp["error"],
 				"[%s] get_current_time не должен возвращать ошибку протокола", prov.name)
 
-			result, ok := resp["result"].(map[string]interface{})
+			result, ok := resp["result"].(map[string]any)
 			require.True(t, ok, "[%s] result должен присутствовать", prov.name)
 
-			content, ok := result["content"].([]interface{})
+			content, ok := result["content"].([]any)
 			require.True(t, ok, "[%s] result.content должен быть массивом", prov.name)
 			require.NotEmpty(t, content, "[%s] result.content не должен быть пустым", prov.name)
 
-			first, ok := content[0].(map[string]interface{})
+			first, ok := content[0].(map[string]any)
 			require.True(t, ok)
 
 			assert.Equal(t, "text", first["type"],
@@ -198,22 +198,22 @@ func TestMCP_Providers_CallGetS3Files(t *testing.T) {
 	for _, prov := range allProviders {
 		prov := prov
 		t.Run(prov.name, func(t *testing.T) {
-			resp := mcpRequestWithSession(t, "tools/call", map[string]interface{}{
+			resp := mcpRequestWithSession(t, "tools/call", map[string]any{
 				"name":      "get_s3_files",
-				"arguments": map[string]interface{}{},
+				"arguments": map[string]any{},
 			}, prov.session)
 
 			require.Nil(t, resp["error"],
 				"[%s] get_s3_files не должен возвращать ошибку протокола", prov.name)
 
-			result, ok := resp["result"].(map[string]interface{})
+			result, ok := resp["result"].(map[string]any)
 			require.True(t, ok, "[%s] result должен присутствовать", prov.name)
 
-			content, ok := result["content"].([]interface{})
+			content, ok := result["content"].([]any)
 			require.True(t, ok, "[%s] result.content должен быть массивом", prov.name)
 			require.NotEmpty(t, content)
 
-			first, ok := content[0].(map[string]interface{})
+			first, ok := content[0].(map[string]any)
 			require.True(t, ok)
 
 			text, _ := first["text"].(string)
@@ -234,21 +234,21 @@ func TestMCP_Providers_NouserIDInSchema(t *testing.T) {
 	for _, prov := range allProviders {
 		prov := prov
 		t.Run(prov.name, func(t *testing.T) {
-			resp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, prov.session)
+			resp := mcpRequestWithSession(t, "tools/list", map[string]any{}, prov.session)
 			require.Nil(t, resp["error"])
 
-			result, ok := resp["result"].(map[string]interface{})
+			result, ok := resp["result"].(map[string]any)
 			require.True(t, ok)
 
-			tools, ok := result["tools"].([]interface{})
+			tools, ok := result["tools"].([]any)
 			require.True(t, ok)
 
 			violations := 0
 			for _, rawTool := range tools {
-				tool, _ := rawTool.(map[string]interface{})
+				tool, _ := rawTool.(map[string]any)
 				name, _ := tool["name"].(string)
-				if schema, ok := tool["inputSchema"].(map[string]interface{}); ok {
-					if props, ok := schema["properties"].(map[string]interface{}); ok {
+				if schema, ok := tool["inputSchema"].(map[string]any); ok {
+					if props, ok := schema["properties"].(map[string]any); ok {
 						if _, hasUID := props["user_id"]; hasUID {
 							t.Errorf("[%s] инструмент %q содержит запрещённый параметр user_id в inputSchema", prov.name, name)
 							violations++
@@ -278,24 +278,24 @@ func TestMCP_Providers_ToolsCount(t *testing.T) {
 	results := make([]countResult, 0, len(allProviders))
 
 	for _, prov := range allProviders {
-		resp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, prov.session)
+		resp := mcpRequestWithSession(t, "tools/list", map[string]any{}, prov.session)
 		if resp["error"] != nil {
 			t.Logf("[%s] ОШИБКА: %v", prov.name, resp["error"])
 			continue
 		}
 
-		result, ok := resp["result"].(map[string]interface{})
+		result, ok := resp["result"].(map[string]any)
 		if !ok {
 			continue
 		}
-		tools, ok := result["tools"].([]interface{})
+		tools, ok := result["tools"].([]any)
 		if !ok {
 			continue
 		}
 
 		names := make([]string, 0, len(tools))
 		for _, rawTool := range tools {
-			if tool, ok := rawTool.(map[string]interface{}); ok {
+			if tool, ok := rawTool.(map[string]any); ok {
 				if name, ok := tool["name"].(string); ok {
 					names = append(names, name)
 				}
@@ -333,18 +333,18 @@ func TestMCP_LeadTarget_Schema(t *testing.T) {
 	for _, prov := range allProviders {
 		prov := prov
 		t.Run(prov.name, func(t *testing.T) {
-			resp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, prov.session)
+			resp := mcpRequestWithSession(t, "tools/list", map[string]any{}, prov.session)
 			require.Nil(t, resp["error"])
 
-			result, ok := resp["result"].(map[string]interface{})
+			result, ok := resp["result"].(map[string]any)
 			require.True(t, ok)
-			tools, ok := result["tools"].([]interface{})
+			tools, ok := result["tools"].([]any)
 			require.True(t, ok)
 
 			// Ищем lead_target в списке
-			var leadTarget map[string]interface{}
+			var leadTarget map[string]any
 			for _, rawTool := range tools {
-				tool, _ := rawTool.(map[string]interface{})
+				tool, _ := rawTool.(map[string]any)
 				if tool["name"] == "lead_target" {
 					leadTarget = tool
 					break
@@ -368,8 +368,8 @@ func TestMCP_LeadTarget_Schema(t *testing.T) {
 				"[%s] lead_target должен иметь inputSchema", prov.name)
 
 			// Проверяем inputSchema: должен быть resp_id, НЕ должно быть user_id
-			if schema, ok := leadTarget["inputSchema"].(map[string]interface{}); ok {
-				if props, ok := schema["properties"].(map[string]interface{}); ok {
+			if schema, ok := leadTarget["inputSchema"].(map[string]any); ok {
+				if props, ok := schema["properties"].(map[string]any); ok {
 					_, hasRespId := props["resp_id"]
 					assert.True(t, hasRespId,
 						"[%s] lead_target.inputSchema должен содержать resp_id", prov.name)
@@ -394,16 +394,16 @@ func TestMCP_LeadTarget_Call(t *testing.T) {
 		prov := prov
 		t.Run(prov.name, func(t *testing.T) {
 			// Сначала проверяем что инструмент доступен
-			listResp := mcpRequestWithSession(t, "tools/list", map[string]interface{}{}, prov.session)
+			listResp := mcpRequestWithSession(t, "tools/list", map[string]any{}, prov.session)
 			if listResp["error"] != nil {
 				t.Skipf("[%s] tools/list вернул ошибку, пропускаем", prov.name)
 				return
 			}
-			listResult, _ := listResp["result"].(map[string]interface{})
-			tools, _ := listResult["tools"].([]interface{})
+			listResult, _ := listResp["result"].(map[string]any)
+			tools, _ := listResult["tools"].([]any)
 			hasLeadTarget := false
 			for _, rawTool := range tools {
-				if tool, _ := rawTool.(map[string]interface{}); tool["name"] == "lead_target" {
+				if tool, _ := rawTool.(map[string]any); tool["name"] == "lead_target" {
 					hasLeadTarget = true
 					break
 				}
@@ -414,23 +414,23 @@ func TestMCP_LeadTarget_Call(t *testing.T) {
 			}
 
 			// Вызываем lead_target
-			resp := mcpRequestWithSession(t, "tools/call", map[string]interface{}{
+			resp := mcpRequestWithSession(t, "tools/call", map[string]any{
 				"name":      "lead_target",
-				"arguments": map[string]interface{}{"resp_id": testRespId},
+				"arguments": map[string]any{"resp_id": testRespId},
 			}, prov.session)
 
 			// Ошибка протокола (JSON-RPC error) недопустима
 			require.Nil(t, resp["error"],
 				"[%s] lead_target не должен возвращать JSON-RPC ошибку протокола", prov.name)
 
-			result, ok := resp["result"].(map[string]interface{})
+			result, ok := resp["result"].(map[string]any)
 			require.True(t, ok, "[%s] result должен присутствовать", prov.name)
 
-			content, ok := result["content"].([]interface{})
+			content, ok := result["content"].([]any)
 			require.True(t, ok, "[%s] result.content должен быть массивом", prov.name)
 			require.NotEmpty(t, content)
 
-			first, _ := content[0].(map[string]interface{})
+			first, _ := content[0].(map[string]any)
 			text, _ := first["text"].(string)
 
 			t.Logf("[%s] lead_target(resp_id=%d) → %s", prov.name, testRespId, text)
@@ -439,7 +439,7 @@ func TestMCP_LeadTarget_Call(t *testing.T) {
 			assert.NotEmpty(t, text, "[%s] lead_target должен вернуть непустой результат", prov.name)
 
 			// Если вернул JSON с "target": true — это успех
-			var resultMap map[string]interface{}
+			var resultMap map[string]any
 			if err := json.Unmarshal([]byte(text), &resultMap); err == nil {
 				if target, ok := resultMap["target"].(bool); ok {
 					t.Logf("[%s] lead_target.target = %v", prov.name, target)

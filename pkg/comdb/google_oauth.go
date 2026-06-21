@@ -171,7 +171,7 @@ func (d *DB) GetGoogleToken(userID uint32) (*oauth2.Token, string, error) {
 	if scopesJSON.Valid && scopesJSON.String != "" {
 		var scopes []string
 		if err := json.Unmarshal([]byte(scopesJSON.String), &scopes); err == nil {
-			token = token.WithExtra(map[string]interface{}{"scope": scopes})
+			token = token.WithExtra(map[string]any{"scope": scopes})
 		}
 	}
 
