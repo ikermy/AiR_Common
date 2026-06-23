@@ -12,6 +12,8 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/mode"
+	"github.com/nicksnyder/go-i18n/v2/i18n"
+	"golang.org/x/text/language"
 )
 
 // sendHTTPRequest отправляет HTTP POST запрос с JSON payload
@@ -162,7 +164,6 @@ func (e *Endpoint) SendNotification(msg com.CarpCh) error {
 }
 
 func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName, target string) error {
-	// Добавить userID для возможности смены языка уведомлений
 	url := fmt.Sprintf("http://airbff:%s/v1/notification/telega", mode.LandingPort)
 
 	payload := map[string]any{
@@ -178,7 +179,6 @@ func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName
 }
 
 func SendEmailNotification(uid uint32, email, event, userName, assistName, target string) error {
-	// Добавить userID для возможности смены языка уведомлений
 	url := fmt.Sprintf("http://airbff:%s/v1/notification/mail", mode.LandingPort)
 
 	payload := map[string]any{
@@ -194,7 +194,6 @@ func SendEmailNotification(uid uint32, email, event, userName, assistName, targe
 }
 
 func SendInstantNotification(uid uint32, event, userName, assistName, target string) error {
-	// Добавить userID для возможности смены языка уведомлений
 	url := fmt.Sprintf("http://airbff:%s/v1/notification/instant", mode.LandingPort)
 
 	payload := map[string]any{
@@ -236,10 +235,129 @@ type PaymentStatus struct {
 	ExpiresAt      string  `json:"expiresAt"`
 }
 
+type localizerWrapper struct {
+	localizer *i18n.Localizer
+}
+
+func newEventLocalizer(lang string) (*localizerWrapper, error) {
+	if lang != "ru" && lang != "en" && lang != "es" {
+		return nil, fmt.Errorf("unsupported lang: %s", lang)
+	}
+
+	bundle := i18n.NewBundle(language.Russian)
+	bundle.RegisterUnmarshalFunc("json", json.Unmarshal)
+
+	translations := map[string]string{
+		"ru": `[
+			{"id":"payment.status","translation":"\tСтатус: {{.Status}}\n\tВалюта: {{.Currency}}\n\tСумма: {{.Amount}}\n\tСумма в USD: {{.AmountUSD}}\n\tПоступление: {{.ReceivedAmount}}\n \tНомер заказа: {{.OrderID}}\n\tСеть: {{.Network}}\n\tХэш транзакции: {{.TxHash}}\n\tПодтверждения: {{.Confirmations}}\n\tСоздано: {{.CreatedAt}}\n\tОбновлено: {{.UpdatedAt}}\n\tСрок действия: {{.ExpiresAt}}"},
+			{"id":"payment.new","translation":"новый платёж"},
+			{"id":"payment.active","translation":"активный платёж"},
+			{"id":"payment.pending","translation":"\tСтатус: {{.Status}}\n\tВалюта: {{.Currency}}\n\tСумма: {{.Amount}}\n\tСумма в USD: {{.AmountUSD}}\n\tНомер заказа: {{.OrderID}}\n\tСеть: {{.Network}}\n\tСрок действия: {{.ExpiresAt}}"},
+			{"id":"event.usdt_pay.init","translation":"Сформирован счёт для оплаты подписки:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.pending","translation":"Инициирована оплата подписки:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.partial","translation":"Частичная оплата подписки:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.confirmed","translation":"Подтверждена оплата подписки:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.failed","translation":"Ошибка оплаты подписки:\n{{.Payment}}"},
+			{"id":"event.start","translation":"Пользователь {{.UserName}} начал диалог с ассистентом {{.AssistName}}"},
+			{"id":"event.end","translation":"Пользователь {{.UserName}} завершил диалог с ассистентом {{.AssistName}}"},
+			{"id":"event.target","translation":"Ассистент {{.AssistName}} достиг цели '{{.Target}}' в диалоге с пользователем {{.UserName}}"},
+			{"id":"event.trigger","translation":"Ассистент {{.AssistName}} сработал на триггер '{{.Target}}' в диалоге с пользователем {{.UserName}}"},
+			{"id":"event.reauth","translation":"Канал {{.Target}} отключен, требуется повторная авторизация"},
+			{"id":"event.reauth-userkey","translation":"Для работы требуется расшифровка пользовательских данных, пожалуйста, войдите в систему заново."},
+			{"id":"event.model-operator","translation":"Ассистент {{.AssistName}} запросил переключение на оператора в диалоге с пользователем {{.UserName}}"},
+			{"id":"subscription.no_subscription","translation":"У вас нет подписки. Пожалуйста, оформите подписку."},
+			{"id":"subscription.expired","translation":"Ваша подписка истекла. Пожалуйста, продлите подписку."},
+			{"id":"subscription.limit_exceeded","translation":"Вы превысили лимит сообщений. Пожалуйста, пополните баланс."},
+			{"id":"subscription.insufficient_balance","translation":"Недостаточно средств на балансе. Пожалуйста, пополните баланс."},
+			{"id":"event.lead-botunban","translation":"Боты:\n{{.Target}}\nразблокированы по таймеру, попробуйте их снова использовать"},
+			{"id":"event.lead-start","translation":"Поиск лидов запущен:\n-всего контактов для обработки {{.Target}}"},
+			{"id":"event.lead-stop","translation":"Поиск лидов завершён:\n-всего контактов {{.Target}}\n-обработанно {{.AssistName}}"},
+			{"id":"event.ai-provider-limit.default","translation":"AI-провайдер"},
+			{"id":"event.ai-provider-limit","translation":"⚠️ Проблема с подключением к {{.LimitInfo}}:\nпревышен лимит запросов или требуется оплата.\nПожалуйста, проверьте статус подписки и пополните баланс."}
+		]`,
+		"en": `[
+			{"id":"payment.status","translation":"\tStatus: {{.Status}}\n\tCurrency: {{.Currency}}\n\tAmount: {{.Amount}}\n\tAmount in USD: {{.AmountUSD}}\n\tReceived: {{.ReceivedAmount}}\n \tOrder ID: {{.OrderID}}\n\tNetwork: {{.Network}}\n\tTransaction hash: {{.TxHash}}\n\tConfirmations: {{.Confirmations}}\n\tCreated: {{.CreatedAt}}\n\tUpdated: {{.UpdatedAt}}\n\tExpires at: {{.ExpiresAt}}"},
+			{"id":"payment.new","translation":"new payment"},
+			{"id":"payment.active","translation":"active payment"},
+			{"id":"payment.pending","translation":"\tStatus: {{.Status}}\n\tCurrency: {{.Currency}}\n\tAmount: {{.Amount}}\n\tAmount in USD: {{.AmountUSD}}\n\tOrder ID: {{.OrderID}}\n\tNetwork: {{.Network}}\n\tExpires at: {{.ExpiresAt}}"},
+			{"id":"event.usdt_pay.init","translation":"Subscription payment invoice created:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.pending","translation":"Subscription payment initiated:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.partial","translation":"Partial subscription payment:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.confirmed","translation":"Subscription payment confirmed:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.failed","translation":"Subscription payment failed:\n{{.Payment}}"},
+			{"id":"event.start","translation":"User {{.UserName}} started a dialog with assistant {{.AssistName}}"},
+			{"id":"event.end","translation":"User {{.UserName}} ended the dialog with assistant {{.AssistName}}"},
+			{"id":"event.target","translation":"Assistant {{.AssistName}} reached the goal '{{.Target}}' in the dialog with user {{.UserName}}"},
+			{"id":"event.trigger","translation":"Assistant {{.AssistName}} triggered on '{{.Target}}' in the dialog with user {{.UserName}}"},
+			{"id":"event.reauth","translation":"Channel {{.Target}} is disconnected, re-authorization is required"},
+			{"id":"event.reauth-userkey","translation":"User data decryption is required to continue, please sign in again."},
+			{"id":"event.model-operator","translation":"Assistant {{.AssistName}} requested switching to an operator in the dialog with user {{.UserName}}"},
+			{"id":"subscription.no_subscription","translation":"You do not have a subscription. Please subscribe."},
+			{"id":"subscription.expired","translation":"Your subscription has expired. Please renew it."},
+			{"id":"subscription.limit_exceeded","translation":"You have exceeded the message limit. Please top up your balance."},
+			{"id":"subscription.insufficient_balance","translation":"Insufficient balance. Please top up your account."},
+			{"id":"event.lead-botunban","translation":"Bots:\n{{.Target}}\nhave been unblocked by timer, try using them again"},
+			{"id":"event.lead-start","translation":"Lead search started:\n-total contacts to process {{.Target}}"},
+			{"id":"event.lead-stop","translation":"Lead search completed:\n-total contacts {{.Target}}\n-processed {{.AssistName}}"},
+			{"id":"event.ai-provider-limit.default","translation":"AI provider"},
+			{"id":"event.ai-provider-limit","translation":"⚠️ Connection issue with {{.LimitInfo}}:\nrequest limit exceeded or payment required.\nPlease check your subscription status and top up your balance."}
+		]`,
+		"es": `[
+			{"id":"payment.status","translation":"\tEstado: {{.Status}}\n\tMoneda: {{.Currency}}\n\tImporte: {{.Amount}}\n\tImporte en USD: {{.AmountUSD}}\n\tRecibido: {{.ReceivedAmount}}\n \tID del pedido: {{.OrderID}}\n\tRed: {{.Network}}\n\tHash de transacción: {{.TxHash}}\n\tConfirmaciones: {{.Confirmations}}\n\tCreado: {{.CreatedAt}}\n\tActualizado: {{.UpdatedAt}}\n\tExpira: {{.ExpiresAt}}"},
+			{"id":"payment.new","translation":"nuevo pago"},
+			{"id":"payment.active","translation":"pago activo"},
+			{"id":"payment.pending","translation":"\tEstado: {{.Status}}\n\tMoneda: {{.Currency}}\n\tImporte: {{.Amount}}\n\tImporte en USD: {{.AmountUSD}}\n\tID del pedido: {{.OrderID}}\n\tRed: {{.Network}}\n\tExpira: {{.ExpiresAt}}"},
+			{"id":"event.usdt_pay.init","translation":"Se generó una factura para pagar la suscripción:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.pending","translation":"Pago de suscripción iniciado:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.partial","translation":"Pago parcial de la suscripción:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.confirmed","translation":"Pago de suscripción confirmado:\n{{.Payment}}"},
+			{"id":"event.usdt_pay.failed","translation":"Error en el pago de la suscripción:\n{{.Payment}}"},
+			{"id":"event.start","translation":"El usuario {{.UserName}} inició un diálogo con el asistente {{.AssistName}}"},
+			{"id":"event.end","translation":"El usuario {{.UserName}} finalizó el diálogo con el asistente {{.AssistName}}"},
+			{"id":"event.target","translation":"El asistente {{.AssistName}} alcanzó el objetivo '{{.Target}}' en el diálogo con el usuario {{.UserName}}"},
+			{"id":"event.trigger","translation":"El asistente {{.AssistName}} se activó por el disparador '{{.Target}}' en el diálogo con el usuario {{.UserName}}"},
+			{"id":"event.reauth","translation":"El canal {{.Target}} está desconectado, se requiere una nueva autorización"},
+			{"id":"event.reauth-userkey","translation":"Se requiere descifrar los datos del usuario para continuar; por favor, vuelva a iniciar sesión."},
+			{"id":"event.model-operator","translation":"El asistente {{.AssistName}} solicitó cambiar a un operador en el diálogo con el usuario {{.UserName}}"},
+			{"id":"subscription.no_subscription","translation":"No tiene una suscripción. Por favor, suscríbase."},
+			{"id":"subscription.expired","translation":"Su suscripción ha expirado. Por favor, renuévela."},
+			{"id":"subscription.limit_exceeded","translation":"Ha superado el límite de mensajes. Por favor, recargue su saldo."},
+			{"id":"subscription.insufficient_balance","translation":"Saldo insuficiente. Por favor, recargue su cuenta."},
+			{"id":"event.lead-botunban","translation":"Bots:\n{{.Target}}\nse desbloquearon por temporizador, inténtelos de nuevo"},
+			{"id":"event.lead-start","translation":"Búsqueda de leads iniciada:\n-total de contactos para procesar {{.Target}}"},
+			{"id":"event.lead-stop","translation":"Búsqueda de leads finalizada:\n-total de contactos {{.Target}}\n-procesados {{.AssistName}}"},
+			{"id":"event.ai-provider-limit.default","translation":"Proveedor de IA"},
+			{"id":"event.ai-provider-limit","translation":"⚠️ Problema de conexión con {{.LimitInfo}}:\nse superó el límite de solicitudes o se requiere pago.\nPor favor, verifique el estado de su suscripción y recargue su saldo."}
+		]`,
+	}
+
+	if _, err := bundle.ParseMessageFileBytes([]byte(translations[lang]), lang+".json"); err != nil {
+		return nil, fmt.Errorf("failed to parse translations for %s: %w", lang, err)
+	}
+
+	return &localizerWrapper{localizer: i18n.NewLocalizer(bundle, lang)}, nil
+}
+
+func (l *localizerWrapper) mustLocalize(messageID string, templateData map[string]any) (string, error) {
+	msg, err := l.localizer.Localize(&i18n.LocalizeConfig{
+		MessageID:    messageID,
+		TemplateData: templateData,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return msg, nil
+}
+
 // CreateMessageFromEvent создает сообщение на основе события
-func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string, error) {
-	// Добавить userID для возможности смены языка уведомлений
+func CreateMessageFromEvent(lang, Event, UserName, AssistName, Target string) (string, error) {
 	var msg, payment string
+
+	loc, err := newEventLocalizer(lang)
+	if err != nil {
+		return "", err
+	}
 
 	if AssistName != "init" && Event == "usdt_pay" {
 		var paritalInfo PaymentStatus
@@ -260,21 +378,23 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 			return t.Format("02.01.2006 15:04:05")
 		}
 
-		payment = fmt.Sprintf(
-			"	Статус: %s\n	Валюта: %s\n	Сумма: %.2f\n	Сумма в USD: %.2f\n	Поступление: %.2f\n Номер заказа: %s\n	Сеть: %s\n	Хэш транзакции: %s\n	Подтверждения: %d\n	Создано: %s\n	Обновлено: %s\n	Срок действия: %s",
-			paritalInfo.Status,
-			paritalInfo.Currency,
-			paritalInfo.Amount,
-			paritalInfo.AmountUsd,
-			paritalInfo.ReceivedAmount,
-			paritalInfo.OrderID,
-			paritalInfo.Network,
-			paritalInfo.TxHash,
-			paritalInfo.Confirmations,
-			formatOrRaw(createdAt, err1, paritalInfo.CreatedAt),
-			formatOrRaw(updatedAt, err2, paritalInfo.UpdatedAt),
-			formatOrRaw(expiresAt, err3, paritalInfo.ExpiresAt),
-		)
+		payment, err = loc.mustLocalize("payment.status", map[string]any{
+			"Status":         paritalInfo.Status,
+			"Currency":       paritalInfo.Currency,
+			"Amount":         fmt.Sprintf("%.2f", paritalInfo.Amount),
+			"AmountUSD":      fmt.Sprintf("%.2f", paritalInfo.AmountUsd),
+			"ReceivedAmount": fmt.Sprintf("%.2f", paritalInfo.ReceivedAmount),
+			"OrderID":        paritalInfo.OrderID,
+			"Network":        paritalInfo.Network,
+			"TxHash":         paritalInfo.TxHash,
+			"Confirmations":  paritalInfo.Confirmations,
+			"CreatedAt":      formatOrRaw(createdAt, err1, paritalInfo.CreatedAt),
+			"UpdatedAt":      formatOrRaw(updatedAt, err2, paritalInfo.UpdatedAt),
+			"ExpiresAt":      formatOrRaw(expiresAt, err3, paritalInfo.ExpiresAt),
+		})
+		if err != nil {
+			return "", fmt.Errorf("failed to localize payment status: %w", err)
+		}
 	}
 	switch Event {
 	// События оплаты подписки
@@ -293,81 +413,96 @@ func CreateMessageFromEvent(Event, UserName, AssistName, Target string) (string,
 			}
 
 			if UserName == "false" {
-				answer = "новый платёж"
+				answer, err = loc.mustLocalize("payment.new", nil)
 			} else {
-				answer = "активный платёж"
+				answer, err = loc.mustLocalize("payment.active", nil)
+			}
+			if err != nil {
+				return "", fmt.Errorf("failed to localize payment state: %w", err)
 			}
 
 			expiresAt := int64(1755884144)
 			t := time.Unix(expiresAt, 0)
 
-			pending := fmt.Sprintf(
-				"	Статус: %s\n	Валюта: %s\n	Сумма: %d\n	Сумма в USD: %d\n	Номер заказа: %s\n	Сеть: %s\n	Срок действия: %s",
-				answer,
-				payInfo.Currency,
-				payInfo.Amount,
-				payInfo.AmountUsd,
-				payInfo.OrderId,
-				payInfo.Network,
-				t.Format("02.01.2006 15:04:05"),
-			)
+			pending, err := loc.mustLocalize("payment.pending", map[string]any{
+				"Status":    answer,
+				"Currency":  payInfo.Currency,
+				"Amount":    payInfo.Amount,
+				"AmountUSD": payInfo.AmountUsd,
+				"OrderID":   payInfo.OrderId,
+				"Network":   payInfo.Network,
+				"ExpiresAt": t.Format("02.01.2006 15:04:05"),
+			})
+			if err != nil {
+				return "", fmt.Errorf("failed to localize pending payment: %w", err)
+			}
 
-			msg = fmt.Sprintf("Сформированн счёт для оплаты подписки:\n%s", pending)
+			msg, err = loc.mustLocalize("event.usdt_pay.init", map[string]any{"Payment": pending})
 		case "pending":
-			msg = fmt.Sprintf("Инициирована оплата подписки:\n%s", payment)
+			msg, err = loc.mustLocalize("event.usdt_pay.pending", map[string]any{"Payment": payment})
 		case "partial":
-			msg = fmt.Sprintf("Частичная оплата подписки:\n%s", payment)
+			msg, err = loc.mustLocalize("event.usdt_pay.partial", map[string]any{"Payment": payment})
 		case "confirmed":
-			msg = fmt.Sprintf("Подтверждена оплата подписки:\n%s", payment)
+			msg, err = loc.mustLocalize("event.usdt_pay.confirmed", map[string]any{"Payment": payment})
 		case "failed":
-			msg = fmt.Sprintf("Ошибка оплаты подписки:\n%s", payment)
+			msg, err = loc.mustLocalize("event.usdt_pay.failed", map[string]any{"Payment": payment})
 		default:
 			return "", fmt.Errorf("Неизвестное событие pay:\n%s", AssistName)
+		}
+		if err != nil {
+			return "", fmt.Errorf("failed to localize usdt_pay event: %w", err)
 		}
 
 	// События диалога с ассистентом
 	case "start":
-		msg = fmt.Sprintf("Пользователь %s начал диалог с ассистентом %s", UserName, AssistName)
+		msg, err = loc.mustLocalize("event.start", map[string]any{"UserName": UserName, "AssistName": AssistName})
 	case "end":
-		msg = fmt.Sprintf("Пользователь %s завершил диалог с ассистентом %s", UserName, AssistName)
+		msg, err = loc.mustLocalize("event.end", map[string]any{"UserName": UserName, "AssistName": AssistName})
 	case "target":
-		msg = fmt.Sprintf("Ассистент %s достиг цели '%s' в диалоге с пользователем %s", AssistName, Target, UserName)
+		msg, err = loc.mustLocalize("event.target", map[string]any{"AssistName": AssistName, "Target": Target, "UserName": UserName})
 	case "trigger":
-		msg = fmt.Sprintf("Ассистент %s сработал на триггер '%s' в диалоге с пользователем %s", AssistName, Target, UserName)
+		msg, err = loc.mustLocalize("event.trigger", map[string]any{"AssistName": AssistName, "Target": Target, "UserName": UserName})
 	case "reauth":
-		msg = fmt.Sprintf("Канал %s отключен, требуется повторная авторизация", Target)
+		msg, err = loc.mustLocalize("event.reauth", map[string]any{"Target": Target})
 	case "reauth-userkey":
-		msg = fmt.Sprintf("Для работы требуется расшифровка пользовательских данных, пожалуйста, войдите в систему заново.")
+		msg, err = loc.mustLocalize("event.reauth-userkey", nil)
 	case "model-operator":
-		msg = fmt.Sprintf("Ассистент %s запросил переключение на оператора в диалоге с пользователем %s", AssistName, UserName)
+		msg, err = loc.mustLocalize("event.model-operator", map[string]any{"AssistName": AssistName, "UserName": UserName})
 	// События подписки
 	case "subscription":
 		errMsg := map[com.ErrorCode]string{
-			com.ErrNoSubscription:       "У вас нет подписки. Пожалуйста, оформите подписку.",
-			com.ErrSubscriptionExpired:  "Ваша подписка истекла. Пожалуйста, продлите подписку.",
-			com.ErrMessageLimitExceeded: "Вы превысили лимит сообщений. Пожалуйста, пополните баланс.",
-			com.ErrInsufficientBalance:  "Недостаточно средств на балансе. Пожалуйста, пополните баланс.",
+			com.ErrNoSubscription:       "subscription.no_subscription",
+			com.ErrSubscriptionExpired:  "subscription.expired",
+			com.ErrMessageLimitExceeded: "subscription.limit_exceeded",
+			com.ErrInsufficientBalance:  "subscription.insufficient_balance",
 		}
 		errorCode, _ := strconv.Atoi(Target)
-		msg = errMsg[com.ErrorCode(errorCode)]
+		msg, err = loc.mustLocalize(errMsg[com.ErrorCode(errorCode)], nil)
 		// Разбан ботов для service lead generation
 	case "lead-botunban":
-		msg = fmt.Sprintf("Боты:\n%s\nразблокированы по таймеру, попробуйте их снова использовать", Target)
+		msg, err = loc.mustLocalize("event.lead-botunban", map[string]any{"Target": Target})
 	case "lead-start":
-		msg = fmt.Sprintf("Поиск лидов запущен:\n-всего контактов для обработки %s", Target)
+		msg, err = loc.mustLocalize("event.lead-start", map[string]any{"Target": Target})
 	case "lead-stop":
-		msg = fmt.Sprintf("Поиск лидов завершён:\n-всего контактов %s\n-обработанно %s", Target, AssistName)
+		msg, err = loc.mustLocalize("event.lead-stop", map[string]any{"Target": Target, "AssistName": AssistName})
 	// События превышения лимита AI-провайдера
 	case "ai-provider-limit":
 		// Target содержит информацию о провайдере и/или коде ошибки
 		// Например: "OpenAI: 429 Too Many Requests" или "Mistral: rate_limit_exceeded"
 		limitInfo := Target
 		if limitInfo == "" {
-			limitInfo = "AI-провайдер"
+			limitInfo, err = loc.mustLocalize("event.ai-provider-limit.default", nil)
+			if err != nil {
+				return "", fmt.Errorf("failed to localize ai provider default text: %w", err)
+			}
 		}
-		msg = fmt.Sprintf("⚠️ Проблема с подключением к %s:\nпревышен лимит запросов или требуется оплата.\nПожалуйста, проверьте статус подписки и пополните баланс.", limitInfo)
+		msg, err = loc.mustLocalize("event.ai-provider-limit", map[string]any{"LimitInfo": limitInfo})
 	default:
 		return "", fmt.Errorf("неизвестное событие: %s", Event)
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("failed to localize event message: %w", err)
 	}
 
 	return msg, nil

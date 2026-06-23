@@ -5,9 +5,11 @@ go 1.25.0
 require (
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/nicksnyder/go-i18n/v2 v2.6.0
 	github.com/r3labs/sse/v2 v2.10.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/oauth2 v0.36.0
+	golang.org/x/text v0.37.0
 	google.golang.org/api v0.280.0
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
@@ -36,7 +38,6 @@ require (
 	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260519071638-aa98bba5eb94 // indirect
 	gopkg.in/cenkalti/backoff.v1 v1.1.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

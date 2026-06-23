@@ -78,10 +78,9 @@ type Exterior interface {
 
 	// UserInfo методы
 	UserTimeZone(userID uint32) (string, error)
+	UserLanguage(userID uint32) string
 
 	// UserAPIKey — персональные API-ключи провайдеров для каждого пользователя.
-	// TODO глобальный ключь не должен использоваться никогда!
-	// Возвращает пустую строку (без ошибки) если ключ не задан — caller должен использовать глобальный ключ.
 	GetUserAPIKey(userID uint32, provider ProviderType) (string, error)
 	SetUserAPIKey(userId uint32, provider ProviderType, apiKey string) error
 	DeleteUserAPIKey(userID uint32, provider ProviderType) error
@@ -2202,6 +2201,36 @@ func (d *DB) UserTimeZone(userID uint32) (string, error) {
 	}
 
 	return tz.String, nil
+}
+
+func (d *DB) UserLanguage(userID uint32) string {
+	if userID == 0 {
+		return "en"
+	}
+
+	ctx, cancel := context.WithTimeout(d.ctx, sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	var ln sql.NullString
+	err := d.conn.QueryRowContext(ctx, "SELECT UserLang(?)", userID).Scan(&ln)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return "en"
+		case errors.Is(err, context.Canceled):
+			return "en"
+		case errors.Is(err, sql.ErrNoRows):
+			return "en"
+		default:
+			return "en"
+		}
+	}
+
+	if !ln.Valid {
+		return "en"
+	}
+
+	return ln.String
 }
 
 func (d *DB) SetUserSubscriptionNotified(user uint32) error {
