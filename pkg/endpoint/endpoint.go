@@ -25,6 +25,18 @@ type Inter interface {
 	CallOptional(val any) error
 	SendEvent(userID uint32, event, userName, assistName, target string)
 	SendNotification(msg com.CarpCh) error
+
+	// TranslateMessageWithUserID возвращает локализованное сообщение для пользователя.
+	// Определяет язык по userID, создаёт локализатор и подставляет перевод
+	// поддерживаемые константы:
+	//
+	// operator.disconnected
+	//
+	// operator.mode.is.disabled
+	//
+	TranslateMessageWithUserID(userID uint32, message string) string
+
+	TranslateMessageWithLang(lang, message string) string
 }
 
 type DB comdb.Exterior

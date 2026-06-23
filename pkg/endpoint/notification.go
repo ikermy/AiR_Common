@@ -239,7 +239,79 @@ type localizerWrapper struct {
 	localizer *i18n.Localizer
 }
 
-func newEventLocalizer(lang string) (*localizerWrapper, error) {
+func simpleLocalizer(lang string) (*localizerWrapper, error) {
+	if lang != "ru" && lang != "en" && lang != "es" {
+		return nil, fmt.Errorf("unsupported lang: %s", lang)
+	}
+
+	bundle := i18n.NewBundle(language.Russian)
+	bundle.RegisterUnmarshalFunc("json", json.Unmarshal)
+
+	translations := map[string]string{
+		"ru": `[
+			{"id":"operator.disconnected","translation":"Оператор отключился. Маруся AI снова с вами!"},
+			{"id":"operator.mode.is.disabled","translation":"Режим оператора отключен, возобновляю работу AI"},
+			{"id":"notification","translation":"Уведомление"},
+			{"id":"notification.from.marusia","translation":"Уведомление от MarusiaAI"},
+			{"id":"sincerely.marusia.team","translation":"С уважением,<br>Команда MarusiaAI"},
+			{"id":"confirm.registration","translation":"Подтверждение регистрации"},
+			{"id":"welcome","translation":"Добро пожаловать в MarusiaAI!"},
+			{"id":"for.confirm.registration","translation":"<p>Вы успешно зарегистрировались на сайте MarusiaAI.</p>
+        <p>Для подтверждения вашего адреса электронной почты, пожалуйста, перейдите по следующей ссылке:</p>"},
+     	    {"id":"if.you.haven.t.requested","translation":"<p style="color: #666; font-size: 14px;">Если вы не запрашивали подтверждение, просто проигнорируйте это письмо.</p>
+        <p style="color: #666; font-size: 14px;">Ссылка действительна в течение ограниченного времени.</p>"},
+			{"id":"password.recovery","translation":"Восстановление пароля"},
+			{"id":"for.reset.password","translation":"Для сброса вашего пароля, пожалуйста, перейдите по следующей ссылке:"},
+			{"id":"reset.password","translation":"Сбросить пароль"},
+			{"id":"if.you.havenet.requested.password.reset","translation":"<p style="color: #666; font-size: 14px;">Если вы не запрашивали сброс пароля, просто проигнорируйте это письмо.</p>
+        <p style="color: #666; font-size: 14px;">Ссылка действительна в течение ограниченного времени.</p>"}
+		]`,
+		"en": `[
+			{"id":"operator.disconnected","translation":"The operator has disconnected. Marusya AI is back with you!"},
+			{"id":"operator.mode.is.disabled","translation":"Operator mode is disabled, resuming AI operation"},
+			{"id":"notification","translation":"Notification"},
+			{"id":"notification.from.marusia","translation":"Notification from MarusiaAI"},
+			{"id":"sincerely.marusia.team","translation":"Sincerely,<br>MarusiaAI Team"},
+			{"id":"confirm.registration","translation":"Registration Confirmation"},
+			{"id":"welcome","translation":"Welcome to MarusiaAI!"},
+			{"id":"for.confirm.registration","translation":"<p>You have successfully registered on MarusiaAI.</p>
+        <p>To confirm your email address, please click the following link:</p>"},
+     	    {"id":"if.you.haven.t.requested","translation":"<p style="color: #666; font-size: 14px;">If you did not request confirmation, please ignore this email.</p>
+        <p style="color: #666; font-size: 14px;">The link is valid for a limited time.</p>"},
+			{"id":"password.recovery","translation":"Password Recovery"},
+			{"id":"for.reset.password","translation":"To reset your password, please click the following link:"},
+			{"id":"reset.password","translation":"Reset Password"},
+			{"id":"if.you.havenet.requested.password.reset","translation":"<p style="color: #666; font-size: 14px;">If you did not request a password reset, please ignore this email.</p>
+        <p style="color: #666; font-size: 14px;">The link is valid for a limited time.</p>"}
+		]`,
+		"es": `[
+			{"id":"operator.disconnected","translation":"El operador se ha desconectado. Marusya AI está de vuelta contigo!"},
+			{"id":"operator.mode.is.disabled","translation":"El modo operador está deshabilitado, reanudando la operación de AI"},
+			{"id":"notification","translation":"Notificación"},
+			{"id":"notification.from.marusia","translation":"Notificación de MarusiaAI"},
+			{"id":"sincerely.marusia.team","translation":"Atentamente,<br>Equipo MarusiaAI"},
+			{"id":"confirm.registration","translation":"Confirmación de registro"},
+			{"id":"welcome","translation":"¡Bienvenido a MarusiaAI!"},
+			{"id":"for.confirm.registration","translation":"<p>Te has registrado correctamente en MarusiaAI.</p>
+        <p>Para confirmar tu dirección de correo electrónico, haz clic en el siguiente enlace:</p>"},
+     	    {"id":"if.you.haven.t.requested","translation":"<p style="color: #666; font-size: 14px;">Si no solicitaste la confirmación, ignora este correo electrónico.</p>
+        <p style="color: #666; font-size: 14px;">El enlace es válido por un tiempo limitado.</p>"},
+			{"id":"password.recovery","translation":"Recuperación de contraseña"},
+			{"id":"for.reset.password","translation":"Para restablecer tu contraseña, haz clic en el siguiente enlace:"},
+			{"id":"reset.password","translation":"Restablecer contraseña"},
+			{"id":"if.you.havenet.requested.password.reset","translation":"<p style="color: #666; font-size: 14px;">Si no solicitaste un restablecimiento de contraseña, ignora este correo electrónico.</p>
+        <p style="color: #666; font-size: 14px;">El enlace es válido por un tiempo limitado.</p>"}
+		]`,
+	}
+
+	if _, err := bundle.ParseMessageFileBytes([]byte(translations[lang]), lang+".json"); err != nil {
+		return nil, fmt.Errorf("failed to parse translations for %s: %w", lang, err)
+	}
+
+	return &localizerWrapper{localizer: i18n.NewLocalizer(bundle, lang)}, nil
+}
+
+func eventLocalizer(lang string) (*localizerWrapper, error) {
 	if lang != "ru" && lang != "en" && lang != "es" {
 		return nil, fmt.Errorf("unsupported lang: %s", lang)
 	}
@@ -354,7 +426,7 @@ func (l *localizerWrapper) mustLocalize(messageID string, templateData map[strin
 func CreateMessageFromEvent(lang, Event, UserName, AssistName, Target string) (string, error) {
 	var msg, payment string
 
-	loc, err := newEventLocalizer(lang)
+	loc, err := eventLocalizer(lang)
 	if err != nil {
 		return "", err
 	}
@@ -547,4 +619,34 @@ func (e *Endpoint) NotificationListener(notifCh chan<- com.LogMsg) {
 			}
 		}
 	}
+}
+
+func (e *Endpoint) TranslateMessageWithUserID(userID uint32, message string) string {
+	lang := e.db.UserLanguage(userID)
+
+	loc, err := simpleLocalizer(lang)
+	if err != nil {
+		return ""
+	}
+
+	answer, err := loc.mustLocalize(message, nil)
+	if err != nil {
+		return ""
+	}
+
+	return answer
+}
+
+func (e *Endpoint) TranslateMessageWithLang(lang, message string) string {
+	loc, err := simpleLocalizer(lang)
+	if err != nil {
+		return ""
+	}
+
+	answer, err := loc.mustLocalize(message, nil)
+	if err != nil {
+		return ""
+	}
+
+	return answer
 }
