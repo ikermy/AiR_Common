@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.37"
-git tag -a v1.50.37 -m "go-i18n"
+git commit -m "v1.50.38"
+git tag -a v1.50.38 -m "go-i18n"
 git push origin master
-git push origin v1.50.37
+git push origin v1.50.38
