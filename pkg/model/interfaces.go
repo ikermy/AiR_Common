@@ -19,7 +19,7 @@ type Inter interface {
 	GetFileAsReader(userID uint32, url string) (io.Reader, error)
 	GetOrSetRespGPT(assist Assistant, dialogID, respId uint64, respName string) (*RespModel, error)
 	GetCh(respId uint64) (*Ch, error)
-	GetRespIdBydialogID(dialogID uint64) (uint64, error)
+	GetRespIdByDialogID(dialogID uint64) (uint64, error)
 	SaveAllContextDuringExit()
 	Request(userID uint32, dialogID uint64, text string, files ...FileUpload) (AssistResponse, error)
 	RequestStreaming(userID uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...FileUpload) error

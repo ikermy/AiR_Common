@@ -325,7 +325,7 @@ func (m *Model) GetCh(respId uint64) (*model.Ch, error) {
 }
 
 // GetRespIdBydialogID получает ID респондента по ID диалога (реализация model.UniversalModel)
-func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
+func (m *Model) GetRespIdByDialogID(dialogID uint64) (uint64, error) {
 	return model.GetRespIdBydialogIDUniversal(dialogID, &m.responders)
 }
 

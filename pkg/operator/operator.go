@@ -38,7 +38,6 @@ type OperatorCh struct {
 }
 
 type Operator struct {
-	port          string
 	ctx           context.Context
 	cancel        context.CancelFunc
 	operatorChMap sync.Map
@@ -78,7 +77,6 @@ func New(parent context.Context) *Operator {
 		ctx:           ctx,
 		cancel:        cancel,
 		operatorChMap: sync.Map{},
-		port:          mode.OperPort,
 	}
 
 	return o
@@ -221,8 +219,8 @@ func (o *Operator) cleanup(key opKey, s *session) {
 func (o *Operator) listenerSession(key opKey, s *session) {
 	//logger.Debug("Starting listener session (user=%d, dialog=%d)", s.ch.userID, s.ch.DialogID)
 
-	base := fmt.Sprintf("http://localhost:%s/op", o.port)
-	sseURL := fmt.Sprintf("%s?user_id=%d&dialog_id=%d", base, s.ch.userID, s.ch.DialogID)
+	const url = "http://oper:8080/op"
+	sseURL := fmt.Sprintf("%s?user_id=%d&dialog_id=%d", url, s.ch.userID, s.ch.DialogID)
 	client := sse.NewClient(sseURL)
 
 	client.Connection.Transport = &http.Transport{
@@ -268,7 +266,7 @@ func (o *Operator) listenerSession(key opKey, s *session) {
 			//logger.Debug("Sending message via HTTP POST: %+v", msg)
 
 			go func(message model.Message) {
-				if err := o.sendMessage(base, s, message); err != nil {
+				if err := o.sendMessage(url, s, message); err != nil {
 					//logger.Error("Failed to send message: %v", err)
 					// Отправляем ошибку в канал для обработки
 					select {

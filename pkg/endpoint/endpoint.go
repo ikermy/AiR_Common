@@ -35,7 +35,6 @@ type Inter interface {
 	// operator.mode.is.disabled
 	//
 	TranslateMessageWithUserID(userID uint32, message string) string
-
 	TranslateMessageWithLang(lang, message string) string
 }
 

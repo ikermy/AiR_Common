@@ -1127,7 +1127,7 @@ func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
 // GetRealUserID получает реальный userID через HTTP запрос к landing серверу
 // Универсальный метод для всех провайдеров (OpenAI, Mistral)
 func (m *UniversalModel) GetRealUserID(userID uint32) (uint64, error) {
-	url := fmt.Sprintf("http://airbff:%s/v1/system/uid?uid=%d", mode.LandingPort, userID)
+	url := fmt.Sprintf("http://airbff:8080/v1/system/uid?uid=%d", userID)
 
 	// Создаём HTTP клиент с отключённой проверкой SSL для localhost
 	tr := &http.Transport{

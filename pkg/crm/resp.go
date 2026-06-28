@@ -144,7 +144,7 @@ func (u *User) ChannelsSettings(userID uint32) (*ChannelsSettings, error) {
 		return nil, fmt.Errorf("userID не может быть 0")
 	}
 
-	url := fmt.Sprintf("http://localhost:%s/configs/%s/channels", u.port, Type)
+	url := fmt.Sprintf("http://crm:8080/configs/%s/channels", Type)
 
 	resp, err := u.sendRESP(http.MethodGet, url, userID, nil)
 	if err != nil {
@@ -183,7 +183,7 @@ func (u *User) ChannelsSettings(userID uint32) (*ChannelsSettings, error) {
 
 // ContactID ищет контакт по номеру телефона и возвращает его
 func (u *User) ContactID(contact string) (Contact, error) {
-	url := fmt.Sprintf("http://localhost:%s/contacts/%s/search?phone=%s", u.port, Type, contact)
+	url := fmt.Sprintf("http://crm:8080/contacts/%s/search?phone=%s", Type, contact)
 
 	resp, err := u.sendRESP(http.MethodGet, url, u.conf.UserID, nil)
 	if err != nil {
@@ -213,7 +213,7 @@ func (u *User) ContactID(contact string) (Contact, error) {
 
 // FindContactByAltContact ищет контакт по альтернативному имени (например, @telegram_username)
 func (u *User) FindContactByAltContact(altContact string) (Contact, error) {
-	url := fmt.Sprintf("http://localhost:%s/contacts/%s/search-by-alt?alt_contact=%s", u.port, Type, altContact)
+	url := fmt.Sprintf("http://crm:8080/contacts/%s/search-by-alt?alt_contact=%s", Type, altContact)
 
 	resp, err := u.sendRESP(http.MethodGet, url, u.conf.UserID, nil)
 	if err != nil {
@@ -247,7 +247,7 @@ func (u *User) CreateContact(contact *CreateContact) (Contact, error) {
 		return Contact{}, fmt.Errorf("имя контакта не может быть пустым")
 	}
 
-	url := fmt.Sprintf("http://localhost:%s/contacts/%s", u.port, Type)
+	url := fmt.Sprintf("http://crm:8080/contacts/%s", Type)
 
 	jsonData, err := json.Marshal(contact)
 	if err != nil {
@@ -285,7 +285,7 @@ func (u *User) FindLeadByContactID(contactID string) ([]Lead, error) {
 		return nil, fmt.Errorf("contactID не может быть пустым")
 	}
 
-	url := fmt.Sprintf("http://localhost:%s/leads/%s/by-contact/%s", u.port, Type, contactID)
+	url := fmt.Sprintf("http://crm:8080/leads/%s/by-contact/%s", Type, contactID)
 
 	resp, err := u.sendRESP(http.MethodGet, url, u.conf.UserID, nil)
 	if err != nil {
@@ -319,7 +319,7 @@ func (u *User) FindLeadByContactID(contactID string) ([]Lead, error) {
 
 // NewLead создает новый лид в AmoCRM
 func (u *User) NewLead(lead *CreateLead) (Lead, error) {
-	url := fmt.Sprintf("http://localhost:%s/leads/%s/ai-dialog/%s", u.port, Type, lead.ContactID)
+	url := fmt.Sprintf("http://crm:8080/leads/%s/ai-dialog/%s", Type, lead.ContactID)
 
 	jsonData, err := json.Marshal(lead)
 	if err != nil {
@@ -363,7 +363,7 @@ func (u *User) AddNote(note AddNote) error {
 		return fmt.Errorf("текст заметки не может быть пустым")
 	}
 
-	url := fmt.Sprintf("http://localhost:%s/leads/%s/%s/notes", u.port, Type, note.LeadID)
+	url := fmt.Sprintf("http://crm:8080/leads/%s/%s/notes", Type, note.LeadID)
 
 	jsonData, err := json.Marshal(note)
 	if err != nil {
@@ -401,7 +401,7 @@ func (u *User) UpdateLeadState(leadID string) error {
 		return fmt.Errorf("leadID не может быть пустым")
 	}
 
-	url := fmt.Sprintf("http://localhost:%s/leads/%s/%s", u.port, Type, leadID)
+	url := fmt.Sprintf("http://crm:8080/leads/%s/%s", Type, leadID)
 
 	resp, err := u.sendRESP(http.MethodPatch, url, u.conf.UserID)
 	if err != nil {

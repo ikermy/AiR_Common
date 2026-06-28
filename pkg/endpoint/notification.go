@@ -164,7 +164,7 @@ func (e *Endpoint) SendNotification(msg com.CarpCh) error {
 }
 
 func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName, target string) error {
-	url := fmt.Sprintf("http://airbff:%s/v1/notification/telega", mode.LandingPort)
+	const url = "http://airbff:8080/v1/notification/telega"
 
 	payload := map[string]any{
 		"uid":    uid,
@@ -179,7 +179,7 @@ func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName
 }
 
 func SendEmailNotification(uid uint32, email, event, userName, assistName, target string) error {
-	url := fmt.Sprintf("http://airbff:%s/v1/notification/mail", mode.LandingPort)
+	const url = "http://airbff:8080/v1/notification/mail"
 
 	payload := map[string]any{
 		"uid":    uid,
@@ -194,7 +194,7 @@ func SendEmailNotification(uid uint32, email, event, userName, assistName, targe
 }
 
 func SendInstantNotification(uid uint32, event, userName, assistName, target string) error {
-	url := fmt.Sprintf("http://airbff:%s/v1/notification/instant", mode.LandingPort)
+	const url = "http://airbff:8080/v1/notification/instant"
 
 	payload := map[string]any{
 		"uid":    uid,
@@ -249,6 +249,8 @@ func simpleLocalizer(lang string) (*localizerWrapper, error) {
 
 	translations := map[string]string{
 		"ru": `[
+			{"id":"system","translation":"Система"},
+			{"id":"mode.operator.disabled","translation":"Режим оператора отключен"},
 			{"id":"operator.disconnected","translation":"Оператор отключился. Маруся AI снова с вами!"},
 			{"id":"operator.mode.is.disabled","translation":"Режим оператора отключен, возобновляю работу AI"},
 			{"id":"notification","translation":"Уведомление"},
@@ -267,6 +269,8 @@ func simpleLocalizer(lang string) (*localizerWrapper, error) {
         <p style="color: #666; font-size: 14px;">Ссылка действительна в течение ограниченного времени.</p>"}
 		]`,
 		"en": `[
+			{"id":"system","translation":"System"},
+			{"id":"mode.operator.disabled","translation":"Operator mode is disabled"},	
 			{"id":"operator.disconnected","translation":"The operator has disconnected. Marusya AI is back with you!"},
 			{"id":"operator.mode.is.disabled","translation":"Operator mode is disabled, resuming AI operation"},
 			{"id":"notification","translation":"Notification"},
@@ -285,6 +289,8 @@ func simpleLocalizer(lang string) (*localizerWrapper, error) {
         <p style="color: #666; font-size: 14px;">The link is valid for a limited time.</p>"}
 		]`,
 		"es": `[
+			{"id":"system","translation":"Sistema"},
+			{"id":"mode.operator.disabled","translation":"El modo operador está deshabilitado"},
 			{"id":"operator.disconnected","translation":"El operador se ha desconectado. Marusya AI está de vuelta contigo!"},
 			{"id":"operator.mode.is.disabled","translation":"El modo operador está deshabilitado, reanudando la operación de AI"},
 			{"id":"notification","translation":"Notificación"},

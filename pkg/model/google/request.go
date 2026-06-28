@@ -1083,7 +1083,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 		//logger.Debug("applyRAG: история загружена из кэша (%d сообщений)", len(history), userID)
 	} else {
 		// Получаем respId для загрузки истории из БД
-		respId, err := m.GetRespIdBydialogID(dialogID)
+		respId, err := m.GetRespIdByDialogID(dialogID)
 		if err != nil {
 			select {
 			case <-m.ctx.Done():
@@ -1127,7 +1127,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 
 	// === 3. Получаем респондента ===
 	responderStart := time.Now()
-	respId, err := m.GetRespIdBydialogID(dialogID)
+	respId, err := m.GetRespIdByDialogID(dialogID)
 	if err != nil {
 		select {
 		case <-m.ctx.Done():

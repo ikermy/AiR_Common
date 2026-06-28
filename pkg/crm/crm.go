@@ -73,7 +73,6 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/com"
-	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
 type Inter interface {
@@ -121,7 +120,6 @@ type cacheEntry struct {
 type CRM struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	port   string
 
 	user sync.Map // key: uint32 (userID), value: *User
 
@@ -135,7 +133,6 @@ type CRM struct {
 type User struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	port   string
 
 	msg  chan *Message
 	conf *UserCRMConfig
@@ -247,7 +244,6 @@ func New(parent context.Context, opts ...Option) *CRM {
 	ctx, cancel := context.WithCancel(parent)
 
 	crm := &CRM{
-		port:        mode.CRMPort,
 		ctx:         ctx,
 		cancel:      cancel,
 		respTimeOut: DefaultRespTimeout,
@@ -280,7 +276,6 @@ func (c *CRM) Init(userID uint32) (*User, string, error) {
 	u := &User{
 		ctx:         ctx,
 		cancel:      cancel,
-		port:        c.port,
 		respTimeOut: c.respTimeOut,
 		cacheTTL:    c.cacheTTL,
 		numWorkers:  c.numWorkers,

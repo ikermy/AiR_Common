@@ -551,7 +551,7 @@ func (m *Model) GetCh(respId uint64) (*model.Ch, error) {
 }
 
 // GetRespIdBydialogID получает respId по dialogID
-func (m *Model) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
+func (m *Model) GetRespIdByDialogID(dialogID uint64) (uint64, error) {
 	// Ищем responder по dialogID в Chan
 	var foundRespId uint64
 	found := false
@@ -586,7 +586,7 @@ func (m *Model) SaveAllContextDuringExit() {
 // CleanDialogData очищает данные диалога
 func (m *Model) CleanDialogData(dialogID uint64) {
 	// Получаем respId по dialogID
-	respId, err := m.GetRespIdBydialogID(dialogID)
+	respId, err := m.GetRespIdByDialogID(dialogID)
 	if err != nil {
 		return
 	}

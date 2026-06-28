@@ -265,12 +265,12 @@ func (r *Router) GetCh(respId uint64) (*Ch, error) {
 }
 
 // GetRespIdBydialogID ищет respId по dialogID во всех провайдерах
-func (r *Router) GetRespIdBydialogID(dialogID uint64) (uint64, error) {
+func (r *Router) GetRespIdByDialogID(dialogID uint64) (uint64, error) {
 	for _, p := range []Inter{r.openai, r.mistral, r.google} {
 		if p == nil {
 			continue
 		}
-		if id, err := p.GetRespIdBydialogID(dialogID); err == nil {
+		if id, err := p.GetRespIdByDialogID(dialogID); err == nil {
 			return id, nil
 		}
 	}
@@ -288,7 +288,7 @@ func (r *Router) Request(userID uint32, dialogID uint64, text string, files ...F
 		if p == nil {
 			continue
 		}
-		if _, err := p.GetRespIdBydialogID(dialogID); err == nil {
+		if _, err := p.GetRespIdByDialogID(dialogID); err == nil {
 			return p.Request(userID, dialogID, text, files...)
 		}
 	}
@@ -302,7 +302,7 @@ func (r *Router) tryProviderStreaming(provider Inter, userID uint32, dialogID ui
 	if provider == nil {
 		return false, nil
 	}
-	if _, err := provider.GetRespIdBydialogID(dialogID); err != nil {
+	if _, err := provider.GetRespIdByDialogID(dialogID); err != nil {
 		return false, nil
 	}
 	if streamer, ok := provider.(interface {
