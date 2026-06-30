@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.41"
-git tag -a v1.50.41 -m "refactor grpc"
+git commit -m "v1.50.42"
+git tag -a v1.50.42 -m "refactor grpc"
 git push origin master
-git push origin v1.50.41
+git push origin v1.50.42
