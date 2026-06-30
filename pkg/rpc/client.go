@@ -92,6 +92,32 @@ func (c *Client) GetUserMasterKey(ctx context.Context, userId uint32) ([32]byte,
 	return key, nil
 }
 
+// GetBotConfig returns decrypted Telegram bot settings from Landing.
+func (c *Client) GetBotConfig(ctx context.Context) (*proto.BotConfigResponse, error) {
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), c.timeout)
+	defer cancel()
+
+	resp, err := c.stub.GetBotConfig(ctx, &proto.GetBotConfigRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("bff.GetBotConfig: %w", err)
+	}
+
+	return resp, nil
+}
+
+// GetOperBotConfig returns decrypted Telegram Operators bot settings from Landing.
+func (c *Client) GetOperBotConfig(ctx context.Context) (*proto.BotConfigResponse, error) {
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), c.timeout)
+	defer cancel()
+
+	resp, err := c.stub.GetOperBotConfig(ctx, &proto.GetBotConfigRequest{})
+	if err != nil {
+		return nil, fmt.Errorf("bff.GetOperBotConfig: %w", err)
+	}
+
+	return resp, nil
+}
+
 // ctxWithKey attaches the service key to outgoing gRPC metadata.
 func (c *Client) ctxWithKey(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, serviceKeyHeader, c.serviceKey)
