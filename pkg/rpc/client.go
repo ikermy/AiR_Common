@@ -1,104 +1,98 @@
+// Package bff provides a gRPC client for the Landing ConfigService.
+//
+// Usage:
+//
+//	c, err := bff.New("landing:50051", "my-service-key")
+//	if err != nil { ... }
+//	defer c.Close()
+//
+//	mk, err := c.GetUserMasterKey(ctx, userId)
+//	// codes.Unavailable — user not logged in since last Landing restart
 package rpc
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"sync"
+	"os"
+	"strings"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/rpc/pb"
+	"github.com/ikermy/AiR_Common/pkg/rpc/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 )
 
-// Config конфигурация для подключения к удалённому сервису
-type Config struct {
-	Address string
-	Timeout time.Duration
-}
+const (
+	serviceKeyHeader = "x-service-key"
+	defaultTimeout   = 5 * time.Second
+)
 
-// Client структура для отправки контактов на удалённый сервер
+// Client is a gRPC client for Landing's ConfigService.
+// Thread-safe; intended to be created once and shared across the application.
 type Client struct {
-	mu      sync.Mutex
-	config  Config
-	conn    *grpc.ClientConn
-	timeout time.Duration
+	conn       *grpc.ClientConn
+	stub       proto.ConfigServiceClient
+	serviceKey string
+	timeout    time.Duration
 }
 
-// Connect устанавливает соединение с удалённым сервером
-func (c *Client) Connect() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// New creates a Client and establishes a connection to the Landing gRPC server.
+func New() (*Client, error) {
+	// Получаем адрес сервера из переменной окружения
+	host := strings.TrimSpace(os.Getenv("GRPC_CONFIG_HOST"))
+	// Читаем SERVICE_KEY из файла
+	serviceKeyFile := strings.TrimSpace(os.Getenv("SERVICE_KEY_FILE"))
 
-	if c.conn != nil {
-		return nil // Уже подключен
-	}
-
-	// Создаём gRPC-соединение
-	conn, err := grpc.NewClient(
-		c.config.Address,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+	serviceKeyData, err := os.ReadFile(serviceKeyFile)
 	if err != nil {
-		return fmt.Errorf("ошибка при подключении к %s: %w", c.config.Address, err)
+		return nil, fmt.Errorf("ошибка чтения SERVICE_KEY из файла %s: %v", serviceKeyFile, err)
 	}
+	serviceKey := strings.TrimSpace(string(serviceKeyData))
 
-	c.conn = conn
-	return nil
+	conn, err := grpc.NewClient(host, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("bff.New: dial %s: %w", host, err)
+	}
+	return &Client{
+		conn:       conn,
+		stub:       proto.NewConfigServiceClient(conn),
+		serviceKey: serviceKey,
+		timeout:    defaultTimeout,
+	}, nil
 }
 
-// Close закрывает соединение
+// Close releases the underlying gRPC connection.
 func (c *Client) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.conn != nil {
-		err := c.conn.Close()
-		c.conn = nil
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return c.conn.Close()
 }
 
-// SendContacts отправляет финальный результат (контакты) на удалённый сервер
-// contactsData должны быть JSON-сериализованными данными контактов
-func (c *Client) SendContacts(ctx context.Context, contactsData json.RawMessage) error {
-	c.mu.Lock()
-	conn := c.conn
-	c.mu.Unlock()
-
-	if conn == nil {
-		return fmt.Errorf("соединение не установлено")
-	}
-
-	// Десериализуем JSON в Result
-	var finalResult pb.Result
-	if err := json.Unmarshal(contactsData, &finalResult); err != nil {
-		return fmt.Errorf("ошибка при десериализации контактов: %w", err)
-	}
-
-	// Создаём gRPC-клиент
-	client := pb.Client(conn)
-
-	// Отправляем данные с таймаутом
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, c.timeout)
+// GetUserMasterKey returns the decrypted 32-byte MasterKey for the given user.
+// The key is available only after the user has logged in at least once since
+// the last Landing restart.
+//
+// Possible errors:
+//   - codes.Unavailable — MasterKey not in Landing's cache (login required)
+//   - codes.Unauthenticated / codes.PermissionDenied — invalid service key
+func (c *Client) GetUserMasterKey(ctx context.Context, userId uint32) ([32]byte, error) {
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), c.timeout)
 	defer cancel()
 
-	_, err := client.SendContacts(ctxWithTimeout, &finalResult)
+	resp, err := c.stub.GetUserMasterKey(ctx, &proto.GetUserMasterKeyRequest{UserId: userId})
 	if err != nil {
-		return fmt.Errorf("ошибка при отправке контактов: %w", err)
+		return [32]byte{}, fmt.Errorf("bff.GetUserMasterKey(user=%d): %w", userId, err)
 	}
 
-	return nil
+	if len(resp.MasterKey) != 32 {
+		return [32]byte{}, fmt.Errorf("bff.GetUserMasterKey: invalid key length %d (expected 32)", len(resp.MasterKey))
+	}
+
+	var key [32]byte
+	copy(key[:], resp.MasterKey)
+	return key, nil
 }
 
-// IsConnected проверяет, установлено ли соединение
-func (c *Client) IsConnected() bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.conn != nil
+// ctxWithKey attaches the service key to outgoing gRPC metadata.
+func (c *Client) ctxWithKey(ctx context.Context) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, serviceKeyHeader, c.serviceKey)
 }

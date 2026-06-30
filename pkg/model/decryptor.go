@@ -13,7 +13,7 @@ import (
 )
 
 // MasterKeyProvider умеет получать пользовательский MasterKey от Landing-сервиса.
-// bff.Client удовлетворяет этому интерфейсу без изменений (метод GetUserMasterKey уже совпадает).
+// rpc.Client удовлетворяет этому интерфейсу без изменений (метод GetUserMasterKey уже совпадает).
 type MasterKeyProvider interface {
 	GetUserMasterKey(ctx context.Context, userID uint32) ([32]byte, error)
 }
@@ -83,7 +83,7 @@ func (d *masterKeyDecryptingDB) GetUserAPIKey(userID uint32, provider create.Pro
 	mk, err := d.mkProvider.GetUserMasterKey(d.ctx, userID)
 	if err != nil {
 		// Наиболее частая причина: codes.Unavailable — ключ не в кэше Landing,
-		// пользователь не входил с момента последнего перезапуска сервиса.
+		// пользователь не входил с момента последнего перезапуска сервиса и ключ не загружен из Redis
 		// Другие ошибки (сеть, неверный service key) также блокируют расшифровку.
 		// В любом случае пользователю нужно повторно авторизоваться.
 		sendReauthNotification()

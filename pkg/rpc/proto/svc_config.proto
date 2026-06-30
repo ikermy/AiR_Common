@@ -10,6 +10,7 @@ option go_package = "github.com/ikermy/AiR_Common/pkg/bff/proto";
 service ConfigService {
   // GetBotConfig returns decrypted Telegram bot settings.
   rpc GetBotConfig(GetBotConfigRequest) returns (BotConfigResponse);
+  rpc GetOperBotConfig(GetBotConfigRequest) returns (BotConfigResponse);
 
   // GetUserMasterKey returns the decrypted User MasterKey from Landing's in-memory cache.
   // The key is available only after the user has logged in at least once since the last

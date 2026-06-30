@@ -109,7 +109,7 @@ func WithMistralModel(model Inter) RouterOption {
 //	    openai.NewAsRouterOption(),
 //	    ...)
 //
-// bff.Client из пакета bff удовлетворяет интерфейсу MasterKeyProvider без изменений.
+// rpc.Client из пакета bff удовлетворяет интерфейсу MasterKeyProvider без изменений.
 // Если пользователь запрашивает $mk$-зашифрованный ключ, а Landing недоступен —
 // пользователю автоматически отправляется уведомление "reauth-userkey" и
 // вызывающий сервис получает ErrMasterKeyUnavailable.
