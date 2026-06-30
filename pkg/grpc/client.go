@@ -8,7 +8,7 @@
 //
 //	mk, err := c.GetUserMasterKey(ctx, userId)
 //	// codes.Unavailable — user not logged in since last Landing restart
-package rpc
+package grpc
 
 import (
 	"context"
@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/rpc/proto"
+	"github.com/ikermy/AiR_Common/pkg/grpc/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
