@@ -632,12 +632,12 @@ func (e *Endpoint) TranslateMessageWithUserID(userID uint32, message string) str
 
 	loc, err := simpleLocalizer(lang)
 	if err != nil {
-		return ""
+		return "localization error 1"
 	}
 
 	answer, err := loc.mustLocalize(message, nil)
 	if err != nil {
-		return ""
+		return "localization error 2"
 	}
 
 	return answer
@@ -646,12 +646,12 @@ func (e *Endpoint) TranslateMessageWithUserID(userID uint32, message string) str
 func (e *Endpoint) TranslateMessageWithLang(lang, message string) string {
 	loc, err := simpleLocalizer(lang)
 	if err != nil {
-		return ""
+		return "localization error 3"
 	}
 
 	answer, err := loc.mustLocalize(message, nil)
 	if err != nil {
-		return ""
+		return "localization error 4"
 	}
 
 	return answer
