@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.47"
-git tag -a v1.50.47 -m "translate msg check"
+git commit -m "v1.50.48"
+git tag -a v1.50.48 -m "translate msg check"
 git push origin master
-git push origin v1.50.47
+git push origin v1.50.48

@@ -258,15 +258,12 @@ func simpleLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"sincerely.marusia.team","translation":"С уважением,<br>Команда MarusiaAI"},
 			{"id":"confirm.registration","translation":"Подтверждение регистрации"},
 			{"id":"welcome","translation":"Добро пожаловать в MarusiaAI!"},
-			{"id":"for.confirm.registration","translation":"<p>Вы успешно зарегистрировались на сайте MarusiaAI.</p>
-        <p>Для подтверждения вашего адреса электронной почты, пожалуйста, перейдите по следующей ссылке:</p>"},
-     	    {"id":"if.you.haven.t.requested","translation":"<p style="color: #666; font-size: 14px;">Если вы не запрашивали подтверждение, просто проигнорируйте это письмо.</p>
-        <p style="color: #666; font-size: 14px;">Ссылка действительна в течение ограниченного времени.</p>"},
+			{"id":"for.confirm.registration","translation":"<p>Вы успешно зарегистрировались на сайте MarusiaAI.</p>\n<p>Для подтверждения вашего адреса электронной почты, пожалуйста, перейдите по следующей ссылке:</p>"},
+     	    {"id":"if.you.haven.t.requested","translation":"<p style=\"color: #666; font-size: 14px;\">Если вы не запрашивали подтверждение, просто проигнорируйте это письмо.</p>\n<p style=\"color: #666; font-size: 14px;\">Ссылка действительна в течение ограниченного времени.</p>"},
 			{"id":"password.recovery","translation":"Восстановление пароля"},
 			{"id":"for.reset.password","translation":"Для сброса вашего пароля, пожалуйста, перейдите по следующей ссылке:"},
 			{"id":"reset.password","translation":"Сбросить пароль"},
-			{"id":"if.you.havenet.requested.password.reset","translation":"<p style="color: #666; font-size: 14px;">Если вы не запрашивали сброс пароля, просто проигнорируйте это письмо.</p>
-        <p style="color: #666; font-size: 14px;">Ссылка действительна в течение ограниченного времени.</p>"}
+			{"id":"if.you.havenet.requested.password.reset","translation":"<p style=\"color: #666; font-size: 14px;\">Если вы не запрашивали сброс пароля, просто проигнорируйте это письмо.</p>\n<p style=\"color: #666; font-size: 14px;\">Ссылка действительна в течение ограниченного времени.</p>"}
 		]`,
 		"en": `[
 			{"id":"system","translation":"System"},
@@ -278,15 +275,12 @@ func simpleLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"sincerely.marusia.team","translation":"Sincerely,<br>MarusiaAI Team"},
 			{"id":"confirm.registration","translation":"Registration Confirmation"},
 			{"id":"welcome","translation":"Welcome to MarusiaAI!"},
-			{"id":"for.confirm.registration","translation":"<p>You have successfully registered on MarusiaAI.</p>
-        <p>To confirm your email address, please click the following link:</p>"},
-     	    {"id":"if.you.haven.t.requested","translation":"<p style="color: #666; font-size: 14px;">If you did not request confirmation, please ignore this email.</p>
-        <p style="color: #666; font-size: 14px;">The link is valid for a limited time.</p>"},
+			{"id":"for.confirm.registration","translation":"<p>You have successfully registered on MarusiaAI.</p>\n<p>To confirm your email address, please click the following link:</p>"},
+     	    {"id":"if.you.haven.t.requested","translation":"<p style=\"color: #666; font-size: 14px;\">If you did not request confirmation, please ignore this email.</p>\n<p style=\"color: #666; font-size: 14px;\">The link is valid for a limited time.</p>"},
 			{"id":"password.recovery","translation":"Password Recovery"},
 			{"id":"for.reset.password","translation":"To reset your password, please click the following link:"},
 			{"id":"reset.password","translation":"Reset Password"},
-			{"id":"if.you.havenet.requested.password.reset","translation":"<p style="color: #666; font-size: 14px;">If you did not request a password reset, please ignore this email.</p>
-        <p style="color: #666; font-size: 14px;">The link is valid for a limited time.</p>"}
+			{"id":"if.you.havenet.requested.password.reset","translation":"<p style=\"color: #666; font-size: 14px;\">If you did not request a password reset, please ignore this email.</p>\n<p style=\"color: #666; font-size: 14px;\">The link is valid for a limited time.</p>"}
 		]`,
 		"es": `[
 			{"id":"system","translation":"Sistema"},
@@ -298,15 +292,12 @@ func simpleLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"sincerely.marusia.team","translation":"Atentamente,<br>Equipo MarusiaAI"},
 			{"id":"confirm.registration","translation":"Confirmación de registro"},
 			{"id":"welcome","translation":"¡Bienvenido a MarusiaAI!"},
-			{"id":"for.confirm.registration","translation":"<p>Te has registrado correctamente en MarusiaAI.</p>
-        <p>Para confirmar tu dirección de correo electrónico, haz clic en el siguiente enlace:</p>"},
-     	    {"id":"if.you.haven.t.requested","translation":"<p style="color: #666; font-size: 14px;">Si no solicitaste la confirmación, ignora este correo electrónico.</p>
-        <p style="color: #666; font-size: 14px;">El enlace es válido por un tiempo limitado.</p>"},
+			{"id":"for.confirm.registration","translation":"<p>Te has registrado correctamente en MarusiaAI.</p>\n<p>Para confirmar tu dirección de correo electrónico, haz clic en el siguiente enlace:</p>"},
+     	    {"id":"if.you.haven.t.requested","translation":"<p style=\"color: #666; font-size: 14px;\">Si no solicitaste la confirmación, ignora este correo electrónico.</p>\n<p style=\"color: #666; font-size: 14px;\">El enlace es válido por un tiempo limitado.</p>"},
 			{"id":"password.recovery","translation":"Recuperación de contraseña"},
 			{"id":"for.reset.password","translation":"Para restablecer tu contraseña, haz clic en el siguiente enlace:"},
 			{"id":"reset.password","translation":"Restablecer contraseña"},
-			{"id":"if.you.havenet.requested.password.reset","translation":"<p style="color: #666; font-size: 14px;">Si no solicitaste un restablecimiento de contraseña, ignora este correo electrónico.</p>
-        <p style="color: #666; font-size: 14px;">El enlace es válido por un tiempo limitado.</p>"}
+			{"id":"if.you.havenet.requested.password.reset","translation":"<p style=\"color: #666; font-size: 14px;\">Si no solicitaste un restablecimiento de contraseña, ignora este correo electrónico.</p>\n<p style=\"color: #666; font-size: 14px;\">El enlace es válido por un tiempo limitado.</p>"}
 		]`,
 	}
 
