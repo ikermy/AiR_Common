@@ -124,7 +124,16 @@ func (c *Client) WidgetNewToken(ctx context.Context, userID uint32, respID uint6
 		expired = time.Second
 	}
 
-	resp, err := c.stub.WidgetNewToken(ctx, &proto.WidgetNewTokenData{UserId: userID, RespId: respID, ExpiredSeconds: int64(expired.Seconds())})
+	seconds := int64(expired / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+
+	resp, err := c.stub.WidgetNewToken(ctx, &proto.WidgetTokenData{
+		UserId:         userID,
+		RespId:         respID,
+		ExpiredSeconds: seconds,
+	})
 	if err != nil {
 		return "", err
 	}

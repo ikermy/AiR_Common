@@ -19,10 +19,10 @@ service ConfigService {
   rpc GetUserMasterKey(GetUserMasterKeyRequest) returns (UserMasterKeyResponse);
 
   // WidgetNewToken generates a new token for the widget_service based on the provided data.
-  rpc WidgetNewToken(WidgetNewTokenData) returns (WidgetRawToken);
+  rpc WidgetNewToken(WidgetTokenData) returns (WidgetRawToken);
 
   // WidgetParseToken parses the widget_service raw token and returns the associated data.
-  rpc WidgetParseToken(WidgetRawToken) returns (WidgetNewTokenData);
+  rpc WidgetParseToken(WidgetRawToken) returns (WidgetTokenData);
 }
 
 // GetBotConfigRequest — empty request (auth via metadata).
@@ -45,7 +45,7 @@ message UserMasterKeyResponse {
   bytes master_key = 1; // 32 bytes — AES-256 key
 }
 
-message WidgetNewTokenData {
+message WidgetTokenData {
   uint32 user_id = 1; // User ID
   uint64 resp_id = 2; // Response ID
   int64 expired_seconds = 3; // Expiration time in seconds

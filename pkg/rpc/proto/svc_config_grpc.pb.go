@@ -43,9 +43,9 @@ type ConfigServiceClient interface {
 	// The caller is responsible for deciding how to handle the unavailable case.
 	GetUserMasterKey(ctx context.Context, in *GetUserMasterKeyRequest, opts ...grpc.CallOption) (*UserMasterKeyResponse, error)
 	// WidgetNewToken generates a new token for the widget_service based on the provided data.
-	WidgetNewToken(ctx context.Context, in *WidgetNewTokenData, opts ...grpc.CallOption) (*WidgetRawToken, error)
+	WidgetNewToken(ctx context.Context, in *WidgetTokenData, opts ...grpc.CallOption) (*WidgetRawToken, error)
 	// WidgetParseToken parses the widget_service raw token and returns the associated data.
-	WidgetParseToken(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetNewTokenData, error)
+	WidgetParseToken(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetTokenData, error)
 }
 
 type configServiceClient struct {
@@ -86,7 +86,7 @@ func (c *configServiceClient) GetUserMasterKey(ctx context.Context, in *GetUserM
 	return out, nil
 }
 
-func (c *configServiceClient) WidgetNewToken(ctx context.Context, in *WidgetNewTokenData, opts ...grpc.CallOption) (*WidgetRawToken, error) {
+func (c *configServiceClient) WidgetNewToken(ctx context.Context, in *WidgetTokenData, opts ...grpc.CallOption) (*WidgetRawToken, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WidgetRawToken)
 	err := c.cc.Invoke(ctx, ConfigService_WidgetNewToken_FullMethodName, in, out, cOpts...)
@@ -96,9 +96,9 @@ func (c *configServiceClient) WidgetNewToken(ctx context.Context, in *WidgetNewT
 	return out, nil
 }
 
-func (c *configServiceClient) WidgetParseToken(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetNewTokenData, error) {
+func (c *configServiceClient) WidgetParseToken(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetTokenData, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(WidgetNewTokenData)
+	out := new(WidgetTokenData)
 	err := c.cc.Invoke(ctx, ConfigService_WidgetParseToken_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
@@ -123,9 +123,9 @@ type ConfigServiceServer interface {
 	// The caller is responsible for deciding how to handle the unavailable case.
 	GetUserMasterKey(context.Context, *GetUserMasterKeyRequest) (*UserMasterKeyResponse, error)
 	// WidgetNewToken generates a new token for the widget_service based on the provided data.
-	WidgetNewToken(context.Context, *WidgetNewTokenData) (*WidgetRawToken, error)
+	WidgetNewToken(context.Context, *WidgetTokenData) (*WidgetRawToken, error)
 	// WidgetParseToken parses the widget_service raw token and returns the associated data.
-	WidgetParseToken(context.Context, *WidgetRawToken) (*WidgetNewTokenData, error)
+	WidgetParseToken(context.Context, *WidgetRawToken) (*WidgetTokenData, error)
 	mustEmbedUnimplementedConfigServiceServer()
 }
 
@@ -145,10 +145,10 @@ func (UnimplementedConfigServiceServer) GetOperBotConfig(context.Context, *GetBo
 func (UnimplementedConfigServiceServer) GetUserMasterKey(context.Context, *GetUserMasterKeyRequest) (*UserMasterKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetUserMasterKey not implemented")
 }
-func (UnimplementedConfigServiceServer) WidgetNewToken(context.Context, *WidgetNewTokenData) (*WidgetRawToken, error) {
+func (UnimplementedConfigServiceServer) WidgetNewToken(context.Context, *WidgetTokenData) (*WidgetRawToken, error) {
 	return nil, status.Error(codes.Unimplemented, "method WidgetNewToken not implemented")
 }
-func (UnimplementedConfigServiceServer) WidgetParseToken(context.Context, *WidgetRawToken) (*WidgetNewTokenData, error) {
+func (UnimplementedConfigServiceServer) WidgetParseToken(context.Context, *WidgetRawToken) (*WidgetTokenData, error) {
 	return nil, status.Error(codes.Unimplemented, "method WidgetParseToken not implemented")
 }
 func (UnimplementedConfigServiceServer) mustEmbedUnimplementedConfigServiceServer() {}
@@ -227,7 +227,7 @@ func _ConfigService_GetUserMasterKey_Handler(srv interface{}, ctx context.Contex
 }
 
 func _ConfigService_WidgetNewToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(WidgetNewTokenData)
+	in := new(WidgetTokenData)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func _ConfigService_WidgetNewToken_Handler(srv interface{}, ctx context.Context,
 		FullMethod: ConfigService_WidgetNewToken_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(ConfigServiceServer).WidgetNewToken(ctx, req.(*WidgetNewTokenData))
+		return srv.(ConfigServiceServer).WidgetNewToken(ctx, req.(*WidgetTokenData))
 	}
 	return interceptor(ctx, in, info, handler)
 }
