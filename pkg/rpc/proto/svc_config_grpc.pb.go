@@ -8,7 +8,6 @@ package proto
 
 import (
 	context "context"
-
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -23,6 +22,8 @@ const (
 	ConfigService_GetBotConfig_FullMethodName     = "/svcpb.ConfigService/GetBotConfig"
 	ConfigService_GetOperBotConfig_FullMethodName = "/svcpb.ConfigService/GetOperBotConfig"
 	ConfigService_GetUserMasterKey_FullMethodName = "/svcpb.ConfigService/GetUserMasterKey"
+	ConfigService_WidgetNewToken_FullMethodName   = "/svcpb.ConfigService/WidgetNewToken"
+	ConfigService_WidgetParseToken_FullMethodName = "/svcpb.ConfigService/WidgetParseToken"
 )
 
 // ConfigServiceClient is the client API for ConfigService service.
@@ -41,6 +42,10 @@ type ConfigServiceClient interface {
 	// Landing restart. Returns codes.Unavailable if the key is not in cache.
 	// The caller is responsible for deciding how to handle the unavailable case.
 	GetUserMasterKey(ctx context.Context, in *GetUserMasterKeyRequest, opts ...grpc.CallOption) (*UserMasterKeyResponse, error)
+	// WidgetNewToken generates a new token for the widget_service based on the provided data.
+	WidgetNewToken(ctx context.Context, in *WidgetNewTokenData, opts ...grpc.CallOption) (*WidgetRawToken, error)
+	// WidgetParseToken parses the widget_service raw token and returns the associated data.
+	WidgetParseToken(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetNewTokenData, error)
 }
 
 type configServiceClient struct {
@@ -81,6 +86,26 @@ func (c *configServiceClient) GetUserMasterKey(ctx context.Context, in *GetUserM
 	return out, nil
 }
 
+func (c *configServiceClient) WidgetNewToken(ctx context.Context, in *WidgetNewTokenData, opts ...grpc.CallOption) (*WidgetRawToken, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WidgetRawToken)
+	err := c.cc.Invoke(ctx, ConfigService_WidgetNewToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *configServiceClient) WidgetParseToken(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetNewTokenData, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WidgetNewTokenData)
+	err := c.cc.Invoke(ctx, ConfigService_WidgetParseToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ConfigServiceServer is the server API for ConfigService service.
 // All implementations must embed UnimplementedConfigServiceServer
 // for forward compatibility.
@@ -97,6 +122,10 @@ type ConfigServiceServer interface {
 	// Landing restart. Returns codes.Unavailable if the key is not in cache.
 	// The caller is responsible for deciding how to handle the unavailable case.
 	GetUserMasterKey(context.Context, *GetUserMasterKeyRequest) (*UserMasterKeyResponse, error)
+	// WidgetNewToken generates a new token for the widget_service based on the provided data.
+	WidgetNewToken(context.Context, *WidgetNewTokenData) (*WidgetRawToken, error)
+	// WidgetParseToken parses the widget_service raw token and returns the associated data.
+	WidgetParseToken(context.Context, *WidgetRawToken) (*WidgetNewTokenData, error)
 	mustEmbedUnimplementedConfigServiceServer()
 }
 
@@ -115,6 +144,12 @@ func (UnimplementedConfigServiceServer) GetOperBotConfig(context.Context, *GetBo
 }
 func (UnimplementedConfigServiceServer) GetUserMasterKey(context.Context, *GetUserMasterKeyRequest) (*UserMasterKeyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetUserMasterKey not implemented")
+}
+func (UnimplementedConfigServiceServer) WidgetNewToken(context.Context, *WidgetNewTokenData) (*WidgetRawToken, error) {
+	return nil, status.Error(codes.Unimplemented, "method WidgetNewToken not implemented")
+}
+func (UnimplementedConfigServiceServer) WidgetParseToken(context.Context, *WidgetRawToken) (*WidgetNewTokenData, error) {
+	return nil, status.Error(codes.Unimplemented, "method WidgetParseToken not implemented")
 }
 func (UnimplementedConfigServiceServer) mustEmbedUnimplementedConfigServiceServer() {}
 func (UnimplementedConfigServiceServer) testEmbeddedByValue()                       {}
@@ -191,6 +226,42 @@ func _ConfigService_GetUserMasterKey_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ConfigService_WidgetNewToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WidgetNewTokenData)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConfigServiceServer).WidgetNewToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConfigService_WidgetNewToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConfigServiceServer).WidgetNewToken(ctx, req.(*WidgetNewTokenData))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ConfigService_WidgetParseToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WidgetRawToken)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConfigServiceServer).WidgetParseToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConfigService_WidgetParseToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConfigServiceServer).WidgetParseToken(ctx, req.(*WidgetRawToken))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ConfigService_ServiceDesc is the grpc.ServiceDesc for ConfigService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -209,6 +280,14 @@ var ConfigService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetUserMasterKey",
 			Handler:    _ConfigService_GetUserMasterKey_Handler,
+		},
+		{
+			MethodName: "WidgetNewToken",
+			Handler:    _ConfigService_WidgetNewToken_Handler,
+		},
+		{
+			MethodName: "WidgetParseToken",
+			Handler:    _ConfigService_WidgetParseToken_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

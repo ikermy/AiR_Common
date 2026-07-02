@@ -7,12 +7,11 @@
 package proto
 
 import (
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
-
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -203,6 +202,110 @@ func (x *UserMasterKeyResponse) GetMasterKey() []byte {
 	return nil
 }
 
+type WidgetNewTokenData struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	UserId         uint32                 `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`                         // User ID
+	RespId         uint64                 `protobuf:"varint,2,opt,name=resp_id,json=respId,proto3" json:"resp_id,omitempty"`                         // Response ID
+	ExpiredSeconds int64                  `protobuf:"varint,3,opt,name=expired_seconds,json=expiredSeconds,proto3" json:"expired_seconds,omitempty"` // Expiration time in seconds
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *WidgetNewTokenData) Reset() {
+	*x = WidgetNewTokenData{}
+	mi := &file_svc_config_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WidgetNewTokenData) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WidgetNewTokenData) ProtoMessage() {}
+
+func (x *WidgetNewTokenData) ProtoReflect() protoreflect.Message {
+	mi := &file_svc_config_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WidgetNewTokenData.ProtoReflect.Descriptor instead.
+func (*WidgetNewTokenData) Descriptor() ([]byte, []int) {
+	return file_svc_config_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *WidgetNewTokenData) GetUserId() uint32 {
+	if x != nil {
+		return x.UserId
+	}
+	return 0
+}
+
+func (x *WidgetNewTokenData) GetRespId() uint64 {
+	if x != nil {
+		return x.RespId
+	}
+	return 0
+}
+
+func (x *WidgetNewTokenData) GetExpiredSeconds() int64 {
+	if x != nil {
+		return x.ExpiredSeconds
+	}
+	return 0
+}
+
+type WidgetRawToken struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Token         string                 `protobuf:"bytes,1,opt,name=token,proto3" json:"token,omitempty"` // Raw token for the widget
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WidgetRawToken) Reset() {
+	*x = WidgetRawToken{}
+	mi := &file_svc_config_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WidgetRawToken) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WidgetRawToken) ProtoMessage() {}
+
+func (x *WidgetRawToken) ProtoReflect() protoreflect.Message {
+	mi := &file_svc_config_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WidgetRawToken.ProtoReflect.Descriptor instead.
+func (*WidgetRawToken) Descriptor() ([]byte, []int) {
+	return file_svc_config_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *WidgetRawToken) GetToken() string {
+	if x != nil {
+		return x.Token
+	}
+	return ""
+}
+
 var File_svc_config_proto protoreflect.FileDescriptor
 
 const file_svc_config_proto_rawDesc = "" +
@@ -216,11 +319,19 @@ const file_svc_config_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\rR\x06userId\"6\n" +
 	"\x15UserMasterKeyResponse\x12\x1d\n" +
 	"\n" +
-	"master_key\x18\x01 \x01(\fR\tmasterKey2\xf1\x01\n" +
+	"master_key\x18\x01 \x01(\fR\tmasterKey\"o\n" +
+	"\x12WidgetNewTokenData\x12\x17\n" +
+	"\auser_id\x18\x01 \x01(\rR\x06userId\x12\x17\n" +
+	"\aresp_id\x18\x02 \x01(\x04R\x06respId\x12'\n" +
+	"\x0fexpired_seconds\x18\x03 \x01(\x03R\x0eexpiredSeconds\"&\n" +
+	"\x0eWidgetRawToken\x12\x14\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token2\xfb\x02\n" +
 	"\rConfigService\x12D\n" +
 	"\fGetBotConfig\x12\x1a.svcpb.GetBotConfigRequest\x1a\x18.svcpb.BotConfigResponse\x12H\n" +
 	"\x10GetOperBotConfig\x12\x1a.svcpb.GetBotConfigRequest\x1a\x18.svcpb.BotConfigResponse\x12P\n" +
-	"\x10GetUserMasterKey\x12\x1e.svcpb.GetUserMasterKeyRequest\x1a\x1c.svcpb.UserMasterKeyResponseB,Z*github.com/ikermy/AiR_Common/pkg/bff/protob\x06proto3"
+	"\x10GetUserMasterKey\x12\x1e.svcpb.GetUserMasterKeyRequest\x1a\x1c.svcpb.UserMasterKeyResponse\x12B\n" +
+	"\x0eWidgetNewToken\x12\x19.svcpb.WidgetNewTokenData\x1a\x15.svcpb.WidgetRawToken\x12D\n" +
+	"\x10WidgetParseToken\x12\x15.svcpb.WidgetRawToken\x1a\x19.svcpb.WidgetNewTokenDataB,Z*github.com/ikermy/AiR_Common/pkg/rpc/protob\x06proto3"
 
 var (
 	file_svc_config_proto_rawDescOnce sync.Once
@@ -234,22 +345,28 @@ func file_svc_config_proto_rawDescGZIP() []byte {
 	return file_svc_config_proto_rawDescData
 }
 
-var file_svc_config_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_svc_config_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_svc_config_proto_goTypes = []any{
 	(*GetBotConfigRequest)(nil),     // 0: svcpb.GetBotConfigRequest
 	(*BotConfigResponse)(nil),       // 1: svcpb.BotConfigResponse
 	(*GetUserMasterKeyRequest)(nil), // 2: svcpb.GetUserMasterKeyRequest
 	(*UserMasterKeyResponse)(nil),   // 3: svcpb.UserMasterKeyResponse
+	(*WidgetNewTokenData)(nil),      // 4: svcpb.WidgetNewTokenData
+	(*WidgetRawToken)(nil),          // 5: svcpb.WidgetRawToken
 }
 var file_svc_config_proto_depIdxs = []int32{
 	0, // 0: svcpb.ConfigService.GetBotConfig:input_type -> svcpb.GetBotConfigRequest
 	0, // 1: svcpb.ConfigService.GetOperBotConfig:input_type -> svcpb.GetBotConfigRequest
 	2, // 2: svcpb.ConfigService.GetUserMasterKey:input_type -> svcpb.GetUserMasterKeyRequest
-	1, // 3: svcpb.ConfigService.GetBotConfig:output_type -> svcpb.BotConfigResponse
-	1, // 4: svcpb.ConfigService.GetOperBotConfig:output_type -> svcpb.BotConfigResponse
-	3, // 5: svcpb.ConfigService.GetUserMasterKey:output_type -> svcpb.UserMasterKeyResponse
-	3, // [3:6] is the sub-list for method output_type
-	0, // [0:3] is the sub-list for method input_type
+	4, // 3: svcpb.ConfigService.WidgetNewToken:input_type -> svcpb.WidgetNewTokenData
+	5, // 4: svcpb.ConfigService.WidgetParseToken:input_type -> svcpb.WidgetRawToken
+	1, // 5: svcpb.ConfigService.GetBotConfig:output_type -> svcpb.BotConfigResponse
+	1, // 6: svcpb.ConfigService.GetOperBotConfig:output_type -> svcpb.BotConfigResponse
+	3, // 7: svcpb.ConfigService.GetUserMasterKey:output_type -> svcpb.UserMasterKeyResponse
+	5, // 8: svcpb.ConfigService.WidgetNewToken:output_type -> svcpb.WidgetRawToken
+	4, // 9: svcpb.ConfigService.WidgetParseToken:output_type -> svcpb.WidgetNewTokenData
+	5, // [5:10] is the sub-list for method output_type
+	0, // [0:5] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -266,7 +383,7 @@ func file_svc_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_svc_config_proto_rawDesc), len(file_svc_config_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

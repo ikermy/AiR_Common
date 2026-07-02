@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package svcpb;
 
-option go_package = "github.com/ikermy/AiR_Common/pkg/bff/proto";
+option go_package = "github.com/ikermy/AiR_Common/pkg/rpc/proto";
 
 // ConfigService — gRPC service for inter-service communication with Landing.
 // Authorization: metadata header "x-service-key" must contain the service key
@@ -17,6 +17,12 @@ service ConfigService {
   // Landing restart. Returns codes.Unavailable if the key is not in cache.
   // The caller is responsible for deciding how to handle the unavailable case.
   rpc GetUserMasterKey(GetUserMasterKeyRequest) returns (UserMasterKeyResponse);
+
+  // WidgetNewToken generates a new token for the widget_service based on the provided data.
+  rpc WidgetNewToken(WidgetNewTokenData) returns (WidgetRawToken);
+
+  // WidgetParseToken parses the widget_service raw token and returns the associated data.
+  rpc WidgetParseToken(WidgetRawToken) returns (WidgetNewTokenData);
 }
 
 // GetBotConfigRequest — empty request (auth via metadata).
@@ -39,3 +45,12 @@ message UserMasterKeyResponse {
   bytes master_key = 1; // 32 bytes — AES-256 key
 }
 
+message WidgetNewTokenData {
+  uint32 user_id = 1; // User ID
+  uint64 resp_id = 2; // Response ID
+  int64 expired_seconds = 3; // Expiration time in seconds
+}
+
+message WidgetRawToken {
+  string token = 1; // Raw token for the widget
+}

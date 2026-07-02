@@ -1,4 +1,4 @@
-// Package bff provides a gRPC client for the Landing ConfigService.
+// Package rpc provides a gRPC client for the Landing ConfigService.
 //
 // Usage:
 //
@@ -25,7 +25,7 @@ import (
 
 const (
 	serviceKeyHeader = "x-service-key"
-	defaultTimeout   = 5 * time.Second
+	canselTimeout    = 5 * time.Second
 )
 
 // Client is a gRPC client for Landing's ConfigService.
@@ -34,7 +34,6 @@ type Client struct {
 	conn       *grpc.ClientConn
 	stub       proto.ConfigServiceClient
 	serviceKey string
-	timeout    time.Duration
 }
 
 // New creates a Client and establishes a connection to the Landing gRPC server.
@@ -58,7 +57,6 @@ func New() (*Client, error) {
 		conn:       conn,
 		stub:       proto.NewConfigServiceClient(conn),
 		serviceKey: serviceKey,
-		timeout:    defaultTimeout,
 	}, nil
 }
 
@@ -75,7 +73,7 @@ func (c *Client) Close() error {
 //   - codes.Unavailable — MasterKey not in Landing's cache (login required)
 //   - codes.Unauthenticated / codes.PermissionDenied — invalid service key
 func (c *Client) GetUserMasterKey(ctx context.Context, userId uint32) ([32]byte, error) {
-	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), c.timeout)
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), canselTimeout)
 	defer cancel()
 
 	resp, err := c.stub.GetUserMasterKey(ctx, &proto.GetUserMasterKeyRequest{UserId: userId})
@@ -94,7 +92,7 @@ func (c *Client) GetUserMasterKey(ctx context.Context, userId uint32) ([32]byte,
 
 // GetBotConfig returns decrypted Telegram bot settings from Landing.
 func (c *Client) GetBotConfig(ctx context.Context) (*proto.BotConfigResponse, error) {
-	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), c.timeout)
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), canselTimeout)
 	defer cancel()
 
 	resp, err := c.stub.GetBotConfig(ctx, &proto.GetBotConfigRequest{})
@@ -107,7 +105,7 @@ func (c *Client) GetBotConfig(ctx context.Context) (*proto.BotConfigResponse, er
 
 // GetOperBotConfig returns decrypted Telegram Operators bot settings from Landing.
 func (c *Client) GetOperBotConfig(ctx context.Context) (*proto.BotConfigResponse, error) {
-	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), c.timeout)
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), canselTimeout)
 	defer cancel()
 
 	resp, err := c.stub.GetOperBotConfig(ctx, &proto.GetBotConfigRequest{})
@@ -116,6 +114,34 @@ func (c *Client) GetOperBotConfig(ctx context.Context) (*proto.BotConfigResponse
 	}
 
 	return resp, nil
+}
+
+func (c *Client) WidgetNewToken(ctx context.Context, userID uint32, respID uint64, expired time.Duration) (string, error) {
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), canselTimeout)
+	defer cancel()
+
+	if expired < time.Second {
+		expired = time.Second
+	}
+
+	resp, err := c.stub.WidgetNewToken(ctx, &proto.WidgetNewTokenData{UserId: userID, RespId: respID, ExpiredSeconds: int64(expired.Seconds())})
+	if err != nil {
+		return "", err
+	}
+
+	return resp.Token, nil
+}
+
+func (c *Client) WidgetParseToken(ctx context.Context, tokenString string) (uint32, uint64, error) {
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), canselTimeout)
+	defer cancel()
+
+	resp, err := c.stub.WidgetParseToken(ctx, &proto.WidgetRawToken{Token: tokenString})
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return resp.UserId, resp.RespId, nil
 }
 
 // ctxWithKey attaches the service key to outgoing gRPC metadata.
