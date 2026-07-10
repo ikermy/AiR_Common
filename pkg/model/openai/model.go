@@ -17,6 +17,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/provider_catalog"
 )
 
 type DB = comdb.Exterior
@@ -66,7 +67,7 @@ func (r *RespModel) GetChannelMap() map[uint64]*model.Ch {
 // В отличие от Assistants API, конфигурация хранится в БД и передается с каждым запросом
 type AgentConfig struct {
 	ModelId        uint64         `json:"model_id"`   // ID модели в БД
-	ModelName      string         `json:"model_name"` // Имя модели OpenAI (gpt-4o-mini и т.д.)
+	ModelName      string         `json:"model_name"` // Имя модели из user_gpt.AssistantId (gpt-5-mini и т.д.)
 	SystemPrompt   string         `json:"system_prompt"`
 	Tools          []any          `json:"tools"`
 	ResponseFormat map[string]any `json:"response_format"`
@@ -336,18 +337,21 @@ func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool
 		return nil, false, fmt.Errorf("модель OpenAI не найдена для userID %d", userID)
 	}
 
-	// Инициализируем базовую конфигурацию
-	// ModelName берем из AssistId (имя GPT-модели OpenAI, например "gpt-4o-mini")
-	// По аналогии с Google провайдером
+	// Инициализируем базовую конфигурацию.
+	// ModelName берём из user_gpt.AssistantId — там хранится имя модели выбранной пользователем
+	// из каталога gpt_models (например "gpt-5-mini").
+	modelName := found.AssistId
+	if modelName == "" {
+		// AssistId не заполнен — берём модель по умолчанию из gpt_models (IsDefault=1)
+		_, defaultName, err := m.db.DefaultProvidersModels(create.ProviderOpenAI.String())
+		if err != nil {
+			return nil, false, fmt.Errorf("имя модели OpenAI не задано и получить модель по умолчанию не удалось: %w", err)
+		}
+		modelName = defaultName
+	}
 	agentConfig := &AgentConfig{
 		ModelId:   found.ModelId,
-		ModelName: found.AssistId,
-	}
-
-	// Устанавливаем значение по умолчанию если AssistId пустой
-	if agentConfig.ModelName == "" {
-		agentConfig.ModelName = "gpt-4o-mini"
-		//logger.Warn("AssistId пустой, используется модель по умолчанию: gpt-4o-mini", userID)
+		ModelName: modelName,
 	}
 
 	var haunter bool
@@ -903,4 +907,11 @@ func (m *Model) saveAllContextsGracefullyCtx(_ context.Context) error {
 	// Этот метод оставлен для совместимости, но не выполняет действий
 	//logger.Debug("saveAllContextsGracefullyCtx: пропускаем (Chat Completions API не использует threads)")
 	return nil
+}
+
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, apiKey string) error {
+	if provider != create.ProviderOpenAI {
+		return fmt.Errorf("неверный провайдер для OpenAI модели: %s", provider)
+	}
+	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderOpenAI, apiKey)
 }

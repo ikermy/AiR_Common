@@ -333,6 +333,7 @@ func eventLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"event.trigger","translation":"Ассистент {{.AssistName}} сработал на триггер '{{.Target}}' в диалоге с пользователем {{.UserName}}"},
 			{"id":"event.reauth","translation":"Канал {{.Target}} отключен, требуется повторная авторизация"},
 			{"id":"event.reauth-userkey","translation":"Для работы требуется расшифровка пользовательских данных, пожалуйста, войдите в систему заново."},
+			{"id":"event.model-removed","translation":"Провайдер {{.Target}} удалил доступную модель '{{.AssistName}}'. Пожалуйста, выберите другую модель или повторно подключите провайдера."},
 			{"id":"event.model-operator","translation":"Ассистент {{.AssistName}} запросил переключение на оператора в диалоге с пользователем {{.UserName}}"},
 			{"id":"subscription.no_subscription","translation":"У вас нет подписки. Пожалуйста, оформите подписку."},
 			{"id":"subscription.expired","translation":"Ваша подписка истекла. Пожалуйста, продлите подписку."},
@@ -361,6 +362,7 @@ func eventLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"event.reauth","translation":"Channel {{.Target}} is disconnected, re-authorization is required"},
 			{"id":"event.reauth-userkey","translation":"User data decryption is required to continue, please sign in again."},
 			{"id":"event.model-operator","translation":"Assistant {{.AssistName}} requested switching to an operator in the dialog with user {{.UserName}}"},
+			{"id":"event.model-removed","translation":"Provider {{.Target}} removed the available model '{{.AssistName}}'. Please select another model or reconnect the provider."},
 			{"id":"subscription.no_subscription","translation":"You do not have a subscription. Please subscribe."},
 			{"id":"subscription.expired","translation":"Your subscription has expired. Please renew it."},
 			{"id":"subscription.limit_exceeded","translation":"You have exceeded the message limit. Please top up your balance."},
@@ -395,6 +397,7 @@ func eventLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"event.lead-botunban","translation":"Bots:\n{{.Target}}\nse desbloquearon por temporizador, inténtelos de nuevo"},
 			{"id":"event.lead-start","translation":"Búsqueda de leads iniciada:\n-total de contactos para procesar {{.Target}}"},
 			{"id":"event.lead-stop","translation":"Búsqueda de leads finalizada:\n-total de contactos {{.Target}}\n-procesados {{.AssistName}}"},
+			{"id":"event.model-removed","translation":"Proveedor {{.Target}} eliminó el modelo disponible '{{.AssistName}}'. Por favor, seleccione otro modelo o vuelva a conectar el proveedor."},
 			{"id":"event.ai-provider-limit.default","translation":"Proveedor de IA"},
 			{"id":"event.ai-provider-limit","translation":"⚠️ Problema de conexión con {{.LimitInfo}}:\nse superó el límite de solicitudes o se requiere pago.\nPor favor, verifique el estado de su suscripción y recargue su saldo."}
 		]`,
@@ -535,6 +538,8 @@ func CreateMessageFromEvent(lang, Event, UserName, AssistName, Target string) (s
 		msg, err = loc.mustLocalize("event.reauth", map[string]any{"Target": Target})
 	case "reauth-userkey":
 		msg, err = loc.mustLocalize("event.reauth-userkey", nil)
+	case "model-removed":
+		msg, err = loc.mustLocalize("event.model-removed", map[string]any{"Target": Target, "AssistName": AssistName})
 	case "model-operator":
 		msg, err = loc.mustLocalize("event.model-operator", map[string]any{"AssistName": AssistName, "UserName": UserName})
 	// События подписки

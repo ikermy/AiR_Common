@@ -14,11 +14,6 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
-//var OpenAIExtandingCacheModels = []string{
-//	"gpt-5.2", "gpt-5.1-codex-max", "gpt-5.1", "gpt-5.1-codex",
-//	"gpt-5.1-codex-mini", "gpt-5.1-chat-latest", "gpt-5", "gpt-5-codex", "gpt-4.1",
-//}
-
 var OpenAIExtandingCacheModels = []string{
 	"gpt-5.5-instant",
 	"gpt-5.5-pro",
@@ -124,7 +119,34 @@ func (p ProviderType) IsValid() bool {
 	return false
 }
 
+// ProviderModelUserChange описывает пользователя, который использовал удалённую модель провайдера.
+type ProviderModelUserChange struct {
+	UserID    uint32 `json:"user_id"`
+	ModelID   uint64 `json:"model_id"`
+	ModelName string `json:"model_name,omitempty"`
+}
+
+// ProviderModelsSyncResult содержит результат синхронизации каталога моделей провайдера.
+type ProviderModelsSyncResult struct {
+	Provider      ProviderType              `json:"provider"`
+	Synced        int                       `json:"synced"`
+	Removed       int                       `json:"removed"`
+	ClearedUsers  int                       `json:"cleared_users"`
+	RemovedNames  []string                  `json:"removed_names,omitempty"`
+	AffectedUsers []ProviderModelUserChange `json:"affected_users,omitempty"`
+}
+
+// ============================================================================
+// DB INTERFACE
+// ============================================================================
+
+// DB interface defines the persistence contract for model management.
 type DB interface {
+	// SyncProviderModels синхронизирует каталог моделей провайдера с уже полученным списком моделей.
+	// При удалении неподдерживаемой модели из провайдера она удаляется из gpt_models и
+	// очищает ссылку в user_models (GptModelId = NULL), чтобы пользователь мог выбрать другую.
+	SyncProviderModels(provider ProviderType, modelNames []string) (ProviderModelsSyncResult, error)
+
 	// SaveUserModel сохраняет модель в user_gpt и создает связь в user_models (всё в одной транзакции)
 	// Автоматически определяет IsActive (первая модель пользователя становится активной)
 	// provider - тип провайдера (1=OpenAI, 2=Mistral)

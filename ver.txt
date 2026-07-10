@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.50"
-git tag -a v1.50.50 -m "rpc add new methods"
+git commit -m "v1.50.51"
+git tag -a v1.50.51 -m "providers get models list"
 git push origin master
-git push origin v1.50.50
+git push origin v1.50.51

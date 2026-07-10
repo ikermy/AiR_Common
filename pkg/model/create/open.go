@@ -375,17 +375,24 @@ func (c *OpenAIAgentClient) createResponseInternal(
 
 	// Формируем payload для Responses API
 	payload := map[string]any{
-		"model":  configMap["model_name"],
 		"input":  input,
 		"stream": true, // КРИТИЧНО: Включаем streaming
 	}
+
+	// Имя модели берётся из AgentConfig.ModelName, которое заполняется при создании
+	// конфигурации из user_gpt.AssistantId (хранит имя выбранной пользователем модели из gpt_models).
+	modelName, _ := configMap["model_name"].(string)
+	if modelName == "" {
+		return nil, "", fmt.Errorf("имя модели OpenAI не задано: заполните поле ModelName в AgentConfig (user_gpt.AssistantId)")
+	}
+	payload["model"] = modelName
 
 	// Добавляем instructions (system prompt)
 	if systemPrompt, ok := configMap["system_prompt"].(string); ok && systemPrompt != "" {
 		payload["instructions"] = systemPrompt
 
 		// ✅ PROMPT CACHING - ЭКОНОМИЯ 70-90% ТОКЕНОВ!
-		// Кэширование работает АВТОМАТИЧЕСКИ для промптов >= 1024 токенов (без параметров!)
+		// Кэширование работает АВТОМАТИЧЕСКИ для промптов >= 1024 токенов (без изменений кода!).
 		// Кэшируется статическая часть: instructions + tools + schema
 		// При повторных запросах cached_tokens стоят в 10 раз дешевле input_tokens
 		//
@@ -398,7 +405,6 @@ func (c *OpenAIAgentClient) createResponseInternal(
 		// - "24h": до 24 часов (Extended Caching)
 		//
 		// Проверяем, поддерживает ли модель prompt_cache_retention
-		modelName, _ := configMap["model_name"].(string)
 		supportsExtendedCaching := false
 
 		// Список моделей, поддерживающих Extended Caching (24h)

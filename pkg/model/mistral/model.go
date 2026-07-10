@@ -18,6 +18,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/provider_catalog"
 )
 
 // Model реализует интерфейс model.UniversalModel для работы с Mistral AI
@@ -697,4 +698,11 @@ func (m *Model) DisconnectUser(userID uint32) {
 		}
 		return true
 	})
+}
+
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, apiKey string) error {
+	if provider != create.ProviderMistral {
+		return fmt.Errorf("неверный провайдер для Mistral модели: %s", provider.String())
+	}
+	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderMistral, apiKey)
 }

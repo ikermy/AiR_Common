@@ -13,6 +13,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/provider_catalog"
 )
 
 type Inter interface {
@@ -259,9 +260,18 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	// RealtimeModel выставляется сразу в константу — НЕ в found.AssistId (это текстовая модель).
 	// Это гарантирует что realtime-сессия не получит обычную модель (gemini-2.5-flash и т.п.),
 	// которая не поддерживает v1alpha BidiGenerateContent.
+	modelName := found.AssistId
+	if modelName == "" {
+		// AssistId не заполнен — берём модель по умолчанию из gpt_models (IsDefault=1)
+		_, defaultName, err := m.db.DefaultProvidersModels(create.ProviderGoogle.String())
+		if err != nil {
+			return fmt.Errorf("имя модели Google не задано и получить модель по умолчанию не удалось: %w", err)
+		}
+		modelName = defaultName
+	}
 	agentConfig := GoogleAgentConfig{
 		ModelId:       found.ModelId,
-		ModelName:     found.AssistId, // текстовая модель (напр. gemini-2.5-flash)
+		ModelName:     modelName,
 		HasVector:     false,
 		RealtimeModel: create.RealtimeGoogleModel, // всегда realtime-модель (gemini-2.0-flash-lite)
 	}
@@ -877,4 +887,11 @@ func (m *Model) DisconnectUser(userID uint32) {
 		}
 		return true
 	})
+}
+
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, apiKey string) error {
+	if provider != create.ProviderGoogle {
+		return fmt.Errorf("неверный провайдер для Google модели: %s", provider.String())
+	}
+	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderGoogle, apiKey)
 }

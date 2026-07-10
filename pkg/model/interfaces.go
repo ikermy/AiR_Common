@@ -30,6 +30,7 @@ type Inter interface {
 	DisconnectUser(userID uint32)
 	InvalidateUserAgentConfigCache(userID uint32)
 	Shutdown(shutCh chan<- com.LogMsg)
+	UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, apiKey string) error
 }
 
 // RouterInterface минимальный интерфейс для доступа к методам роутера

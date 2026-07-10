@@ -42,9 +42,12 @@ type Exterior interface {
 	GetUserVectorStorage(userID uint32) (string, error)
 	SetChannelEnabled(userID uint32, chName string, status bool) error
 	SaveUserModel(userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint8, ids json.RawMessage, operator bool) error
+	SyncProviderModels(provider create.ProviderType, modelNames []string) (create.ProviderModelsSyncResult, error)
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
 	ReadUserModel(userID uint32) ([]byte, *create.VecIds, error)
 	SetUserSubscriptionNotified(user uint32) error
+	DefaultProvidersModels(providerName string) (uint8, string, error)
+	ModelsNameByProvider(provider create.ProviderType) ([]string, error)
 
 	// User Model Management - методы для управления моделями пользователя (для create.DB)
 	ReadUserModelByProvider(userID uint32, provider create.ProviderType) ([]byte, *create.VecIds, error)
@@ -776,7 +779,7 @@ func (d *DB) GetNotificationChannel(userID uint32) (json.RawMessage, error) {
 	return json.RawMessage(data.String), nil
 }
 
-// GetUserModels получает все модели пользователя из таблицы user_models
+// GetAllUserModels получает все модели пользователя из таблицы user_models
 func (d *DB) GetAllUserModels(userID uint32) ([]create.UserModelRecord, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("получен пустой userID")
@@ -1045,6 +1048,44 @@ func (d *DB) ReadUserModelByProvider(userID uint32, provider create.ProviderType
 	}
 
 	return decodedData, vecIds, nil
+}
+
+// DefaultProvidersModels возвращает модель по умолчанию для указанного провайдера
+func (d *DB) DefaultProvidersModels(providerName string) (uint8, string, error) {
+	// Проверяем входные данные
+	if providerName == "" {
+		return 0, "", fmt.Errorf("получено пустое имя провайдера")
+	}
+
+	// Дочерний контекст с тайм-аутом на операцию
+	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	query := `
+		SELECT gm.Id, gm.Name
+		FROM gpt_models gm
+		INNER JOIN model_providers mp ON gm.Provider = mp.Id
+		WHERE mp.Name = ? AND gm.IsDefault = 1
+		LIMIT 1
+	`
+
+	var modelId uint8
+	var modelName string
+	err := d.Conn().QueryRowContext(ctx, query, providerName).Scan(&modelId, &modelName)
+	if err != nil {
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			return 0, "", fmt.Errorf("тайм-аут (%d с) при получении модели по умолчанию для провайдера %s: %w", sqlTimeToCancel, providerName, err)
+		case errors.Is(err, context.Canceled):
+			return 0, "", fmt.Errorf("операция отменена: %w", err)
+		case errors.Is(err, sql.ErrNoRows):
+			return 0, "", fmt.Errorf("модель по умолчанию для провайдера %s не найдена", providerName)
+		default:
+			return 0, "", fmt.Errorf("ошибка выполнения запроса: %w", err)
+		}
+	}
+
+	return modelId, modelName, nil
 }
 
 // GetActiveModel получает активную модель пользователя
@@ -2252,4 +2293,148 @@ func (d *DB) SetUserSubscriptionNotified(user uint32) error {
 	}
 
 	return nil
+}
+
+// SyncProviderModels синхронизирует каталог моделей провайдера с уже полученным списком моделей.
+// При удалении неподдерживаемой модели из провайдера она удаляется из gpt_models и
+// очищает ссылку в user_models (GptModelId = NULL), чтобы пользователь мог выбрать другую.
+func (d *DB) SyncProviderModels(provider create.ProviderType, modelNames []string) (create.ProviderModelsSyncResult, error) {
+	result := create.ProviderModelsSyncResult{Provider: provider}
+	if !provider.IsValid() {
+		return result, fmt.Errorf("некорректный provider: %d", provider)
+	}
+
+	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	normalizedNames := make([]string, 0, len(modelNames))
+	for _, name := range modelNames {
+		trimmed := strings.TrimSpace(name)
+		if trimmed != "" {
+			normalizedNames = append(normalizedNames, trimmed)
+		}
+	}
+
+	tx, err := d.conn.BeginTx(ctx, nil)
+	if err != nil {
+		return result, fmt.Errorf("ошибка начала транзакции синхронизации: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, name := range normalizedNames {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO gpt_models (Provider, IsDefault, Name)
+			VALUES (?, ?, ?)
+			ON DUPLICATE KEY UPDATE
+				Name = VALUES(Name),
+				IsDefault = IF(gpt_models.IsDefault = 1, 1, 0)
+		`, provider, 0, name); err != nil {
+			return result, fmt.Errorf("ошибка сохранения модели %s: %w", name, err)
+		}
+		result.Synced++
+	}
+
+	rows, err := tx.QueryContext(ctx, `SELECT Id, Name FROM gpt_models WHERE Provider = ?`, provider)
+	if err != nil {
+		return result, fmt.Errorf("ошибка получения текущего списка моделей: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	seen := make(map[string]struct{}, len(normalizedNames))
+	for _, name := range normalizedNames {
+		seen[name] = struct{}{}
+	}
+
+	for rows.Next() {
+		var modelID int64
+		var modelName string
+		if err := rows.Scan(&modelID, &modelName); err != nil {
+			continue
+		}
+		trimmedModelName := strings.TrimSpace(modelName)
+		if _, ok := seen[trimmedModelName]; ok {
+			continue
+		}
+
+		var affectedUsers []uint32
+		userRows, err := tx.QueryContext(ctx, `
+			SELECT um.userID
+			FROM user_models um
+			JOIN user_gpt ug ON ug.Id = um.ModelId
+			WHERE um.Provider = ? AND ug.Model = ?
+		`, provider, modelID)
+		if err != nil {
+			return result, fmt.Errorf("ошибка получения пользователей, использующих удалённую модель %s: %w", trimmedModelName, err)
+		}
+		for userRows.Next() {
+			var userID uint32
+			if err := userRows.Scan(&userID); err != nil {
+				continue
+			}
+			affectedUsers = append(affectedUsers, userID)
+		}
+		_ = userRows.Close()
+
+		// Очищаем привязку к удалённой модели:
+		// - um.IsActive = 0  → деактивируем пользователей этой модели
+		// - ug.Model = NULL  → убираем ссылку на gpt_models.Id
+		// - ug.AssistantId = '' → очищаем имя модели, чтобы loadAgentConfig
+		//   подхватил DefaultProvidersModels и переключил на дефолтную модель
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE user_models um
+			JOIN user_gpt ug ON ug.Id = um.ModelId
+			SET um.IsActive = 0, ug.Model = NULL, ug.AssistantId = ''
+			WHERE um.Provider = ? AND ug.Model = ?
+		`, provider, modelID); err != nil {
+			return result, fmt.Errorf("ошибка очистки привязки к модели %s в user_gpt: %w", trimmedModelName, err)
+		}
+
+		if _, err := tx.ExecContext(ctx, `DELETE FROM gpt_models WHERE Id = ?`, modelID); err != nil {
+			return result, fmt.Errorf("ошибка удаления модели %s из gpt_models: %w", trimmedModelName, err)
+		}
+
+		result.Removed++
+		result.RemovedNames = append(result.RemovedNames, trimmedModelName)
+		result.ClearedUsers += len(affectedUsers)
+		for _, userID := range affectedUsers {
+			result.AffectedUsers = append(result.AffectedUsers, create.ProviderModelUserChange{
+				UserID:    userID,
+				ModelID:   uint64(modelID),
+				ModelName: trimmedModelName,
+			})
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return result, fmt.Errorf("ошибка фиксации синхронизации моделей: %w", err)
+	}
+
+	return result, nil
+}
+
+func (d *DB) ModelsNameByProvider(provider create.ProviderType) ([]string, error) {
+	if !provider.IsValid() {
+		return nil, fmt.Errorf("некорректный provider: %d", provider)
+	}
+
+	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
+	defer cancel()
+
+	rows, err := d.conn.QueryContext(ctx, `SELECT Id, Name FROM gpt_models WHERE Provider = ?`, provider)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения текущего списка моделей: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var modelNames []string
+	for rows.Next() {
+		var modelID int64
+		var modelName string
+		if err := rows.Scan(&modelID, &modelName); err != nil {
+			continue
+		}
+		modelNames = append(modelNames, strings.TrimSpace(modelName))
+	}
+
+	return modelNames, nil
 }

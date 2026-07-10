@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/com"
+	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/provider_catalog"
 )
 
 // ============================================================================
@@ -474,13 +477,77 @@ func (r *Router) CleanUp() {
 
 // CreateModel создаёт новую модель у указанного провайдера
 func (r *Router) CreateModel(userID uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error) {
+	go r.syncProviderModelsCatalog(userID, provider)
+
 	if _, err := r.getModel(provider); err != nil {
 		return create.UMCR{}, err
 	}
+
 	if r.modelsManager == nil {
 		return create.UMCR{}, fmt.Errorf("модельный менеджер не инициализирован")
 	}
-	return r.modelsManager.CreateModel(userID, provider, modelData, fileIDs)
+	umcr, err := r.modelsManager.CreateModel(userID, provider, modelData, fileIDs)
+	if err != nil {
+		return create.UMCR{}, err
+	}
+
+	return umcr, nil
+}
+
+func (r *Router) syncProviderModelsCatalog(userID uint32, provider create.ProviderType) {
+	if r.db == nil || !provider.IsValid() {
+		return
+	}
+
+	apiKey, err := r.db.GetUserAPIKey(userID, provider)
+	if err != nil {
+		return
+	}
+
+	if strings.TrimSpace(apiKey) == "" {
+		return
+	}
+
+	syncCtx, cancel := context.WithTimeout(r.ctx, 5*time.Second)
+	defer cancel()
+
+	client := provider_catalog.NewClient()
+	modelNames, err := client.FetchModelNames(syncCtx, provider, apiKey)
+	if err != nil {
+		return
+	}
+
+	result, err := r.db.SyncProviderModels(provider, modelNames)
+	if err != nil {
+		return
+	}
+
+	if len(result.AffectedUsers) == 0 {
+		return
+	}
+
+	for _, affectedUser := range result.AffectedUsers {
+		select {
+		case mode.CarpinteroCh <- com.CarpCh{
+			Event:      "model-removed",
+			UserID:     affectedUser.UserID,
+			Target:     provider.String(),
+			AssistName: affectedUser.ModelName,
+		}:
+		default:
+			// канал переполнен — уведомление потеряно, но ошибка всё равно вернётся
+		}
+	}
+
+	return
+}
+
+func (r *Router) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, apiKey string) error {
+	m, err := r.getModel(provider)
+	if err != nil {
+		return err
+	}
+	return m.UpdateModelsListByProvider(ctx, provider, apiKey)
 }
 
 // UploadFileToProvider загружает файл в указанный провайдер (только Mistral)
