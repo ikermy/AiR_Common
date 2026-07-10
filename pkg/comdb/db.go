@@ -41,7 +41,7 @@ type Exterior interface {
 	UpdateUserGPT(userID uint32, modelId uint64, assistId string, allIds []byte) error
 	GetUserVectorStorage(userID uint32) (string, error)
 	SetChannelEnabled(userID uint32, chName string, status bool) error
-	SaveUserModel(userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint8, ids json.RawMessage, operator bool) error
+	SaveUserModel(userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint, ids json.RawMessage, operator bool) error
 	SyncProviderModels(provider create.ProviderType, modelNames []string) (create.ProviderModelsSyncResult, error)
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
 	ReadUserModel(userID uint32) ([]byte, *create.VecIds, error)
@@ -790,15 +790,18 @@ func (d *DB) GetAllUserModels(userID uint32) ([]create.UserModelRecord, error) {
 
 	rows, err := d.Conn().QueryContext(ctx,
 		`SELECT 
-            um.ModelId,
-            um.Provider,
-            um.IsActive,
-            ug.AssistantId,
-            ug.Ids
-        FROM user_models um
-        JOIN user_gpt ug ON um.ModelId = ug.Id
-        WHERE um.userID = ?
-        ORDER BY um.IsActive DESC, um.CreatedAt DESC`, userID)
+			um.ModelId,
+			um.Provider,
+			um.IsActive,
+			ug.AssistantId,
+			gm.Id,
+			gm.Name,
+			ug.Ids
+		FROM user_models um
+		JOIN user_gpt ug ON um.ModelId = ug.Id
+		JOIN gpt_models gm ON gm.Id = ug.Model
+		WHERE um.userID = ?
+		ORDER BY um.IsActive DESC, um.CreatedAt DESC`, userID)
 
 	if err != nil {
 		switch {
@@ -817,12 +820,20 @@ func (d *DB) GetAllUserModels(userID uint32) ([]create.UserModelRecord, error) {
 		var record create.UserModelRecord
 		var isActive int8
 		var idsRaw sql.NullString
+		var modelId sql.NullInt64
+		var modelName sql.NullString
 
-		if err := rows.Scan(&record.ModelId, &record.Provider, &isActive, &record.AssistId, &idsRaw); err != nil {
+		if err := rows.Scan(&record.ModelId, &record.Provider, &isActive, &record.AssistId, &modelId, &modelName, &idsRaw); err != nil {
 			continue
 		}
 
 		record.IsActive = isActive == 1
+		if modelName.Valid && modelId.Valid {
+			record.GptType = &create.GptType{
+				ID:   uint(modelId.Int64),
+				Name: modelName.String,
+			}
+		}
 
 		// Парсим JSON из поля Ids
 		if idsRaw.Valid && idsRaw.String != "" {
@@ -1106,9 +1117,12 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 			ug.AssistantId,
 			um.Provider,
 			um.IsActive,
-			ug.Ids
+			ug.Ids,
+			gm.Id,
+			gm.Name
 		FROM user_models um
 		JOIN user_gpt ug ON um.ModelId = ug.Id
+		LEFT JOIN gpt_models gm ON gm.Id = ug.Model
 		WHERE um.userID = ? AND um.IsActive = 1
 		LIMIT 1`
 
@@ -1117,6 +1131,8 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 	var provider uint8
 	var isActive bool
 	var idsJson sql.NullString
+	var modelName sql.NullString
+	var modelNameId sql.NullInt64
 
 	err := d.Conn().QueryRowContext(ctx, query, userID).Scan(
 		&modelId,
@@ -1124,6 +1140,8 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 		&provider,
 		&isActive,
 		&idsJson,
+		&modelNameId,
+		&modelName,
 	)
 
 	if err != nil {
@@ -1146,6 +1164,12 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 		Provider: create.ProviderType(provider),
 		IsActive: isActive,
 		FileIds:  []create.Ids{},
+	}
+	if modelName.Valid && modelNameId.Valid {
+		record.GptType = &create.GptType{
+			ID:   uint(modelNameId.Int64),
+			Name: modelName.String,
+		}
 	}
 
 	// Парсим JSON с Ids
@@ -1184,9 +1208,12 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 			ug.AssistantId,
 			um.Provider,
 			um.IsActive,
-			ug.Ids
+			ug.Ids,
+			gm.Id,
+			gm.Name
 		FROM user_models um
 		INNER JOIN user_gpt ug ON um.ModelId = ug.Id
+		LEFT JOIN gpt_models gm ON gm.Id = ug.Model
 		WHERE um.userID = ? 
 			AND um.Provider = ?
 			AND um.IsActive = 1
@@ -1197,6 +1224,8 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 	var providerDb uint8
 	var isActive bool
 	var idsJson sql.NullString
+	var modelName sql.NullString
+	var modelNameId sql.NullInt64
 
 	err := d.Conn().QueryRowContext(ctx, query, userID, uint8(provider)).Scan(
 		&modelId,
@@ -1204,6 +1233,8 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 		&providerDb,
 		&isActive,
 		&idsJson,
+		&modelNameId,
+		&modelName,
 	)
 
 	if err != nil {
@@ -1226,6 +1257,12 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 		Provider: create.ProviderType(providerDb),
 		IsActive: isActive,
 		FileIds:  []create.Ids{},
+	}
+	if modelName.Valid && modelNameId.Valid {
+		record.GptType = &create.GptType{
+			ID:   uint(modelNameId.Int64),
+			Name: modelName.String,
+		}
 	}
 
 	// Парсим JSON с Ids
@@ -1265,9 +1302,12 @@ func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.Provider
 			ug.AssistantId,
 			um.Provider,
 			um.IsActive,
-			ug.Ids
+			ug.Ids,
+			gm.Id,
+			gm.Name
 		FROM user_models um
 		INNER JOIN user_gpt ug ON um.ModelId = ug.Id
+		LEFT JOIN gpt_models gm ON gm.Id = ug.Model
 		WHERE um.userID = ? 
 			AND um.Provider = ?
 		LIMIT 1`
@@ -1277,6 +1317,8 @@ func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.Provider
 	var providerDb uint8
 	var isActive bool
 	var idsJson sql.NullString
+	var modelName sql.NullString
+	var modelNameId sql.NullInt64
 
 	err := d.Conn().QueryRowContext(ctx, query, userID, uint8(provider)).Scan(
 		&modelId,
@@ -1284,6 +1326,8 @@ func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.Provider
 		&providerDb,
 		&isActive,
 		&idsJson,
+		&modelNameId,
+		&modelName,
 	)
 
 	if err != nil {
@@ -1306,6 +1350,12 @@ func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.Provider
 		Provider: create.ProviderType(providerDb),
 		IsActive: isActive,
 		FileIds:  []create.Ids{},
+	}
+	if modelName.Valid && modelNameId.Valid {
+		record.GptType = &create.GptType{
+			ID:   uint(modelNameId.Int64),
+			Name: modelName.String,
+		}
 	}
 
 	// Парсим JSON с Ids
@@ -1750,7 +1800,7 @@ func (d *DB) RemoveModelFromUser(userID uint32, modelId uint64) error {
 }
 
 func (d *DB) SaveUserModel(
-	userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint8, ids json.RawMessage, operator bool) error {
+	userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint, ids json.RawMessage, operator bool) error {
 	// Проверяю входные значения
 	if userID == 0 || name == "" || assistantId == "" {
 		return fmt.Errorf("получены некорректные значения: userID, name или assistantId пусты")

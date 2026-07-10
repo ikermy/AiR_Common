@@ -150,7 +150,7 @@ type DB interface {
 	// SaveUserModel сохраняет модель в user_gpt и создает связь в user_models (всё в одной транзакции)
 	// Автоматически определяет IsActive (первая модель пользователя становится активной)
 	// provider - тип провайдера (1=OpenAI, 2=Mistral)
-	SaveUserModel(userID uint32, provider ProviderType, name, assistantId string, data []byte, model uint8, ids json.RawMessage, operator bool) error
+	SaveUserModel(userID uint32, provider ProviderType, name, assistantId string, data []byte, model uint, ids json.RawMessage, operator bool) error
 
 	// ReadUserModelByProvider получает сжатые данные модели по провайдеру
 	// Возвращает: compressedData, vecIds, error
@@ -237,11 +237,12 @@ type VectorDocument struct {
 
 // UserModelRecord представляет запись из таблицы user_models
 type UserModelRecord struct {
-	FileIds  []Ids        `json:"file_ids"`
-	AssistId string       `json:"assist_id"`
 	ModelId  uint64       `json:"model_id"`
 	Provider ProviderType `json:"provider"`
 	IsActive bool         `json:"is_active"`
+	AssistId string       `json:"assist_id"`
+	GptType  *GptType     `json:"gpttype"`
+	FileIds  []Ids        `json:"file_ids"`
 	AllIds   []byte       `json:"all_ids"` // Raw JSON с FileIds и VectorId из БД
 }
 
@@ -381,7 +382,7 @@ func (m *UniversalModel) DeleteUserAPIKey(userID uint32, provider ProviderType) 
 
 type GptType struct {
 	Name string `json:"name"`
-	ID   uint8  `json:"id"`
+	ID   uint   `json:"id"`
 }
 
 // GOAuth хранит флаги доступа к Google OAuth сервисам (Calendar, Sheets).
