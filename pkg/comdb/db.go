@@ -2321,15 +2321,38 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelNames []strin
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	seenNames := make(map[string]struct{}, len(normalizedNames))
 	for _, name := range normalizedNames {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO gpt_models (Provider, IsDefault, Name)
-			VALUES (?, ?, ?)
-			ON DUPLICATE KEY UPDATE
-				Name = VALUES(Name),
-				IsDefault = IF(gpt_models.IsDefault = 1, 1, 0)
-		`, provider, 0, name); err != nil {
-			return result, fmt.Errorf("ошибка сохранения модели %s: %w", name, err)
+		if _, ok := seenNames[name]; ok {
+			continue
+		}
+		seenNames[name] = struct{}{}
+
+		var existingID int64
+		err := tx.QueryRowContext(ctx, `
+			SELECT Id
+			FROM gpt_models
+			WHERE Provider = ? AND Name = ?
+			LIMIT 1
+		`, provider, name).Scan(&existingID)
+		switch {
+		case err == nil:
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE gpt_models
+				SET IsDefault = IF(gpt_models.IsDefault = 1, 1, 0)
+				WHERE Id = ?
+			`, existingID); err != nil {
+				return result, fmt.Errorf("ошибка обновления модели %s: %w", name, err)
+			}
+		case errors.Is(err, sql.ErrNoRows):
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO gpt_models (Provider, IsDefault, Name)
+				VALUES (?, ?, ?)
+			`, provider, 0, name); err != nil {
+				return result, fmt.Errorf("ошибка сохранения модели %s: %w", name, err)
+			}
+		default:
+			return result, fmt.Errorf("ошибка поиска модели %s: %w", name, err)
 		}
 		result.Synced++
 	}
