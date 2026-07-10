@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/ikermy/AiR_Common/pkg/model/create"
@@ -114,7 +115,16 @@ func (c *Client) fetchMistralModels(ctx context.Context, apiKey string) ([]strin
 }
 
 func (c *Client) fetchGoogleModels(ctx context.Context, apiKey string) ([]string, error) {
-	return c.fetchListModels(ctx, "https://generativelanguage.googleapis.com/v1beta/models", apiKey, func(body []byte) ([]string, error) {
+	// Google API expects the API key as a query parameter, not as a Bearer token.
+	baseURL := "https://generativelanguage.googleapis.com/v1beta/models"
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка формирования URL Google: %w", err)
+	}
+	q := u.Query()
+	q.Set("key", apiKey)
+	u.RawQuery = q.Encode()
+	return c.fetchListModels(ctx, u.String(), "", func(body []byte) ([]string, error) {
 		var payload struct {
 			Models []struct {
 				Name string `json:"name"`
@@ -139,7 +149,9 @@ func (c *Client) fetchListModels(ctx context.Context, url, apiKey string, parser
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
