@@ -25,21 +25,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 	//totalStart := time.Now()
 	result := openaiRagResp{}
 
-	// === 1. Получаем real_user_id ===
-	var realuserID uint64
-	if m.universalModel != nil {
-		var err error
-		realuserID, err = m.universalModel.GetRealUserID(userID)
-		if err != nil {
-			//logger.Warn("applyRAG: не удалось получить real_user_id: %v, используем userID", err, userID)
-			realuserID = uint64(userID)
-		}
-	} else {
-		realuserID = uint64(userID)
-	}
-	result.realuserID = realuserID
-
-	// === 2 + 3. Параллельно: загрузка истории и поиск respModel ===
+	// === 1 + 2. Параллельно: загрузка истории и поиск respModel ===
 	// Используем два канала и WaitGroup для параллельного выполнения обеих операций.
 	type historyResult struct {
 		history []ChatMessage
@@ -110,7 +96,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 	result.historyLoadDuration = hRes.dur
 	result.responderLoadDuration = rRes.dur
 
-	// === 4. Проверяем что respModel найден (критично) ===
+	// === 3. Проверяем что respModel найден (критично) ===
 	if rRes.resp == nil {
 		select {
 		case <-m.ctx.Done():
@@ -129,7 +115,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 	}
 	result.respModel = resp
 
-	// === 5. Проверяем нужен ли RAG ===
+	// === 4. Проверяем нужен ли RAG ===
 	if !resp.AgentConfig.Search || text == "" {
 		//logger.Debug("applyRAG: RAG не требуется (Search=%v, text=%q)", resp.AgentConfig.Search, text != "", userID)
 		select {
@@ -139,7 +125,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 		return
 	}
 
-	// === 6. Генерируем эмбеддинг запроса ===
+	// === 5. Генерируем эмбеддинг запроса ===
 	embeddingStart := time.Now()
 	queryEmbedding, err := m.GenerateEmbedding(text)
 	result.embeddingDuration = time.Since(embeddingStart)
@@ -153,7 +139,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 		return
 	}
 
-	// === 7. Ищем похожие документы в MariaDB ===
+	// === 6. Ищем похожие документы в DB ===
 	searchStart := time.Now()
 	relevantDocs, err := m.searchSimilarEmbeddings(resp.AgentConfig.ModelId, queryEmbedding, create.SimilarEmbeddingsLimit)
 	result.searchDuration = time.Since(searchStart)
@@ -213,7 +199,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	ragCh := make(chan openaiRagResp, 1)
 	go m.applyRAG(userID, dialogID, text, ragCh)
 
-	// Ждём результат из горутины — содержит history, respModel, realuserID, contextText и метрики
+	// Ждём результат из горутины — содержит history, respModel, contextText и метрики
 	var ragResult openaiRagResp
 	select {
 	case <-m.ctx.Done():

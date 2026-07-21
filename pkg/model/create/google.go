@@ -73,7 +73,7 @@ type GoogleAgentClient struct {
 	apiKey         string
 	url            string
 	ctx            context.Context
-	universalModel *UniversalModel // Ссылка на universalModel для доступа к GetRealUserID
+	universalModel *UniversalModel // Ссылка на universalModel
 	promptFetcher  GooglePromptHintFetcher
 	toolsFetcher   GoogleFunctionDeclarationsFetcher
 	keyResolver    func(userID uint32) string // Резолвер персональных ключей; nil → глобальный apiKey
@@ -160,7 +160,7 @@ func (m *GoogleAgentClient) HasAPIKey(userID uint32) bool {
 	return m.resolveKey(userID) != ""
 }
 
-// SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID в create-time операциях.
+// SetUniversalModel устанавливает UniversalModel
 func (m *GoogleAgentClient) SetUniversalModel(um *UniversalModel) {
 	m.universalModel = um
 }

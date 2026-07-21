@@ -35,7 +35,6 @@ type Inter interface {
 
 // RouterInterface минимальный интерфейс для доступа к методам роутера
 type RouterInterface interface {
-	GetRealUserID(userID uint32) (uint64, error)
 	ProvidersWithApiKeys(userID uint32) create.ProvidersAvailability
 	RevokeUserAPIKey(userID uint32, provider create.ProviderType) error
 }

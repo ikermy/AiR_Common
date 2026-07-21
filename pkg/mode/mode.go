@@ -38,7 +38,6 @@ var (
 	Event        = make(chan uint64, 1)      // Канал для передачи Id диалога при отключении клиента
 	InstantCh    = make(chan com.InstMsg, 1) // Канал для передачи мгновенных сообщений в панель управления
 	RealHost     string
-	MCPserver    string
 
 	// Operator settings
 	// Таймаут ожидания ПЕРВОГО ответа оператора в секундах
@@ -68,10 +67,6 @@ func SetAudioMode(enabled bool) {
 }
 func SetRealHost(host string) {
 	RealHost = host
-}
-
-func SetMcpServer(server string) {
-	MCPserver = server
 }
 
 func SetUserModelTTL(ttl time.Duration) {

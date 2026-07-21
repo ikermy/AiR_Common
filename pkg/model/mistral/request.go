@@ -59,7 +59,7 @@ func prepareUserContent(text string, files []model.FileUpload) any {
 }
 
 // Request выполняет запрос к Mistral модели, используя историю диалога как контекст
-func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
+func (m *Model) Request(userID uint32, dialogID uint64, text string, files ...model.FileUpload) (model.AssistResponse, error) {
 	var emptyResponse model.AssistResponse
 
 	if text == "" && len(files) == 0 {
@@ -231,7 +231,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 	//logger.Debug("Mistral RAW ответ: Message='%s', HasFunc=%v, FuncName='%s'", response.Message, response.HasFunc, response.FuncName, userID)
 
 	// Обрабатываем ответ
-	assistResponse := m.processResponse(response, respModel.RealuserID, respModel.Assist.Provider)
+	assistResponse := m.processResponse(response, userID, respModel.Assist.Provider)
 
 	// Обрабатываем цепочку вызовов функций (если есть)
 	// ВАЖНО: Mistral может вызывать несколько функций подряд (например: get_current_time -> sheets_write_range)
@@ -334,7 +334,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 			//logger.Debug("RAW ответ агента: Message='%s', HasFunc=%v, FuncName='%s'", finalResponse.Message, finalResponse.HasFunc, finalResponse.FuncName, userID)
 
 			response = finalResponse
-			assistResponse = m.processResponse(finalResponse, respModel.RealuserID, respModel.Assist.Provider)
+			assistResponse = m.processResponse(finalResponse, userID, respModel.Assist.Provider)
 
 			// Если это НЕ вызов функции, выходим из цикла - получен финальный ответ
 			if !finalResponse.HasFunc {
@@ -372,7 +372,7 @@ func (m *Model) Request(_ uint32, dialogID uint64, text string, files ...model.F
 }
 
 // processResponse обрабатывает ответ от Mistral
-func (m *Model) processResponse(response Response, realuserID uint64, provider create.ProviderType) model.AssistResponse {
+func (m *Model) processResponse(response Response, userID uint32, provider create.ProviderType) model.AssistResponse {
 	messageText := strings.TrimSpace(response.Message)
 
 	// СНАЧАЛА парсим JSON из ответа (если есть) чтобы получить красивые имена файлов
@@ -420,16 +420,6 @@ func (m *Model) processResponse(response Response, realuserID uint64, provider c
 	if len(response.GeneratedImages) > 0 {
 		//logger.Debug("processResponse: обнаружено %d сгенерированных изображений", len(response.GeneratedImages))
 
-		// Проверяем наличие realuserID
-		if realuserID == 0 {
-			//logger.Warn("processResponse: realuserID не установлен, пропускаем сохранение изображений")
-			return model.AssistResponse{
-				Message:  messageText,
-				Meta:     false,
-				Operator: false,
-			}
-		}
-
 		// Скачиваем и сохраняем каждое изображение
 		for idx, img := range response.GeneratedImages {
 			// Скачиваем изображение через Mistral Files API
@@ -466,11 +456,11 @@ func (m *Model) processResponse(response Response, realuserID uint64, provider c
 				fileName = fmt.Sprintf("image_%s.%s", uniquePrefix, img.FileType)
 			}
 
-			// Вызываем save_image_data через action handler с base64 данными
+			// Вызываем save_image через action handler с base64 данными
 			args := fmt.Sprintf(`{"image_data":"%s","file_name":"%s"}`,
 				base64Encode(imageData), fileName)
 
-			result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, uint32(realuserID))
+			result := m.actionHandler.RunAction(m.ctx, "save_image", args, provider, userID)
 
 			var saveResult struct {
 				URL   string `json:"url"`
@@ -627,7 +617,7 @@ func base64Encode(data []byte) string {
 // RequestStreaming выполняет запрос с потоковой передачей (TRUE STREAMING)
 // Использует Mistral Conversations API в streaming режиме с Server-Sent Events (SSE)
 // Поддерживает вызов функций и подсчет токенов
-func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
+func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, onDelta func(delta string, done bool) error, files ...model.FileUpload) error {
 	if text == "" && len(files) == 0 {
 		return fmt.Errorf("пустое сообщение и нет файлов")
 	}
@@ -772,7 +762,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 	// Если нет function calls в первом ответе - это обычный текстовый ответ
 	if len(functionCalls) == 0 {
 		response := ParseConversationResponse(convResp)
-		assistResponse := m.processResponse(response, respModel.RealuserID, respModel.Assist.Provider)
+		assistResponse := m.processResponse(response, userID, respModel.Assist.Provider)
 
 		// Сохраняем ответ в контекст
 		if assistResponse.Message != "" {
@@ -881,7 +871,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 
 			// Парсим ответ для проверки наличия контента
 			response := ParseConversationResponse(finalConvResp)
-			assistResponse := m.processResponse(response, respModel.RealuserID, respModel.Assist.Provider)
+			assistResponse := m.processResponse(response, userID, respModel.Assist.Provider)
 
 			// Если нет больше function calls И есть текстовый ответ - это финальный ответ
 			if len(functionCalls) == 0 {
@@ -932,7 +922,7 @@ func (m *Model) RequestStreaming(_ uint32, dialogID uint64, text string, onDelta
 	// Если вышли из цикла без финального ответа - отправляем пустой ответ
 	//logger.Warn("Получен пустой ответ от ассистента, не добавляем в контекст", userID)
 
-	emptyResponse := m.processResponse(Response{}, respModel.RealuserID, respModel.Assist.Provider)
+	emptyResponse := m.processResponse(Response{}, userID, respModel.Assist.Provider)
 	responseJSON, _ := json.Marshal(emptyResponse)
 
 	sendTotalUsage()

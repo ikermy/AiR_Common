@@ -77,7 +77,7 @@ type MistralAgentClient struct {
 	apiKey         string
 	url            string
 	ctx            context.Context
-	universalModel *UniversalModel // Ссылка на UniversalModel для доступа к GetRealUserID
+	universalModel *UniversalModel // Ссылка на UniversalModel
 	promptFetcher  GooglePromptHintFetcher
 	toolsFetcher   GoogleFunctionDeclarationsFetcher
 	keyResolver    func(userID uint32) string // Резолвер персональных ключей; nil → глобальный apiKey

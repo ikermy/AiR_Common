@@ -737,7 +737,7 @@ func (m *Model) processVideoGeneration(userID uint32, userText string, response 
 
 	//logger.Debug("processVideoGeneration: видео успешно сгенерировано: %d bytes, %s", len(videoData), mimeType)
 
-	// Сохраняем видео через save_image_data (используем тот же механизм)
+	// Сохраняем видео через save_image (используем тот же механизм)
 	// TODO: Можно создать отдельный save_video_data endpoint
 	fileName := fmt.Sprintf("video_%d_%d.mp4", userID, time.Now().Unix())
 
@@ -747,7 +747,7 @@ func (m *Model) processVideoGeneration(userID uint32, userText string, response 
 	args := fmt.Sprintf(`{"image_data":"%s","file_name":"%s"}`,
 		videoBase64, fileName)
 
-	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, userID)
+	result := m.actionHandler.RunAction(m.ctx, "save_image", args, provider, userID)
 
 	// Парсим результат сохранения
 	var saveResult struct {
@@ -910,14 +910,14 @@ func (m *Model) processImageGeneration(userID uint32, userText string, response 
 
 	fileName := fmt.Sprintf("image_%d_%d.%s", userID, time.Now().Unix(), ext)
 
-	// Кодируем в base64 для передачи в save_image_data
+	// Кодируем в base64 для передачи в save_image
 	imageBase64 := base64.StdEncoding.EncodeToString(imageData)
 
 	// Сохраняем через action handler
 	args := fmt.Sprintf(`{"image_data":"%s","file_name":"%s"}`,
 		imageBase64, fileName)
 
-	result := m.actionHandler.RunAction(m.ctx, "save_image_data", args, provider, userID)
+	result := m.actionHandler.RunAction(m.ctx, "save_image", args, provider, userID)
 
 	// Парсим результат сохранения
 	var saveResult struct {
@@ -1047,7 +1047,6 @@ type ragResp struct {
 	err         error
 	history     []GoogleContent
 	resp        *GoogleRespModel
-	realuserID  uint64
 	// Метрики производительности
 	embeddingDuration     time.Duration
 	searchDuration        time.Duration
@@ -1061,21 +1060,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 
 	result := ragResp{}
 
-	// === 1. Получаем real_user_id ===
-	var realuserID uint64
-	if m.universalModel != nil {
-		var err error
-		realuserID, err = m.universalModel.GetRealUserID(userID)
-		if err != nil {
-			//logger.Warn("applyRAG: не удалось получить real_user_id: %v, используем userID", err, userID)
-			realuserID = uint64(userID)
-		}
-	} else {
-		realuserID = uint64(userID)
-	}
-	result.realuserID = realuserID
-
-	// === 2. Загружаем историю диалога (параллельно с эмбеддингами) ===
+	// === 1. Загружаем историю диалога (параллельно с эмбеддингами) ===
 	historyStart := time.Now()
 	var history []GoogleContent
 	if cachedHistory, found := m.getDialogHistoryFromCache(dialogID); found {
@@ -1125,7 +1110,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 	result.history = history
 	result.historyLoadDuration = time.Since(historyStart)
 
-	// === 3. Получаем респондента ===
+	// === 2. Получаем респондента ===
 	responderStart := time.Now()
 	respId, err := m.GetRespIdByDialogID(dialogID)
 	if err != nil {
@@ -1156,7 +1141,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 	result.resp = resp
 	result.responderLoadDuration = time.Since(responderStart)
 
-	// === 4. Проверяем нужен ли RAG ===
+	// === 3. Проверяем нужен ли RAG ===
 	if !resp.AgentConfig.HasVector || len(resp.AgentConfig.VectorIds) == 0 || text == "" {
 		//logger.Debug("applyRAG: RAG не требуется (HasVector=%v, VectorIds=%d, text=%q)",
 		//	resp.AgentConfig.HasVector, len(resp.AgentConfig.VectorIds), text != "", userID)
@@ -1168,7 +1153,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 		return
 	}
 
-	// === 5. Генерируем эмбеддинг запроса ===
+	// === 4. Генерируем эмбеддинг запроса ===
 	embeddingStart := time.Now()
 	queryEmbedding, err := m.GenerateEmbedding(userID, text)
 	result.embeddingDuration = time.Since(embeddingStart)
@@ -1186,7 +1171,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 	// Проверяем был ли cache hit (через логи GenerateEmbedding)
 	// Эта информация уже залогирована в GenerateEmbedding
 
-	// === 6. Ищем похожие документы ===
+	// === 5. Ищем похожие документы ===
 	searchStart := time.Now()
 	relevantDocs, err := m.searchSimilarEmbeddings(resp.AgentConfig.ModelId, queryEmbedding, create.SimilarEmbeddingsLimit)
 	result.searchDuration = time.Since(searchStart)
@@ -1201,7 +1186,7 @@ func (m *Model) applyRAG(userID uint32, dialogID uint64, text string, ch chan<- 
 		return
 	}
 
-	// === 7. Формируем обогащённый контекст ===
+	// === 6. Формируем обогащённый контекст ===
 	if len(relevantDocs) > 0 {
 		var relevantChunks []string
 		for _, doc := range relevantDocs {
@@ -1247,7 +1232,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	go m.applyRAG(userID, dialogID, text, ragCh)
 
 	// Ждём результат RAG из горутины
-	// Он содержит: history, resp, realuserID, contextText и метрики производительности
+	// Он содержит: history, resp, contextText и метрики производительности
 	var ragResult ragResp
 	select {
 	case <-m.ctx.Done():

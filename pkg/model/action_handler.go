@@ -9,9 +9,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
+
+const mcpURL = "http://airbff:8080/int/mcp"
 
 // UniversalActionHandler универсальный обработчик функций для всех провайдеров
 type UniversalActionHandler struct {
@@ -27,15 +28,6 @@ func NewUniversalActionHandler(ctx context.Context) *UniversalActionHandler {
 			Timeout: 30 * time.Second,
 		},
 	}
-}
-
-// mcpURL возвращает URL MCP сервера в зависимости от режима (Production/Dev)
-func (h *UniversalActionHandler) mcpURL() string {
-	//if mode.ProductionMode {
-	//	return fmt.Sprintf("http://localhost:%s/mcp", h.port)
-	//}
-	//return fmt.Sprintf("https://localhost:%s/mcp", h.port)
-	return mode.MCPserver
 }
 
 // callMCP отправляет единый JSON-RPC запрос к MCP серверу (POST /mcp).
@@ -70,7 +62,7 @@ func (h *UniversalActionHandler) callMCP(ctx context.Context, toolName, argument
 		return string(result)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.mcpURL(), bytes.NewBuffer(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, mcpURL, bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		result, _ := json.Marshal(map[string]string{"error": "failed to create MCP request"})
 		return string(result)
@@ -145,7 +137,7 @@ func (h *UniversalActionHandler) callMCPMethod(ctx context.Context, method strin
 		return nil, fmt.Errorf("failed to marshal MCP request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.mcpURL(), bytes.NewBuffer(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, mcpURL, bytes.NewBuffer(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create MCP request: %w", err)
 	}

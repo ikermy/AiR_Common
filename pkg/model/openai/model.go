@@ -34,7 +34,7 @@ type Model struct {
 	realtimeSessions sync.Map // respId -> *RealtimeSession (параллельные голосовые сессии)
 	UserModelTTl     time.Duration
 	actionHandler    model.ActionHandler
-	universalModel   *create.UniversalModel // Для доступа к GetRealUserID
+	universalModel   *create.UniversalModel
 	shutdownOnce     sync.Once
 }
 
@@ -94,7 +94,6 @@ type openaiRagResp struct {
 	contextText string        // Обогащённый контекст из Vector Store (пустой если RAG не нужен или не дал результата)
 	history     []ChatMessage // История диалога (из кэша или БД)
 	respModel   *RespModel    // Загруженный респондент
-	realuserID  uint64
 	err         error
 	// Метрики производительности
 	embeddingDuration     time.Duration
@@ -182,7 +181,7 @@ func NewAsRouterOption() model.RouterOption {
 	}
 }
 
-// SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID
+// SetUniversalModel устанавливает UniversalModel
 func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
 }

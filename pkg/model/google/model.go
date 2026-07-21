@@ -35,7 +35,7 @@ type Model struct {
 	realtimeSessions sync.Map // respId -> *GoogleRealtimeSession (параллельные голосовые сессии)
 	UserModelTTl     time.Duration
 	actionHandler    model.ActionHandler
-	universalModel   *create.UniversalModel // Для доступа к GetRealUserID
+	universalModel   *create.UniversalModel
 	shutdownOnce     sync.Once
 }
 
@@ -194,7 +194,7 @@ func (m *Model) SetClient(client *create.GoogleAgentClient) {
 	m.client = client
 }
 
-// SetUniversalModel устанавливает UniversalModel для доступа к GetRealUserID
+// SetUniversalModel устанавливает UniversalModel
 func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
 	if m.client != nil {

@@ -842,15 +842,6 @@ func (r *Router) GetUserModelByProvider(userID uint32, provider create.ProviderT
 	return r.modelsManager.GetUserModelByProvider(userID, provider)
 }
 
-// GetRealuserID получает реальный UserID через modelsManager.
-// Дублирующий fallback с прямым HTTP-запросом удалён — modelsManager всегда инициализирован.
-func (r *Router) GetRealUserID(userID uint32) (uint64, error) {
-	if r.modelsManager == nil {
-		return 0, fmt.Errorf("модельный менеджер не инициализирован")
-	}
-	return r.modelsManager.GetRealUserID(userID)
-}
-
 // ProvidersWithApiKeys возвращает два списка провайдеров: с API-ключом и без.
 func (r *Router) ProvidersWithApiKeys(userID uint32) create.ProvidersAvailability {
 	if r.modelsManager == nil {

@@ -16,6 +16,8 @@ import (
 	"golang.org/x/text/language"
 )
 
+const notificationsURL = "http://airbff:8080/int/notification"
+
 // sendHTTPRequest отправляет HTTP POST запрос с JSON payload
 func sendHTTPRequest(url string, payload map[string]any) error {
 	jsonData, err := json.Marshal(payload)
@@ -164,7 +166,7 @@ func (e *Endpoint) SendNotification(msg com.CarpCh) error {
 }
 
 func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName, target string) error {
-	const url = "http://airbff:8080/v1/notification/telega"
+	const url = notificationsURL + "/telega"
 
 	payload := map[string]any{
 		"uid":    uid,
@@ -179,7 +181,7 @@ func SendTelegramNotification(uid uint32, tId int64, event, userName, assistName
 }
 
 func SendEmailNotification(uid uint32, email, event, userName, assistName, target string) error {
-	const url = "http://airbff:8080/v1/notification/mail"
+	const url = notificationsURL + "/mail"
 
 	payload := map[string]any{
 		"uid":    uid,
@@ -194,7 +196,7 @@ func SendEmailNotification(uid uint32, email, event, userName, assistName, targe
 }
 
 func SendInstantNotification(uid uint32, event, userName, assistName, target string) error {
-	const url = "http://airbff:8080/v1/notification/instant"
+	const url = notificationsURL + "/instant"
 
 	payload := map[string]any{
 		"uid":    uid,

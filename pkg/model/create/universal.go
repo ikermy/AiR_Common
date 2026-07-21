@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -289,7 +288,7 @@ func New(ctx context.Context, db DB) *UniversalModel {
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,
 		},
-		universalModel: m, // Передаем ссылку на universalModel для доступа к GetRealUserID
+		universalModel: m, // Передаем ссылку на universalModel
 	}
 	m.openaiClient.SetKeyResolver(func(userID uint32) string {
 		if key, err := db.GetUserAPIKey(userID, ProviderOpenAI); err == nil {
@@ -1145,49 +1144,6 @@ func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
 	}
 
 	return vad
-}
-
-// GetRealUserID получает реальный userID через HTTP запрос к landing серверу
-// Универсальный метод для всех провайдеров (OpenAI, Mistral)
-func (m *UniversalModel) GetRealUserID(userID uint32) (uint64, error) {
-	url := fmt.Sprintf("http://airbff:8080/v1/system/uid?uid=%d", userID)
-
-	// Создаём HTTP клиент с отключённой проверкой SSL для localhost
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{
-		Transport: tr,
-		Timeout:   5 * time.Second,
-	}
-
-	resp, err := client.Get(url)
-	if err != nil {
-		return 0, fmt.Errorf("ошибка при запросе GetRealUserID: %v", err)
-	}
-	defer func() {
-		if e := resp.Body.Close(); e != nil {
-			//logger.Warn("error closing response body: %v", e)
-		}
-	}()
-
-	// Обрабатываем HTTP ответ
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("неожиданный статус ответа GetRealUserID: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("ошибка чтения ответа GetRealUserID: %v", err)
-	}
-
-	// Парсим JSON ответ как число
-	var value uint64
-	if err := json.Unmarshal(body, &value); err != nil {
-		return 0, fmt.Errorf("ошибка парсинга JSON ответа GetRealUserID: %v", err)
-	}
-
-	return value, nil
 }
 
 // ParseModelSchemaJSON парсит статическую JSON Schema в map[string]any

@@ -79,7 +79,7 @@ func buildRealtimeSystemPrompt(config *AgentConfig) string {
 // по структуре JSON-ответа, без привязки к имени функции.
 //
 // Поддерживаемые форматы:
-//  1. Объект с полем "url" или "Url" → один файл (create_file, save_image_data и любые другие)
+//  1. Объект с полем "url" или "Url" → один файл (create_file, save_image и любые другие)
 //  2. Массив строк-URL → список файлов (get_s3_files и аналоги)
 //  3. Строка, являющаяся JSON-массивом URL → список файлов
 //

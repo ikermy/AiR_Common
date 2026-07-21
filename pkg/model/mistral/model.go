@@ -32,7 +32,7 @@ type Model struct {
 	UserModelTTl   time.Duration // Время жизни пользовательской модели в памяти
 	actionHandler  model.ActionHandler
 	shutdownOnce   sync.Once
-	router         model.RouterInterface  // Ссылка на router для GetRealuserID
+	router         model.RouterInterface  // Ссылка на router
 	universalModel *create.UniversalModel // Для доступа к DecompressModelData
 }
 
@@ -48,7 +48,6 @@ type RespModel struct {
 	Assist         model.Assistant
 	RespName       string
 	Services       Services
-	RealuserID     uint64 // Кэшированный реальный user_id
 	ConversationId string // ID conversation для Mistral Conversations API
 	Haunter        bool   // Модель используется для поиска лидов
 	ToolsSynced    bool   // true — агент уже синхронизирован с MCP tools в этой сессии
@@ -272,14 +271,6 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 			user.ConversationId = contextObj.ConversationID
 			//logger.Debug("Загружен conversation_id: %s", contextObj.ConversationID, assist.userID)
 		}
-	}
-
-	// Загружаем RealuserID ОДИН РАЗ при создании (избегаем повторных HTTP запросов)
-	if realuserID, err := m.GetRealUserID(assist.UserID); err == nil {
-		user.RealuserID = realuserID
-	} else {
-		//logger.Warn("Не удалось загрузить RealuserID: %v", err, assist.userID)
-		user.RealuserID = 0 // Будет пропущена генерация изображений
 	}
 
 	// Загружаем параметры модели из БД (включая Haunter)
@@ -657,15 +648,6 @@ func (m *Model) cleanupWaitChannels() {
 // SetUniversalModel устанавливает UniversalModel для доступа к DecompressModelData
 func (m *Model) SetUniversalModel(um *create.UniversalModel) {
 	m.universalModel = um
-}
-
-// GetRealUserID получает реальный userID через ModelRouter
-// Использует единый метод для всех провайдеров (OpenAI, Mistral)
-func (m *Model) GetRealUserID(userID uint32) (uint64, error) {
-	if m.router == nil {
-		return 0, fmt.Errorf("router не инициализирован")
-	}
-	return m.router.GetRealUserID(userID)
 }
 
 // InvalidateUserAgentConfigCache инвалидирует кэш конфигурации модели для пользователя

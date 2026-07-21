@@ -46,7 +46,7 @@ type Exterior interface {
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
 	ReadUserModel(userID uint32) ([]byte, *create.VecIds, error)
 	SetUserSubscriptionNotified(user uint32) error
-	DefaultProvidersModels(providerName string) (uint8, string, error)
+	DefaultProvidersModels(providerName string) (uint, string, error)
 	ModelsNameByProvider(provider create.ProviderType) ([]string, error)
 
 	// User Model Management - методы для управления моделями пользователя (для create.DB)
@@ -885,8 +885,8 @@ func (d *DB) UpdateUserGPT(userID uint32, modelId uint64, assistId string, allId
 
 	// Обновляем поле Ids в user_gpt
 	_, err := d.Conn().ExecContext(ctx, `
-		UPDATE user_gpt 
-		SET Ids = ? 
+		UPDATE user_gpt
+		SET Ids = ?
 		WHERE Id = ? AND AssistantId = ?
 	`, idsValue, modelId, assistId)
 
@@ -1062,7 +1062,7 @@ func (d *DB) ReadUserModelByProvider(userID uint32, provider create.ProviderType
 }
 
 // DefaultProvidersModels возвращает модель по умолчанию для указанного провайдера
-func (d *DB) DefaultProvidersModels(providerName string) (uint8, string, error) {
+func (d *DB) DefaultProvidersModels(providerName string) (uint, string, error) {
 	// Проверяем входные данные
 	if providerName == "" {
 		return 0, "", fmt.Errorf("получено пустое имя провайдера")
@@ -1080,7 +1080,7 @@ func (d *DB) DefaultProvidersModels(providerName string) (uint8, string, error) 
 		LIMIT 1
 	`
 
-	var modelId uint8
+	var modelId uint
 	var modelName string
 	err := d.Conn().QueryRowContext(ctx, query, providerName).Scan(&modelId, &modelName)
 	if err != nil {
@@ -2511,3 +2511,4 @@ func (d *DB) ModelsNameByProvider(provider create.ProviderType) ([]string, error
 
 	return modelNames, nil
 }
+
