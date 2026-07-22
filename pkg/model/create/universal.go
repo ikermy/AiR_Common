@@ -518,6 +518,28 @@ func (m *UniversalModel) CreateModel(userID uint32, provider ProviderType, model
 // Работает для любого провайдера (OpenAI, Mistral..)
 // Автоматически устанавливает модель как активную если это первая модель пользователя
 func (m *UniversalModel) SaveModel(userID uint32, umcr UMCR, data *UniversalModelData) error {
+	if data == nil || data.GptType == nil || data.GptType.Name == "" {
+		return fmt.Errorf("не указана модель провайдера")
+	}
+
+	// При обновлении конфигурации клиент может прислать только имя модели.
+	// Model в user_gpt — это FK на gpt_models.Id, поэтому нельзя сохранять ID=0.
+	// Восстанавливаем ID из уже существующей записи для любого провайдера.
+	if data.GptType.ID == 0 {
+		existingModels, lookupErr := m.db.GetAllUserModels(userID)
+		if lookupErr == nil {
+			for _, existing := range existingModels {
+				if existing.Provider == umcr.Provider && existing.GptType != nil && existing.GptType.ID != 0 {
+					data.GptType.ID = existing.GptType.ID
+					break
+				}
+			}
+		}
+	}
+	if data.GptType.ID == 0 {
+		return fmt.Errorf("не указан корректный ID модели gpt_models для провайдера %s", umcr.Provider)
+	}
+
 	// Сериализуем данные модели в JSON
 	modelJSON, err := json.Marshal(data)
 	if err != nil {

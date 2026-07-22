@@ -518,8 +518,10 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 				Parts: []map[string]any{
 					{
 						"functionResponse": map[string]any{
-							"name":     fc["name"],
-							"response": result,
+							"name": fc["name"],
+							"response": map[string]any{
+								"result": result,
+							},
 						},
 					},
 				},
@@ -1484,8 +1486,10 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 							Parts: []map[string]any{
 								{
 									"functionResponse": map[string]any{
-										"name":     functionCalls[i]["name"],
-										"response": contentJSON,
+										"name": functionCalls[i]["name"],
+										"response": map[string]any{
+											"result": contentJSON,
+										},
 									},
 								},
 							},
@@ -1525,8 +1529,10 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 					Parts: []map[string]any{
 						{
 							"functionResponse": map[string]any{
-								"name":     fc["name"],
-								"response": result,
+								"name": fc["name"],
+								"response": map[string]any{
+									"result": result,
+								},
 							},
 						},
 					},
