@@ -368,7 +368,7 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	// Responses API с response_format возвращает JSON как текст
 	// Парсим JSON чтобы извлечь реальную структуру AssistResponse
 	var assistResponse model.AssistResponse
-	if err := json.Unmarshal([]byte(fullText), &assistResponse); err != nil {
+	if err := unmarshalAssistResponse(fullText, &assistResponse); err != nil {
 		// Если парсинг не удался - возможно модель вернула просто текст
 		//logger.Warn("Не удалось распарсить JSON ответ (длина=%d, ошибка=%v), fullText='%s'",
 		//	len(fullText), err, fullText, userID)
@@ -408,6 +408,33 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	}
 
 	return nil
+}
+
+// unmarshalAssistResponse принимает JSON-объект, JSON, обёрнутый в markdown,
+// и JSON-строку, содержащую объект. Последний вариант встречается, когда
+// Responses API возвращает структурированный ответ как текстовое значение.
+func unmarshalAssistResponse(text string, response *model.AssistResponse) error {
+	cleaned := strings.TrimSpace(text)
+	if strings.HasPrefix(cleaned, "```json") {
+		cleaned = strings.TrimSpace(strings.TrimPrefix(cleaned, "```json"))
+	} else if strings.HasPrefix(cleaned, "```JSON") {
+		cleaned = strings.TrimSpace(strings.TrimPrefix(cleaned, "```JSON"))
+	} else if strings.HasPrefix(cleaned, "```") {
+		cleaned = strings.TrimSpace(strings.TrimPrefix(cleaned, "```"))
+	}
+	if strings.HasSuffix(cleaned, "```") {
+		cleaned = strings.TrimSpace(strings.TrimSuffix(cleaned, "```"))
+	}
+
+	if err := json.Unmarshal([]byte(cleaned), response); err == nil {
+		return nil
+	}
+
+	var encoded string
+	if err := json.Unmarshal([]byte(cleaned), &encoded); err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(encoded), response)
 }
 
 // createUserMessageWithFiles создает сообщение пользователя с поддержкой файлов

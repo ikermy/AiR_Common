@@ -1583,9 +1583,9 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	var assistResponse model.AssistResponse
 
 	// Google Gemini может возвращать как JSON (с системным промптом), так и обычный текст
-	if len(cleanedText) > 0 && cleanedText[0] == '{' {
+	if len(cleanedText) > 0 && (cleanedText[0] == '{' || cleanedText[0] == '"') {
 		// Пытаемся распарсить как JSON
-		if err := json.Unmarshal([]byte(cleanedText), &assistResponse); err != nil {
+		if err := unmarshalGoogleAssistResponse(cleanedText, &assistResponse); err != nil {
 			//logger.Warn("Не удалось распарсить JSON ответ (длина=%d, ошибка=%v), используем как текст",
 			//	len(cleanedText), err, userID)
 			// JSON невалидный - используем как обычный текст
@@ -1714,4 +1714,26 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	}
 
 	return nil
+}
+
+// unmarshalGoogleAssistResponse разбирает структурированный ответ Gemini,
+// включая случай, когда JSON пришёл как экранированная JSON-строка.
+func unmarshalGoogleAssistResponse(text string, response *model.AssistResponse) error {
+	cleaned := strings.TrimSpace(text)
+	if strings.HasPrefix(cleaned, "```") {
+		if strings.HasPrefix(cleaned, "```json") || strings.HasPrefix(cleaned, "```JSON") {
+			cleaned = strings.TrimSpace(cleaned[7:])
+		} else {
+			cleaned = strings.TrimSpace(cleaned[3:])
+		}
+		cleaned = strings.TrimSpace(strings.TrimSuffix(cleaned, "```"))
+	}
+	if err := json.Unmarshal([]byte(cleaned), response); err == nil {
+		return nil
+	}
+	var encoded string
+	if err := json.Unmarshal([]byte(cleaned), &encoded); err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(encoded), response)
 }
