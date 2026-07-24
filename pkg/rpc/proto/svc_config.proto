@@ -46,9 +46,11 @@ message UserMasterKeyResponse {
 }
 
 message WidgetTokenData {
-  uint32 user_id = 1; // User ID
-  uint64 resp_id = 2; // Response ID
-  int64 expired_seconds = 3; // Expiration time in seconds
+  uint32 user_id = 1;          // User ID
+  uint64 resp_id = 2;          // Response ID
+  int64 expired_seconds = 3;   // Expiration time in seconds
+  string origin = 4;           // Normalized browser origin
+  string jti = 5;              // Unique temporary token ID
 }
 
 message WidgetRawToken {
