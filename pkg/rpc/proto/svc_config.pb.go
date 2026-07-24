@@ -7,11 +7,12 @@
 package proto
 
 import (
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
+
+	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 const (
@@ -207,6 +208,8 @@ type WidgetTokenData struct {
 	UserId         uint32                 `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`                         // User ID
 	RespId         uint64                 `protobuf:"varint,2,opt,name=resp_id,json=respId,proto3" json:"resp_id,omitempty"`                         // Response ID
 	ExpiredSeconds int64                  `protobuf:"varint,3,opt,name=expired_seconds,json=expiredSeconds,proto3" json:"expired_seconds,omitempty"` // Expiration time in seconds
+	Origin         string                 `protobuf:"bytes,4,opt,name=origin,proto3" json:"origin,omitempty"`                                        // Normalized browser origin
+	Jti            string                 `protobuf:"bytes,5,opt,name=jti,proto3" json:"jti,omitempty"`                                              // Unique temporary token ID
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -260,6 +263,20 @@ func (x *WidgetTokenData) GetExpiredSeconds() int64 {
 		return x.ExpiredSeconds
 	}
 	return 0
+}
+
+func (x *WidgetTokenData) GetOrigin() string {
+	if x != nil {
+		return x.Origin
+	}
+	return ""
+}
+
+func (x *WidgetTokenData) GetJti() string {
+	if x != nil {
+		return x.Jti
+	}
+	return ""
 }
 
 type WidgetRawToken struct {
@@ -319,11 +336,13 @@ const file_svc_config_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\rR\x06userId\"6\n" +
 	"\x15UserMasterKeyResponse\x12\x1d\n" +
 	"\n" +
-	"master_key\x18\x01 \x01(\fR\tmasterKey\"l\n" +
+	"master_key\x18\x01 \x01(\fR\tmasterKey\"\x96\x01\n" +
 	"\x0fWidgetTokenData\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\rR\x06userId\x12\x17\n" +
 	"\aresp_id\x18\x02 \x01(\x04R\x06respId\x12'\n" +
-	"\x0fexpired_seconds\x18\x03 \x01(\x03R\x0eexpiredSeconds\"&\n" +
+	"\x0fexpired_seconds\x18\x03 \x01(\x03R\x0eexpiredSeconds\x12\x16\n" +
+	"\x06origin\x18\x04 \x01(\tR\x06origin\x12\x10\n" +
+	"\x03jti\x18\x05 \x01(\tR\x03jti\"&\n" +
 	"\x0eWidgetRawToken\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token2\xf5\x02\n" +
 	"\rConfigService\x12D\n" +
