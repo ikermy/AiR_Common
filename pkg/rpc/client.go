@@ -150,16 +150,19 @@ func (c *Client) WidgetNewToken(
 	return resp.Token, nil
 }
 
-func (c *Client) WidgetParseToken(ctx context.Context, tokenString string) (uint32, uint64, error) {
+func (c *Client) WidgetParseToken(ctx context.Context, tokenString string) (uint32, uint64, string, string, error) {
 	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), cancelTimeout)
 	defer cancel()
 
-	resp, err := c.stub.WidgetParseToken(ctx, &proto.WidgetRawToken{Token: tokenString})
+	resp, err := c.stub.WidgetParseToken(
+		ctx,
+		&proto.WidgetRawToken{Token: tokenString},
+	)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, "", "", err
 	}
 
-	return resp.UserId, resp.RespId, nil
+	return resp.UserId, resp.RespId, resp.Origin, resp.Jti, nil
 }
 
 // ctxWithKey attaches the service key to outgoing gRPC metadata.
