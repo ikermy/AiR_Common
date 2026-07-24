@@ -25,7 +25,7 @@ import (
 
 const (
 	serviceKeyHeader = "x-service-key"
-	canselTimeout    = 5 * time.Second
+	cancelTimeout    = 5 * time.Second
 )
 
 // Client is a gRPC client for Landing's ConfigService.
@@ -73,7 +73,7 @@ func (c *Client) Close() error {
 //   - codes.Unavailable — MasterKey not in Landing's cache (login required)
 //   - codes.Unauthenticated / codes.PermissionDenied — invalid service key
 func (c *Client) GetUserMasterKey(ctx context.Context, userId uint32) ([32]byte, error) {
-	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), canselTimeout)
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), cancelTimeout)
 	defer cancel()
 
 	resp, err := c.stub.GetUserMasterKey(ctx, &proto.GetUserMasterKeyRequest{UserId: userId})
@@ -92,7 +92,7 @@ func (c *Client) GetUserMasterKey(ctx context.Context, userId uint32) ([32]byte,
 
 // GetBotConfig returns decrypted Telegram bot settings from Landing.
 func (c *Client) GetBotConfig(ctx context.Context) (*proto.BotConfigResponse, error) {
-	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), canselTimeout)
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), cancelTimeout)
 	defer cancel()
 
 	resp, err := c.stub.GetBotConfig(ctx, &proto.GetBotConfigRequest{})
@@ -105,7 +105,7 @@ func (c *Client) GetBotConfig(ctx context.Context) (*proto.BotConfigResponse, er
 
 // GetOperBotConfig returns decrypted Telegram Operators bot settings from Landing.
 func (c *Client) GetOperBotConfig(ctx context.Context) (*proto.BotConfigResponse, error) {
-	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), canselTimeout)
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), cancelTimeout)
 	defer cancel()
 
 	resp, err := c.stub.GetOperBotConfig(ctx, &proto.GetBotConfigRequest{})
@@ -116,8 +116,15 @@ func (c *Client) GetOperBotConfig(ctx context.Context) (*proto.BotConfigResponse
 	return resp, nil
 }
 
-func (c *Client) WidgetNewToken(ctx context.Context, userID uint32, respID uint64, expired time.Duration) (string, error) {
-	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), canselTimeout)
+func (c *Client) WidgetNewToken(
+	ctx context.Context,
+	userID uint32,
+	respID uint64,
+	expired time.Duration,
+	origin string,
+	jti string,
+) (string, error) {
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), cancelTimeout)
 	defer cancel()
 
 	if expired < time.Second {
@@ -133,6 +140,8 @@ func (c *Client) WidgetNewToken(ctx context.Context, userID uint32, respID uint6
 		UserId:         userID,
 		RespId:         respID,
 		ExpiredSeconds: seconds,
+		Origin:         origin,
+		Jti:            jti,
 	})
 	if err != nil {
 		return "", err
@@ -142,7 +151,7 @@ func (c *Client) WidgetNewToken(ctx context.Context, userID uint32, respID uint6
 }
 
 func (c *Client) WidgetParseToken(ctx context.Context, tokenString string) (uint32, uint64, error) {
-	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), canselTimeout)
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), cancelTimeout)
 	defer cancel()
 
 	resp, err := c.stub.WidgetParseToken(ctx, &proto.WidgetRawToken{Token: tokenString})
