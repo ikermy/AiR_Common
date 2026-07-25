@@ -25,6 +25,8 @@ const (
 	ConfigService_GetUserMasterKey_FullMethodName = "/svcpb.ConfigService/GetUserMasterKey"
 	ConfigService_WidgetNewToken_FullMethodName   = "/svcpb.ConfigService/WidgetNewToken"
 	ConfigService_WidgetParseToken_FullMethodName = "/svcpb.ConfigService/WidgetParseToken"
+	ConfigService_WidgetNewCode_FullMethodName    = "/svcpb.ConfigService/WidgetNewCode"
+	ConfigService_WidgetParseCode_FullMethodName  = "/svcpb.ConfigService/WidgetParseCode"
 )
 
 // ConfigServiceClient is the client API for ConfigService service.
@@ -47,6 +49,10 @@ type ConfigServiceClient interface {
 	WidgetNewToken(ctx context.Context, in *WidgetTokenData, opts ...grpc.CallOption) (*WidgetRawToken, error)
 	// WidgetParseToken parses the widget_service raw token and returns the associated data.
 	WidgetParseToken(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetTokenData, error)
+	// WidgetNewCode sign and get new widget code.
+	WidgetNewCode(ctx context.Context, in *WidgetCodeData, opts ...grpc.CallOption) (*WidgetRawToken, error)
+	// WidgetParseCode check signature and return climes from widget code.
+	WidgetParseCode(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetCodeData, error)
 }
 
 type configServiceClient struct {
@@ -107,6 +113,26 @@ func (c *configServiceClient) WidgetParseToken(ctx context.Context, in *WidgetRa
 	return out, nil
 }
 
+func (c *configServiceClient) WidgetNewCode(ctx context.Context, in *WidgetCodeData, opts ...grpc.CallOption) (*WidgetRawToken, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WidgetRawToken)
+	err := c.cc.Invoke(ctx, ConfigService_WidgetNewCode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *configServiceClient) WidgetParseCode(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetCodeData, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WidgetCodeData)
+	err := c.cc.Invoke(ctx, ConfigService_WidgetParseCode_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ConfigServiceServer is the server API for ConfigService service.
 // All implementations must embed UnimplementedConfigServiceServer
 // for forward compatibility.
@@ -127,6 +153,10 @@ type ConfigServiceServer interface {
 	WidgetNewToken(context.Context, *WidgetTokenData) (*WidgetRawToken, error)
 	// WidgetParseToken parses the widget_service raw token and returns the associated data.
 	WidgetParseToken(context.Context, *WidgetRawToken) (*WidgetTokenData, error)
+	// WidgetNewCode sign and get new widget code.
+	WidgetNewCode(context.Context, *WidgetCodeData) (*WidgetRawToken, error)
+	// WidgetParseCode check signature and return climes from widget code.
+	WidgetParseCode(context.Context, *WidgetRawToken) (*WidgetCodeData, error)
 	mustEmbedUnimplementedConfigServiceServer()
 }
 
@@ -151,6 +181,12 @@ func (UnimplementedConfigServiceServer) WidgetNewToken(context.Context, *WidgetT
 }
 func (UnimplementedConfigServiceServer) WidgetParseToken(context.Context, *WidgetRawToken) (*WidgetTokenData, error) {
 	return nil, status.Error(codes.Unimplemented, "method WidgetParseToken not implemented")
+}
+func (UnimplementedConfigServiceServer) WidgetNewCode(context.Context, *WidgetCodeData) (*WidgetRawToken, error) {
+	return nil, status.Error(codes.Unimplemented, "method WidgetNewCode not implemented")
+}
+func (UnimplementedConfigServiceServer) WidgetParseCode(context.Context, *WidgetRawToken) (*WidgetCodeData, error) {
+	return nil, status.Error(codes.Unimplemented, "method WidgetParseCode not implemented")
 }
 func (UnimplementedConfigServiceServer) mustEmbedUnimplementedConfigServiceServer() {}
 func (UnimplementedConfigServiceServer) testEmbeddedByValue()                       {}
@@ -263,6 +299,42 @@ func _ConfigService_WidgetParseToken_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ConfigService_WidgetNewCode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WidgetCodeData)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConfigServiceServer).WidgetNewCode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConfigService_WidgetNewCode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConfigServiceServer).WidgetNewCode(ctx, req.(*WidgetCodeData))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _ConfigService_WidgetParseCode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WidgetRawToken)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConfigServiceServer).WidgetParseCode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConfigService_WidgetParseCode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConfigServiceServer).WidgetParseCode(ctx, req.(*WidgetRawToken))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ConfigService_ServiceDesc is the grpc.ServiceDesc for ConfigService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -289,6 +361,14 @@ var ConfigService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WidgetParseToken",
 			Handler:    _ConfigService_WidgetParseToken_Handler,
+		},
+		{
+			MethodName: "WidgetNewCode",
+			Handler:    _ConfigService_WidgetNewCode_Handler,
+		},
+		{
+			MethodName: "WidgetParseCode",
+			Handler:    _ConfigService_WidgetParseCode_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

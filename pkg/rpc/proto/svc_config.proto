@@ -23,6 +23,12 @@ service ConfigService {
 
   // WidgetParseToken parses the widget_service raw token and returns the associated data.
   rpc WidgetParseToken(WidgetRawToken) returns (WidgetTokenData);
+
+  // WidgetNewCode sign and get new widget code.
+  rpc WidgetNewCode(WidgetCodeData) returns (WidgetRawToken);
+
+  // WidgetParseCode check signature and return climes from widget code.
+  rpc WidgetParseCode(WidgetRawToken) returns (WidgetCodeData);
 }
 
 // GetBotConfigRequest — empty request (auth via metadata).
@@ -51,6 +57,15 @@ message WidgetTokenData {
   int64 expired_seconds = 3;   // Expiration time in seconds
   string origin = 4;           // Normalized browser origin
   string jti = 5;              // Unique temporary token ID
+}
+
+message WidgetCodeData {
+  uint32 user_id = 1;
+  string exam_key = 2;
+  int64 expires_at = 3;
+  bool never_expires = 4;
+  repeated string allowed_origins = 5;
+  string jti = 6;
 }
 
 message WidgetRawToken {
