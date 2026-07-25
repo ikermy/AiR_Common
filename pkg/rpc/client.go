@@ -213,3 +213,17 @@ func (c *Client) WidgetParseCode(ctx context.Context, token string) (*proto.Widg
 
 	return resp, nil
 }
+
+func (c *Client) WidgetParseExpiredToken(ctx context.Context, expiredToken string) (*proto.WidgetTokenData, error) {
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), cancelTimeout)
+	defer cancel()
+
+	resp, err := c.stub.WidgetParseExpiredToken(ctx, &proto.WidgetRawToken{
+		Token: expiredToken,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
