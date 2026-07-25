@@ -64,7 +64,7 @@ message WidgetCodeData {
   string exam_key = 2;
   int64 expires_at = 3;
   bool never_expires = 4;
-  repeated string allowed_origins = 5;
+  repeated string allowed_urls = 5;
   string jti = 6;
 }
 

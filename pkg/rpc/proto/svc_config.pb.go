@@ -280,15 +280,15 @@ func (x *WidgetTokenData) GetJti() string {
 }
 
 type WidgetCodeData struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	UserId         uint32                 `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	ExamKey        string                 `protobuf:"bytes,2,opt,name=exam_key,json=examKey,proto3" json:"exam_key,omitempty"`
-	ExpiresAt      int64                  `protobuf:"varint,3,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
-	NeverExpires   bool                   `protobuf:"varint,4,opt,name=never_expires,json=neverExpires,proto3" json:"never_expires,omitempty"`
-	AllowedOrigins []string               `protobuf:"bytes,5,rep,name=allowed_origins,json=allowedOrigins,proto3" json:"allowed_origins,omitempty"`
-	Jti            string                 `protobuf:"bytes,6,opt,name=jti,proto3" json:"jti,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	UserId        uint32                 `protobuf:"varint,1,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	ExamKey       string                 `protobuf:"bytes,2,opt,name=exam_key,json=examKey,proto3" json:"exam_key,omitempty"`
+	ExpiresAt     int64                  `protobuf:"varint,3,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	NeverExpires  bool                   `protobuf:"varint,4,opt,name=never_expires,json=neverExpires,proto3" json:"never_expires,omitempty"`
+	AllowedUrls   []string               `protobuf:"bytes,5,rep,name=allowed_urls,json=allowedUrls,proto3" json:"allowed_urls,omitempty"`
+	Jti           string                 `protobuf:"bytes,6,opt,name=jti,proto3" json:"jti,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *WidgetCodeData) Reset() {
@@ -349,9 +349,9 @@ func (x *WidgetCodeData) GetNeverExpires() bool {
 	return false
 }
 
-func (x *WidgetCodeData) GetAllowedOrigins() []string {
+func (x *WidgetCodeData) GetAllowedUrls() []string {
 	if x != nil {
-		return x.AllowedOrigins
+		return x.AllowedUrls
 	}
 	return nil
 }
@@ -426,14 +426,14 @@ const file_svc_config_proto_rawDesc = "" +
 	"\aresp_id\x18\x02 \x01(\x04R\x06respId\x12'\n" +
 	"\x0fexpired_seconds\x18\x03 \x01(\x03R\x0eexpiredSeconds\x12\x16\n" +
 	"\x06origin\x18\x04 \x01(\tR\x06origin\x12\x10\n" +
-	"\x03jti\x18\x05 \x01(\tR\x03jti\"\xc3\x01\n" +
+	"\x03jti\x18\x05 \x01(\tR\x03jti\"\xbd\x01\n" +
 	"\x0eWidgetCodeData\x12\x17\n" +
 	"\auser_id\x18\x01 \x01(\rR\x06userId\x12\x19\n" +
 	"\bexam_key\x18\x02 \x01(\tR\aexamKey\x12\x1d\n" +
 	"\n" +
 	"expires_at\x18\x03 \x01(\x03R\texpiresAt\x12#\n" +
-	"\rnever_expires\x18\x04 \x01(\bR\fneverExpires\x12'\n" +
-	"\x0fallowed_origins\x18\x05 \x03(\tR\x0eallowedOrigins\x12\x10\n" +
+	"\rnever_expires\x18\x04 \x01(\bR\fneverExpires\x12!\n" +
+	"\fallowed_urls\x18\x05 \x03(\tR\vallowedUrls\x12\x10\n" +
 	"\x03jti\x18\x06 \x01(\tR\x03jti\"&\n" +
 	"\x0eWidgetRawToken\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token2\xf5\x03\n" +
