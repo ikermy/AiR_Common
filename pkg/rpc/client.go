@@ -169,3 +169,47 @@ func (c *Client) WidgetParseToken(ctx context.Context, tokenString string) (uint
 func (c *Client) ctxWithKey(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, serviceKeyHeader, c.serviceKey)
 }
+
+// WidgetNewCode generates a new widget code for a user based on the specified parameters.
+// It requires a context, user ID, exam key, expiration settings, a list of allowed URLs, and a unique token identifier.
+func (c *Client) WidgetNewCode(
+	ctx context.Context,
+	userId uint32,
+	examKey string,
+	expiresAt int64,
+	neverExpires bool,
+	allowedUrls []string,
+	jti string,
+) (string, error) {
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), cancelTimeout)
+	defer cancel()
+
+	resp, err := c.stub.WidgetNewCode(ctx, &proto.WidgetCodeData{
+		UserId:       userId,
+		ExamKey:      examKey,
+		ExpiresAt:    expiresAt,
+		NeverExpires: neverExpires,
+		AllowedUrls:  allowedUrls,
+		Jti:          jti,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return resp.Token, nil
+}
+
+// WidgetParseCode interprets a given widget token and returns the associated WidgetCodeData or an error.
+func (c *Client) WidgetParseCode(ctx context.Context, token string) (*proto.WidgetCodeData, error) {
+	ctx, cancel := context.WithTimeout(c.ctxWithKey(ctx), cancelTimeout)
+	defer cancel()
+
+	resp, err := c.stub.WidgetParseCode(ctx, &proto.WidgetRawToken{
+		Token: token,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
