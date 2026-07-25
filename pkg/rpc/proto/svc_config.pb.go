@@ -436,7 +436,7 @@ const file_svc_config_proto_rawDesc = "" +
 	"\fallowed_urls\x18\x05 \x03(\tR\vallowedUrls\x12\x10\n" +
 	"\x03jti\x18\x06 \x01(\tR\x03jti\"&\n" +
 	"\x0eWidgetRawToken\x12\x14\n" +
-	"\x05token\x18\x01 \x01(\tR\x05token2\xf5\x03\n" +
+	"\x05token\x18\x01 \x01(\tR\x05token2\xbf\x04\n" +
 	"\rConfigService\x12D\n" +
 	"\fGetBotConfig\x12\x1a.svcpb.GetBotConfigRequest\x1a\x18.svcpb.BotConfigResponse\x12H\n" +
 	"\x10GetOperBotConfig\x12\x1a.svcpb.GetBotConfigRequest\x1a\x18.svcpb.BotConfigResponse\x12P\n" +
@@ -444,7 +444,8 @@ const file_svc_config_proto_rawDesc = "" +
 	"\x0eWidgetNewToken\x12\x16.svcpb.WidgetTokenData\x1a\x15.svcpb.WidgetRawToken\x12A\n" +
 	"\x10WidgetParseToken\x12\x15.svcpb.WidgetRawToken\x1a\x16.svcpb.WidgetTokenData\x12=\n" +
 	"\rWidgetNewCode\x12\x15.svcpb.WidgetCodeData\x1a\x15.svcpb.WidgetRawToken\x12?\n" +
-	"\x0fWidgetParseCode\x12\x15.svcpb.WidgetRawToken\x1a\x15.svcpb.WidgetCodeDataB,Z*github.com/ikermy/AiR_Common/pkg/rpc/protob\x06proto3"
+	"\x0fWidgetParseCode\x12\x15.svcpb.WidgetRawToken\x1a\x15.svcpb.WidgetCodeData\x12H\n" +
+	"\x17WidgetParseExpiredToken\x12\x15.svcpb.WidgetRawToken\x1a\x16.svcpb.WidgetTokenDataB,Z*github.com/ikermy/AiR_Common/pkg/rpc/protob\x06proto3"
 
 var (
 	file_svc_config_proto_rawDescOnce sync.Once
@@ -476,15 +477,17 @@ var file_svc_config_proto_depIdxs = []int32{
 	6, // 4: svcpb.ConfigService.WidgetParseToken:input_type -> svcpb.WidgetRawToken
 	5, // 5: svcpb.ConfigService.WidgetNewCode:input_type -> svcpb.WidgetCodeData
 	6, // 6: svcpb.ConfigService.WidgetParseCode:input_type -> svcpb.WidgetRawToken
-	1, // 7: svcpb.ConfigService.GetBotConfig:output_type -> svcpb.BotConfigResponse
-	1, // 8: svcpb.ConfigService.GetOperBotConfig:output_type -> svcpb.BotConfigResponse
-	3, // 9: svcpb.ConfigService.GetUserMasterKey:output_type -> svcpb.UserMasterKeyResponse
-	6, // 10: svcpb.ConfigService.WidgetNewToken:output_type -> svcpb.WidgetRawToken
-	4, // 11: svcpb.ConfigService.WidgetParseToken:output_type -> svcpb.WidgetTokenData
-	6, // 12: svcpb.ConfigService.WidgetNewCode:output_type -> svcpb.WidgetRawToken
-	5, // 13: svcpb.ConfigService.WidgetParseCode:output_type -> svcpb.WidgetCodeData
-	7, // [7:14] is the sub-list for method output_type
-	0, // [0:7] is the sub-list for method input_type
+	6, // 7: svcpb.ConfigService.WidgetParseExpiredToken:input_type -> svcpb.WidgetRawToken
+	1, // 8: svcpb.ConfigService.GetBotConfig:output_type -> svcpb.BotConfigResponse
+	1, // 9: svcpb.ConfigService.GetOperBotConfig:output_type -> svcpb.BotConfigResponse
+	3, // 10: svcpb.ConfigService.GetUserMasterKey:output_type -> svcpb.UserMasterKeyResponse
+	6, // 11: svcpb.ConfigService.WidgetNewToken:output_type -> svcpb.WidgetRawToken
+	4, // 12: svcpb.ConfigService.WidgetParseToken:output_type -> svcpb.WidgetTokenData
+	6, // 13: svcpb.ConfigService.WidgetNewCode:output_type -> svcpb.WidgetRawToken
+	5, // 14: svcpb.ConfigService.WidgetParseCode:output_type -> svcpb.WidgetCodeData
+	4, // 15: svcpb.ConfigService.WidgetParseExpiredToken:output_type -> svcpb.WidgetTokenData
+	8, // [8:16] is the sub-list for method output_type
+	0, // [0:8] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name

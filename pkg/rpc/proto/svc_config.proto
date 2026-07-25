@@ -29,6 +29,9 @@ service ConfigService {
 
   // WidgetParseCode check signature and return climes from widget code.
   rpc WidgetParseCode(WidgetRawToken) returns (WidgetCodeData);
+
+  // WidgetParseExpiredToken parses the expired token and returns valid token
+  rpc WidgetParseExpiredToken(WidgetRawToken) returns (WidgetTokenData);
 }
 
 // GetBotConfigRequest — empty request (auth via metadata).

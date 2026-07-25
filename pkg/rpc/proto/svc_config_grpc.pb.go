@@ -20,13 +20,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ConfigService_GetBotConfig_FullMethodName     = "/svcpb.ConfigService/GetBotConfig"
-	ConfigService_GetOperBotConfig_FullMethodName = "/svcpb.ConfigService/GetOperBotConfig"
-	ConfigService_GetUserMasterKey_FullMethodName = "/svcpb.ConfigService/GetUserMasterKey"
-	ConfigService_WidgetNewToken_FullMethodName   = "/svcpb.ConfigService/WidgetNewToken"
-	ConfigService_WidgetParseToken_FullMethodName = "/svcpb.ConfigService/WidgetParseToken"
-	ConfigService_WidgetNewCode_FullMethodName    = "/svcpb.ConfigService/WidgetNewCode"
-	ConfigService_WidgetParseCode_FullMethodName  = "/svcpb.ConfigService/WidgetParseCode"
+	ConfigService_GetBotConfig_FullMethodName            = "/svcpb.ConfigService/GetBotConfig"
+	ConfigService_GetOperBotConfig_FullMethodName        = "/svcpb.ConfigService/GetOperBotConfig"
+	ConfigService_GetUserMasterKey_FullMethodName        = "/svcpb.ConfigService/GetUserMasterKey"
+	ConfigService_WidgetNewToken_FullMethodName          = "/svcpb.ConfigService/WidgetNewToken"
+	ConfigService_WidgetParseToken_FullMethodName        = "/svcpb.ConfigService/WidgetParseToken"
+	ConfigService_WidgetNewCode_FullMethodName           = "/svcpb.ConfigService/WidgetNewCode"
+	ConfigService_WidgetParseCode_FullMethodName         = "/svcpb.ConfigService/WidgetParseCode"
+	ConfigService_WidgetParseExpiredToken_FullMethodName = "/svcpb.ConfigService/WidgetParseExpiredToken"
 )
 
 // ConfigServiceClient is the client API for ConfigService service.
@@ -53,6 +54,8 @@ type ConfigServiceClient interface {
 	WidgetNewCode(ctx context.Context, in *WidgetCodeData, opts ...grpc.CallOption) (*WidgetRawToken, error)
 	// WidgetParseCode check signature and return climes from widget code.
 	WidgetParseCode(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetCodeData, error)
+	// WidgetParseExpiredToken parses the expired token and returns valid token
+	WidgetParseExpiredToken(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetTokenData, error)
 }
 
 type configServiceClient struct {
@@ -133,6 +136,16 @@ func (c *configServiceClient) WidgetParseCode(ctx context.Context, in *WidgetRaw
 	return out, nil
 }
 
+func (c *configServiceClient) WidgetParseExpiredToken(ctx context.Context, in *WidgetRawToken, opts ...grpc.CallOption) (*WidgetTokenData, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WidgetTokenData)
+	err := c.cc.Invoke(ctx, ConfigService_WidgetParseExpiredToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ConfigServiceServer is the server API for ConfigService service.
 // All implementations must embed UnimplementedConfigServiceServer
 // for forward compatibility.
@@ -157,6 +170,8 @@ type ConfigServiceServer interface {
 	WidgetNewCode(context.Context, *WidgetCodeData) (*WidgetRawToken, error)
 	// WidgetParseCode check signature and return climes from widget code.
 	WidgetParseCode(context.Context, *WidgetRawToken) (*WidgetCodeData, error)
+	// WidgetParseExpiredToken parses the expired token and returns valid token
+	WidgetParseExpiredToken(context.Context, *WidgetRawToken) (*WidgetTokenData, error)
 	mustEmbedUnimplementedConfigServiceServer()
 }
 
@@ -187,6 +202,9 @@ func (UnimplementedConfigServiceServer) WidgetNewCode(context.Context, *WidgetCo
 }
 func (UnimplementedConfigServiceServer) WidgetParseCode(context.Context, *WidgetRawToken) (*WidgetCodeData, error) {
 	return nil, status.Error(codes.Unimplemented, "method WidgetParseCode not implemented")
+}
+func (UnimplementedConfigServiceServer) WidgetParseExpiredToken(context.Context, *WidgetRawToken) (*WidgetTokenData, error) {
+	return nil, status.Error(codes.Unimplemented, "method WidgetParseExpiredToken not implemented")
 }
 func (UnimplementedConfigServiceServer) mustEmbedUnimplementedConfigServiceServer() {}
 func (UnimplementedConfigServiceServer) testEmbeddedByValue()                       {}
@@ -335,6 +353,24 @@ func _ConfigService_WidgetParseCode_Handler(srv interface{}, ctx context.Context
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ConfigService_WidgetParseExpiredToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WidgetRawToken)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ConfigServiceServer).WidgetParseExpiredToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ConfigService_WidgetParseExpiredToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ConfigServiceServer).WidgetParseExpiredToken(ctx, req.(*WidgetRawToken))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ConfigService_ServiceDesc is the grpc.ServiceDesc for ConfigService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -369,6 +405,10 @@ var ConfigService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "WidgetParseCode",
 			Handler:    _ConfigService_WidgetParseCode_Handler,
+		},
+		{
+			MethodName: "WidgetParseExpiredToken",
+			Handler:    _ConfigService_WidgetParseExpiredToken_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
