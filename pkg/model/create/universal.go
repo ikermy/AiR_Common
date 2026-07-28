@@ -188,7 +188,7 @@ type DB interface {
 	// SaveUserModel сохраняет модель в user_gpt и создает связь в user_models (всё в одной транзакции)
 	// Автоматически определяет IsActive (первая модель пользователя становится активной)
 	// provider - тип провайдера (1=OpenAI, 2=Mistral)
-	SaveUserModel(userID uint32, provider ProviderType, name, assistantId string, data []byte, model uint, ids json.RawMessage, operator bool) error
+	SaveUserModel(userID uint32, provider ProviderType, name, assistantId string, data []byte, def DefaultProvidersModels, ids json.RawMessage, operator bool) error
 
 	// ReadUserModelByProvider получает сжатые данные модели по провайдеру
 	// Возвращает: compressedData, vecIds, error
@@ -431,6 +431,11 @@ type Realtime struct {
 	ID   uint   `json:"id"`
 }
 
+type UseModelName struct {
+	GptType  *GptType  `json:"gpttype"`
+	Realtime *Realtime `json:"realtime"`
+}
+
 // GOAuth хранит флаги доступа к Google OAuth сервисам (Calendar, Sheets).
 // Используется MCP-сервером для определения доступных инструментов.
 // Провайдеры (OpenAI/Mistral/Google) не используют эти флаги напрямую —
@@ -468,9 +473,9 @@ type UniversalModelData struct {
 	// Используется MCP-сервером. Провайдеры получают инструменты только через FetchToolsList.
 	GOAuth GOAuth `json:"g_oauth"`
 	//////////////////////////////////
-	Espero   EsperoConfig `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
-	GptType  *GptType     `json:"gpttype"`
-	Provider ProviderType `json:"provider"` // "openai=1", "mistral=2..."
+	Espero       EsperoConfig  `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
+	UseModelName *UseModelName `json:"use_model_name"`
+	Provider     ProviderType  `json:"provider"` // "openai=1", "mistral=2..."
 }
 
 // RealtimeVAD универсальные параметры голосовой активности (VAD) и генерации.
@@ -545,8 +550,8 @@ func (m *UniversalModel) CreateModel(userID uint32, provider ProviderType, model
 		return UMCR{}, fmt.Errorf("modelData не может быть nil")
 	}
 
-	if modelData.GptType == nil || modelData.GptType.Name == "" {
-		return UMCR{}, fmt.Errorf("modelData.GptType.Name не может быть пустым")
+	if modelData.UseModelName == nil {
+		return UMCR{}, fmt.Errorf("modelData.UseModelName не может быть пустым")
 	}
 
 	switch provider {
@@ -565,25 +570,25 @@ func (m *UniversalModel) CreateModel(userID uint32, provider ProviderType, model
 // Работает для любого провайдера (OpenAI, Mistral..)
 // Автоматически устанавливает модель как активную если это первая модель пользователя
 func (m *UniversalModel) SaveModel(userID uint32, umcr UMCR, data *UniversalModelData) error {
-	if data == nil || data.GptType == nil || data.GptType.Name == "" {
+	if data == nil || data.UseModelName == nil {
 		return fmt.Errorf("не указана модель провайдера")
 	}
 
 	// При обновлении конфигурации клиент может прислать только имя модели.
 	// Model в user_gpt — это FK на gpt_models.Id, поэтому нельзя сохранять ID=0.
 	// Восстанавливаем ID из уже существующей записи для любого провайдера.
-	if data.GptType.ID == 0 {
+	if data.UseModelName.GptType.ID == 0 {
 		existingModels, lookupErr := m.db.GetAllUserModels(userID)
 		if lookupErr == nil {
 			for _, existing := range existingModels {
 				if existing.Provider == umcr.Provider && existing.GptType != nil && existing.GptType.ID != 0 {
-					data.GptType.ID = existing.GptType.ID
+					data.UseModelName.GptType.ID = existing.GptType.ID
 					break
 				}
 			}
 		}
 	}
-	if data.GptType.ID == 0 {
+	if data.UseModelName.GptType.ID == 0 {
 		return fmt.Errorf("не указан корректный ID модели gpt_models для провайдера %s", umcr.Provider)
 	}
 
@@ -609,7 +614,10 @@ func (m *UniversalModel) SaveModel(userID uint32, umcr UMCR, data *UniversalMode
 		data.Name,
 		umcr.AssistID,
 		compressed.Bytes(),
-		data.GptType.ID,
+		DefaultProvidersModels{
+			GeneralModelID:  data.UseModelName.GptType.ID,
+			RealTimeModelID: data.UseModelName.Realtime.ID,
+		},
 		umcr.AllIds,
 		data.Operator,
 	)

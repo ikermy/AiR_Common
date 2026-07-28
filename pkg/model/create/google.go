@@ -255,8 +255,8 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 		return UMCR{}, fmt.Errorf("modelData не может быть nil")
 	}
 
-	if modelData.GptType == nil || modelData.GptType.Name == "" {
-		return UMCR{}, fmt.Errorf("modelData.GptType.Name не может быть пустым")
+	if modelData.UseModelName == nil {
+		return UMCR{}, fmt.Errorf("modelData.UseModelName не может быть пустым")
 	}
 
 	// System prompt: базовый prompt + hint от MCP, если он доступен.
@@ -363,7 +363,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	// Поэтому AssistID будет составным идентификатором: "models/{model_name}"
 
 	// Формируем AssistID как путь к модели
-	agentID := fmt.Sprintf("models/%s", modelData.GptType.Name)
+	agentID := fmt.Sprintf("models/%s", modelData.UseModelName.GptType.Name)
 
 	// Проверяем доступность модели через тестовый запрос
 	testURL := fmt.Sprintf("%s/%s:generateContent?key=%s", m.url, agentID, m.resolveKey(userID))
@@ -411,8 +411,8 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	// Эмбеддинги хранятся в отдельной таблице vector_embeddings
 
 	return UMCR{
-		AssistID: modelData.GptType.Name, // "просто имя модели например gemini-2.5-flash"
-		AllIds:   nil,                    // Для Google моделей Ids всегда пустой (NULL в БД)
+		AssistID: modelData.UseModelName.GptType.Name, // "просто имя модели например gemini-2.5-flash" фактически это легаси
+		AllIds:   nil,                                 // Для Google моделей Ids всегда пустой (NULL в БД)
 		Provider: ProviderGoogle,
 	}, nil
 }
@@ -1002,9 +1002,9 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 	// Конфигурация (System Instruction, GenerationConfig, Tools) хранится локально в БД
 	// и применяется при каждом запросе к Gemini API
 
-	// Устанавливаем GptType из существующей модели если не указан
-	if updated.GptType == nil {
-		updated.GptType = existing.GptType
+	// Устанавливаем UseModelName (внутренние провайдерские имена используемых моделей) из существующей модели если не указан
+	if updated.UseModelName == nil {
+		updated.UseModelName = existing.UseModelName
 	}
 
 	// Формируем UMCR для сохранения в БД (без вызова API)

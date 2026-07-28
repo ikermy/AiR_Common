@@ -958,8 +958,8 @@ func (m *UniversalModel) createModel(_ uint32, modelData *UniversalModelData, _ 
 	//	modelData.GptType.Name, userID)
 
 	return UMCR{
-		AssistID: modelData.GptType.Name, // Просто имя модели (gpt-4o-mini и т.д.)
-		AllIds:   allIds,                 // null - не используется для OpenAI с локальными эмбеддингами
+		AssistID: modelData.UseModelName.GptType.Name, // Просто имя модели (gpt-4o-mini и т.д.) фактически это легаси
+		AllIds:   allIds,                              // null - не используется для OpenAI с локальными эмбеддингами
 		Provider: ProviderOpenAI,
 	}, nil
 }

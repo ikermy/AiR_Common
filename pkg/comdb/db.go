@@ -41,7 +41,7 @@ type Exterior interface {
 	UpdateUserGPT(userID uint32, modelId uint64, assistId string, allIds []byte) error
 	GetUserVectorStorage(userID uint32) (string, error)
 	SetChannelEnabled(userID uint32, chName string, status bool) error
-	SaveUserModel(userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint, ids json.RawMessage, operator bool) error
+	SaveUserModel(userID uint32, provider create.ProviderType, name, assistantId string, data []byte, def create.DefaultProvidersModels, ids json.RawMessage, operator bool) error
 	SyncProviderModels(provider create.ProviderType, modelType create.ModelType, modelNames []string) (create.ProviderModelsSyncResult, error)
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
 	ReadUserModel(userID uint32) ([]byte, *create.VecIds, error)
@@ -1863,7 +1863,7 @@ func (d *DB) RemoveModelFromUser(userID uint32, modelId uint64) error {
 }
 
 func (d *DB) SaveUserModel(
-	userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint, ids json.RawMessage, operator bool) error {
+	userID uint32, provider create.ProviderType, name, assistantId string, data []byte, def create.DefaultProvidersModels, ids json.RawMessage, operator bool) error {
 	// Проверяю входные значения
 	if userID == 0 || name == "" || assistantId == "" {
 		return fmt.Errorf("получены некорректные значения: userID, name или assistantId пусты")
@@ -1916,9 +1916,9 @@ func (d *DB) SaveUserModel(
 		// Модели нет - создаём новую в user_gpt
 		// ===================================================================
 		result, err := tx.ExecContext(ctx, `
-			INSERT INTO user_gpt (Name, Model, Provider, AssistantId, Data, Ids)
-			VALUES (?, ?, ?, ?, ?, ?)
-		`, name, modType, provider, assistantId, data, ids)
+			INSERT INTO user_gpt (Name, Model, Realtime, Provider, AssistantId, Data, Ids)
+			VALUES (?, ?, ?, ?, ?, ?, ?)
+		`, name, def.GeneralModelID, def.RealTimeModelID, provider, assistantId, data, ids)
 
 		if err != nil {
 			switch {
@@ -1993,11 +1993,12 @@ func (d *DB) SaveUserModel(
 			UPDATE user_gpt
 			SET Name = ?,
 				Model = ?,
+				Realtime = ?,
 				AssistantId = ?,
 				Data = ?,
 				Ids = ?
 			WHERE Id = ?
-		`, name, modType, assistantId, data, ids, modelId)
+		`, name, def.GeneralModelID, def.RealTimeModelID, assistantId, data, ids, modelId)
 
 		if err != nil {
 			switch {

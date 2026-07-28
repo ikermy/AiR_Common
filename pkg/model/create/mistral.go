@@ -339,7 +339,7 @@ func (m *MistralAgentClient) createMistralAgent(modelData *UniversalModelData, u
 
 	payload := map[string]any{
 		"name":         modelData.Name,
-		"model":        modelData.GptType.Name,
+		"model":        modelData.UseModelName.GptType.Name,
 		"description":  description,
 		"instructions": enhancedPrompt,
 	}
