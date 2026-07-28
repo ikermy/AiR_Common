@@ -460,7 +460,7 @@ func (m *Model) transcribeAudioFile(audioData []byte, fileName string) (string, 
 	}
 
 	// Отправляем запрос на Mistral API
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, "https://api.mistral.ai/v1/audio/transcriptions", &requestBody)
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, mode.MistralBaseURL+"/audio/transcriptions", &requestBody)
 	if err != nil {
 		return "", fmt.Errorf("ошибка создания HTTP запроса: %w", err)
 	}
@@ -682,9 +682,9 @@ func (m *Model) DisconnectUser(userID uint32) {
 	})
 }
 
-func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, apiKey string) error {
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, modelType create.ModelType, apiKey string) error {
 	if provider != create.ProviderMistral {
 		return fmt.Errorf("неверный провайдер для Mistral модели: %s", provider.String())
 	}
-	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderMistral, apiKey)
+	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderMistral, modelType, apiKey)
 }

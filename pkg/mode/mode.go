@@ -34,6 +34,7 @@ var (
 	TextMsg      = false                     // Разрешает принимать текстовые сообщения в диалоге
 	AudioMsg     = false                     // Разрешает принимать аудио сообщения в диалоге
 	VoiceCall    = false                     // Разрешает принимать голосовые вызовы
+	ErrMsgToUser = false                     // Отправлять сообщение о невозможности получить ответ модели в канал пользователя
 	CarpinteroCh = make(chan com.CarpCh, 1)  // Канал для передачи уведомлений
 	Event        = make(chan uint64, 1)      // Канал для передачи Id диалога при отключении клиента
 	InstantCh    = make(chan com.InstMsg, 1) // Канал для передачи мгновенных сообщений в панель управления
@@ -64,6 +65,9 @@ func SetTestMode(enabled bool) {
 }
 func SetAudioMode(enabled bool) {
 	AudioMsg = enabled
+}
+func SetErrMsgToUser(enabled bool) {
+	ErrMsgToUser = enabled
 }
 func SetRealHost(host string) {
 	RealHost = host

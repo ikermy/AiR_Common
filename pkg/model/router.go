@@ -476,8 +476,14 @@ func (r *Router) CleanUp() {
 // ============================================================================
 
 // CreateModel создаёт новую модель у указанного провайдера
-func (r *Router) CreateModel(userID uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error) {
-	go r.syncProviderModelsCatalog(userID, provider)
+func (r *Router) CreateModel(
+	userID uint32,
+	provider create.ProviderType,
+	modelType create.ModelType,
+	modelData *create.UniversalModelData,
+	fileIDs []create.Ids,
+) (create.UMCR, error) {
+	go r.syncProviderModelsCatalog(userID, provider, modelType)
 
 	if _, err := r.getModel(provider); err != nil {
 		return create.UMCR{}, err
@@ -494,7 +500,7 @@ func (r *Router) CreateModel(userID uint32, provider create.ProviderType, modelD
 	return umcr, nil
 }
 
-func (r *Router) syncProviderModelsCatalog(userID uint32, provider create.ProviderType) {
+func (r *Router) syncProviderModelsCatalog(userID uint32, provider create.ProviderType, modelType create.ModelType) {
 	if r.db == nil || !provider.IsValid() {
 		return
 	}
@@ -512,12 +518,16 @@ func (r *Router) syncProviderModelsCatalog(userID uint32, provider create.Provid
 	defer cancel()
 
 	client := provider_catalog.NewClient()
-	modelNames, err := client.FetchModelNames(syncCtx, provider, apiKey)
+	modelNames, err := client.FetchModelNames(syncCtx, provider, modelType, apiKey)
 	if err != nil {
 		return
 	}
 
-	result, err := r.db.SyncProviderModels(provider, modelNames)
+	var result create.ProviderModelsSyncResult
+	if !modelType.IsGeneral() && !modelType.IsRealtime() {
+		return
+	}
+	result, err = r.db.SyncProviderModels(provider, modelType, modelNames)
 	if err != nil {
 		return
 	}
@@ -542,12 +552,12 @@ func (r *Router) syncProviderModelsCatalog(userID uint32, provider create.Provid
 	return
 }
 
-func (r *Router) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, apiKey string) error {
+func (r *Router) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, modelType create.ModelType, apiKey string) error {
 	m, err := r.getModel(provider)
 	if err != nil {
 		return err
 	}
-	return m.UpdateModelsListByProvider(ctx, provider, apiKey)
+	return m.UpdateModelsListByProvider(ctx, provider, modelType, apiKey)
 }
 
 // UploadFileToProvider загружает файл в указанный провайдер (только Mistral)

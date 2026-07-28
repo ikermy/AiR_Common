@@ -335,6 +335,9 @@ func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool
 	if found == nil {
 		return nil, false, fmt.Errorf("модель OpenAI не найдена для userID %d", userID)
 	}
+	if found.Realtime == nil || found.Realtime.Name == "" {
+		return nil, false, fmt.Errorf("realtime-модель OpenAI не найдена для userID %d", userID)
+	}
 
 	// Инициализируем базовую конфигурацию.
 	// ModelName берём из user_gpt.AssistantId — там хранится имя модели выбранной пользователем
@@ -342,15 +345,16 @@ func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool
 	modelName := found.AssistId
 	if modelName == "" {
 		// AssistId не заполнен — берём модель по умолчанию из gpt_models (IsDefault=1)
-		_, defaultName, err := m.db.DefaultProvidersModels(create.ProviderOpenAI.String())
+		defData, err := m.db.DefaultProvidersModels(create.ProviderOpenAI.String())
 		if err != nil {
 			return nil, false, fmt.Errorf("имя модели OpenAI не задано и получить модель по умолчанию не удалось: %w", err)
 		}
-		modelName = defaultName
+		modelName = defData.GeneralModelName
 	}
 	agentConfig := &AgentConfig{
-		ModelId:   found.ModelId,
-		ModelName: modelName,
+		ModelId:       found.ModelId,
+		ModelName:     modelName,
+		RealtimeModel: found.Realtime.Name,
 	}
 
 	var haunter bool
@@ -489,8 +493,6 @@ func (m *Model) buildAgentConfiguration(userID uint32, config *AgentConfig, comp
 			"schema": dynamicSchema,
 		},
 	}
-
-	config.RealtimeModel = create.RealtimeOpenAIModel
 
 	// Передаём RealtimeVAD конфигурацию из распакованных данных модели
 	// (с уже применёнными дефолтными значениями из DecompressModelData)
@@ -908,9 +910,9 @@ func (m *Model) saveAllContextsGracefullyCtx(_ context.Context) error {
 	return nil
 }
 
-func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, apiKey string) error {
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, modelType create.ModelType, apiKey string) error {
 	if provider != create.ProviderOpenAI {
 		return fmt.Errorf("неверный провайдер для OpenAI модели: %s", provider)
 	}
-	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderOpenAI, apiKey)
+	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderOpenAI, modelType, apiKey)
 }

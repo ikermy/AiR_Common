@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.66"
-git tag -a v1.50.66 -m "extend widget ed25519_keys proto methods"
+git commit -m "v1.50.67"
+git tag -a v1.50.67 -m "fetch realtime models"
 git push origin master
-git push origin v1.50.66
+git push origin v1.50.67

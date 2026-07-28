@@ -767,7 +767,7 @@ func (m *GoogleAgentClient) DeleteAudioFile(fileName string) error {
 		return fmt.Errorf("пустое имя файла")
 	}
 
-	deleteURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/%s?key=%s", fileName, m.apiKey)
+	deleteURL := fmt.Sprintf(mode.GoogleAgentsURL+"/%s?key=%s", fileName, m.apiKey)
 
 	if err := executeGoogleAPIDeleteRequest(m.ctx, deleteURL); err != nil {
 		return fmt.Errorf("ошибка при вызове API: %w", err)
@@ -793,7 +793,7 @@ func GenerateGoogleEmbedding(ctx context.Context, apiKey, text string) ([]float3
 
 	// Используем правильную модель gemini-embedding-001 для генерации эмбеддингов
 	// Документация: https://ai.google.dev/gemini-api/docs/embeddings
-	embedURL := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent?key=%s", apiKey)
+	embedURL := fmt.Sprintf(mode.GoogleAgentsURL+"/models/gemini-embedding-001:embedContent?key=%s", apiKey)
 
 	payload := map[string]any{
 		"content": map[string]any{

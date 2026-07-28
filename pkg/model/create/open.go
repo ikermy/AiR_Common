@@ -12,6 +12,8 @@ import (
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
 // ============================================================================
@@ -40,7 +42,7 @@ func generateOpenAIEmbedding(ctx context.Context, apiKey, text, model string, di
 		return nil, fmt.Errorf("текст не может быть пустым")
 	}
 
-	embedURL := "https://api.openai.com/v1/embeddings"
+	embedURL := mode.OpenAIAgentsURL + "/embeddings"
 
 	payload := map[string]any{
 		"input":      text,
@@ -146,7 +148,7 @@ func getStringField(m map[string]any, key string) string {
 // из БД через SetKeyResolver.
 func NewOpenAIAgentClient(ctx context.Context) *OpenAIAgentClient {
 	return &OpenAIAgentClient{
-		url: "https://api.openai.com/v1",
+		url: mode.OpenAIAgentsURL,
 		ctx: ctx,
 		httpClient: &http.Client{
 			Timeout: 60 * time.Second,

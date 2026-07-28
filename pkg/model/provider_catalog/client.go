@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
 )
 
@@ -23,21 +24,23 @@ func NewClient() *Client {
 }
 
 type Syncer interface {
-	SyncProviderModels(provider create.ProviderType, modelNames []string) (create.ProviderModelsSyncResult, error)
+	SyncProviderModels(provider create.ProviderType, modelType create.ModelType, modelNames []string) (create.ProviderModelsSyncResult, error)
 }
 
-func SyncProviderModels(ctx context.Context, syncer Syncer, provider create.ProviderType, apiKey string) error {
+func SyncProviderModels(ctx context.Context, syncer Syncer, provider create.ProviderType, modelType create.ModelType, apiKey string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	client := NewClient()
-	modelNames, err := client.FetchModelNames(ctx, provider, apiKey)
+	modelNames, err := client.FetchModelNames(ctx, provider, modelType, apiKey)
 	if err != nil {
 		return fmt.Errorf("не удалось получить каталог моделей провайдера %s: %w", provider, err)
 	}
 
-	_, err = syncer.SyncProviderModels(provider, modelNames)
+	if modelType.IsGeneral() || modelType.IsRealtime() {
+		_, err = syncer.SyncProviderModels(provider, modelType, modelNames)
+	}
 	if err != nil {
 		return fmt.Errorf("не удалось синхронизировать каталог моделей провайдера %s: %w", provider, err)
 	}
@@ -45,7 +48,12 @@ func SyncProviderModels(ctx context.Context, syncer Syncer, provider create.Prov
 }
 
 // FetchModelNames получает актуальный список моделей провайдера из внешнего API.
-func (c *Client) FetchModelNames(ctx context.Context, provider create.ProviderType, apiKey string) ([]string, error) {
+func (c *Client) FetchModelNames(
+	ctx context.Context,
+	provider create.ProviderType,
+	modelType create.ModelType,
+	apiKey string,
+) ([]string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -64,18 +72,39 @@ func (c *Client) FetchModelNames(ctx context.Context, provider create.ProviderTy
 
 	switch provider {
 	case create.ProviderOpenAI:
-		return client.fetchOpenAIModels(ctx, apiKey)
+		switch {
+		case modelType.IsGeneral():
+			return client.generalOpenAIModels(ctx, apiKey)
+		case modelType.IsRealtime():
+			return client.realtimeOpenAIModels(ctx, apiKey)
+		default:
+			return client.fetchOpenAIModels(ctx, apiKey)
+		}
 	case create.ProviderMistral:
-		return client.fetchMistralModels(ctx, apiKey)
+		switch {
+		case modelType.IsGeneral():
+			return client.generalMistralModels(ctx, apiKey)
+		case modelType.IsRealtime():
+			return client.realtimeMistralModels(ctx, apiKey)
+		default:
+			return client.fetchMistralModels(ctx, apiKey)
+		}
 	case create.ProviderGoogle:
-		return client.fetchGoogleModels(ctx, apiKey)
+		switch {
+		case modelType.IsGeneral():
+			return client.generalGoogleModels(ctx, apiKey)
+		case modelType.IsRealtime():
+			return client.realtimeGoogleModels()
+		default:
+			return client.fetchGoogleModels(ctx, apiKey)
+		}
 	default:
 		return nil, fmt.Errorf("неподдерживаемый провайдер: %s", provider.String())
 	}
 }
 
 func (c *Client) fetchOpenAIModels(ctx context.Context, apiKey string) ([]string, error) {
-	return c.fetchListModels(ctx, "https://api.openai.com/v1/models", apiKey, func(body []byte) ([]string, error) {
+	return c.fetchListModels(ctx, mode.OpenAIAgentsURL+"/models", apiKey, func(body []byte) ([]string, error) {
 		var payload struct {
 			Data []struct {
 				ID string `json:"id"`
@@ -94,8 +123,100 @@ func (c *Client) fetchOpenAIModels(ctx context.Context, apiKey string) ([]string
 	})
 }
 
+func (c *Client) generalOpenAIModels(ctx context.Context, apiKey string) ([]string, error) {
+	allModels, err := c.fetchOpenAIModels(ctx, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения общих моделей OpenIA: %v", err)
+	}
+
+	result := make([]string, 0, len(allModels))
+	for _, name := range allModels {
+		if isGeneralOpenAIModel(name) {
+			result = append(result, name)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("получено 0 общих моделей OpenAI")
+	}
+
+	return result, nil
+}
+
+func (c *Client) realtimeOpenAIModels(ctx context.Context, apiKey string) ([]string, error) {
+	allModels, err := c.fetchOpenAIModels(ctx, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения моделей OpenAI: %v", err)
+	}
+
+	result := make([]string, 0, len(allModels))
+	for _, name := range allModels {
+		if isRealtimeModel(name) {
+			result = append(result, name)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("получено 0 realtime моделей OpenAI")
+	}
+
+	return result, nil
+}
+
+func (c *Client) generalGoogleModels(ctx context.Context, apiKey string) ([]string, error) {
+	allModels, err := c.fetchGoogleModels(ctx, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения общих моделей Google: %v", err)
+	}
+
+	result := make([]string, 0, len(allModels))
+	for _, name := range allModels {
+		if isGeneralGoogleModel(name) {
+			result = append(result, name)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("получено 0 общих моделей Google")
+	}
+
+	return result, nil
+}
+
+// Google не отдаёт список live моделей, альтернативных источников я тоже не нашёл...
+func (c *Client) realtimeGoogleModels() ([]string, error) {
+	result := []string{
+		"gemini-3.1-flash-live-preview",
+		"gemini-2.5-flash-live-preview",
+		"gemini-2.0-flash-exp",
+		"gemini-omni-flash-preview",
+	}
+	return result, nil
+}
+
+func isRealtimeModel(modelName string) bool {
+	return strings.Contains(modelName, "realtime")
+}
+
+func isGeneralOpenAIModel(modelName string) bool {
+	// исключаем realtime, tts, transcribe, embedding, moderation
+	exclude := []string{"realtime", "tts", "transcribe", "embedding", "moderation", "audio"}
+	for _, bad := range exclude {
+		if strings.Contains(modelName, bad) {
+			return false
+		}
+	}
+	return true
+}
+
+func isGeneralGoogleModel(modelName string) bool {
+	return isGeneralOpenAIModel(modelName) && !strings.Contains(modelName, "live") &&
+		!strings.Contains(modelName, "imagen") && !strings.Contains(modelName, "veo") &&
+		!strings.Contains(modelName, "embedding")
+}
+
 func (c *Client) fetchMistralModels(ctx context.Context, apiKey string) ([]string, error) {
-	return c.fetchListModels(ctx, "https://api.mistral.ai/v1/models", apiKey, func(body []byte) ([]string, error) {
+	return c.fetchListModels(ctx, mode.MistralBaseURL+"/models", apiKey, func(body []byte) ([]string, error) {
 		var payload struct {
 			Data []struct {
 				ID string `json:"id"`
@@ -114,9 +235,58 @@ func (c *Client) fetchMistralModels(ctx context.Context, apiKey string) ([]strin
 	})
 }
 
+func (c *Client) generalMistralModels(ctx context.Context, apiKey string) ([]string, error) {
+	allModels, err := c.fetchMistralModels(ctx, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения общих моделей Mistral: %v", err)
+	}
+
+	result := make([]string, 0, len(allModels))
+	for _, name := range allModels {
+		if isGeneralMistralModel(name) {
+			result = append(result, name)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("получено 0 общих моделей Mistral")
+	}
+	return result, nil
+}
+
+func isGeneralMistralModel(modelName string) bool {
+	exclude := []string{"embed", "moderation", "ocr", "realtime", "transcribe", "tts", "voxtral"}
+	for _, bad := range exclude {
+		if strings.Contains(modelName, bad) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Client) realtimeMistralModels(ctx context.Context, apiKey string) ([]string, error) {
+	allModels, err := c.fetchMistralModels(ctx, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения моделей Mistral: %v", err)
+	}
+
+	result := make([]string, 0, len(allModels))
+	for _, name := range allModels {
+		if isRealtimeModel(name) {
+			result = append(result, name)
+		}
+	}
+
+	if len(result) == 0 {
+		return nil, fmt.Errorf("получено 0 realtime моделей Mistral")
+	}
+
+	return result, nil
+}
+
 func (c *Client) fetchGoogleModels(ctx context.Context, apiKey string) ([]string, error) {
 	// Google API expects the API key as a query parameter, not as a Bearer token.
-	baseURL := "https://generativelanguage.googleapis.com/v1beta/models"
+	baseURL := mode.GoogleAgentsURL + "/models"
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка формирования URL Google: %w", err)

@@ -42,12 +42,11 @@ type Exterior interface {
 	GetUserVectorStorage(userID uint32) (string, error)
 	SetChannelEnabled(userID uint32, chName string, status bool) error
 	SaveUserModel(userID uint32, provider create.ProviderType, name, assistantId string, data []byte, modType uint, ids json.RawMessage, operator bool) error
-	SyncProviderModels(provider create.ProviderType, modelNames []string) (create.ProviderModelsSyncResult, error)
+	SyncProviderModels(provider create.ProviderType, modelType create.ModelType, modelNames []string) (create.ProviderModelsSyncResult, error)
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
 	ReadUserModel(userID uint32) ([]byte, *create.VecIds, error)
 	SetUserSubscriptionNotified(user uint32) error
-	DefaultProvidersModels(providerName string) (uint, string, error)
-	ModelsNameByProvider(provider create.ProviderType) ([]string, error)
+	DefaultProvidersModels(providerName string) (create.DefaultProvidersModels, error)
 
 	// User Model Management - методы для управления моделями пользователя (для create.DB)
 	ReadUserModelByProvider(userID uint32, provider create.ProviderType) ([]byte, *create.VecIds, error)
@@ -790,17 +789,20 @@ func (d *DB) GetAllUserModels(userID uint32) ([]create.UserModelRecord, error) {
 
 	rows, err := d.Conn().QueryContext(ctx,
 		`SELECT 
-			um.ModelId,
-			um.Provider,
-			um.IsActive,
-			ug.AssistantId,
-			gm.Id,
-			gm.Name,
-			ug.Ids
+			um.ModelId AS UserModelId,
+			um.Provider AS ProviderName,
+			um.IsActive AS IsActive,
+			ug.AssistantId AS UserModelAssistId,
+			gm.Id AS GptModelId,
+			gm.Name AS GptModelName,
+			rm.Id AS RealtimeModelId,
+			rm.Name AS RealtimeModelName,
+			ug.Ids AS Ids
 		FROM user_models um
 		JOIN user_gpt ug ON um.ModelId = ug.Id
-		JOIN gpt_models gm ON gm.Id = ug.Model
-		WHERE um.userID = ?
+		LEFT JOIN gpt_models gm ON gm.Id = ug.Model
+		LEFT JOIN realtime_models rm ON rm.Id = ug.Realtime
+		WHERE um.UserId = ?
 		ORDER BY um.IsActive DESC, um.CreatedAt DESC`, userID)
 
 	if err != nil {
@@ -820,18 +822,27 @@ func (d *DB) GetAllUserModels(userID uint32) ([]create.UserModelRecord, error) {
 		var record create.UserModelRecord
 		var isActive int8
 		var idsRaw sql.NullString
-		var modelId sql.NullInt64
-		var modelName sql.NullString
+		var gptModelID sql.NullInt64
+		var gptModelName sql.NullString
+		var realtimeModelID sql.NullInt64
+		var realtimeModelName sql.NullString
 
-		if err := rows.Scan(&record.ModelId, &record.Provider, &isActive, &record.AssistId, &modelId, &modelName, &idsRaw); err != nil {
-			continue
+		if err := rows.Scan(&record.ModelId, &record.Provider, &isActive, &record.AssistId,
+			&gptModelID, &gptModelName, &realtimeModelID, &realtimeModelName, &idsRaw); err != nil {
+			return nil, fmt.Errorf("ошибка чтения модели пользователя: %w", err)
 		}
 
 		record.IsActive = isActive == 1
-		if modelName.Valid && modelId.Valid {
+		if gptModelName.Valid && gptModelID.Valid {
 			record.GptType = &create.GptType{
-				ID:   uint(modelId.Int64),
-				Name: modelName.String,
+				ID:   uint(gptModelID.Int64),
+				Name: gptModelName.String,
+			}
+		}
+		if realtimeModelName.Valid && realtimeModelID.Valid {
+			record.Realtime = &create.Realtime{
+				ID:   uint(realtimeModelID.Int64),
+				Name: realtimeModelName.String,
 			}
 		}
 
@@ -1062,10 +1073,10 @@ func (d *DB) ReadUserModelByProvider(userID uint32, provider create.ProviderType
 }
 
 // DefaultProvidersModels возвращает модель по умолчанию для указанного провайдера
-func (d *DB) DefaultProvidersModels(providerName string) (uint, string, error) {
+func (d *DB) DefaultProvidersModels(providerName string) (create.DefaultProvidersModels, error) {
 	// Проверяем входные данные
 	if providerName == "" {
-		return 0, "", fmt.Errorf("получено пустое имя провайдера")
+		return create.DefaultProvidersModels{}, fmt.Errorf("получено пустое имя провайдера")
 	}
 
 	// Дочерний контекст с тайм-аутом на операцию
@@ -1073,30 +1084,43 @@ func (d *DB) DefaultProvidersModels(providerName string) (uint, string, error) {
 	defer cancel()
 
 	query := `
-		SELECT gm.Id, gm.Name
+		SELECT gm.Id   AS GptModelId,
+    		gm.Name AS GptModelName,
+    		rm.Id   AS RealtimeModelId,
+    		rm.Name AS RealtimeModelName
 		FROM gpt_models gm
-		INNER JOIN model_providers mp ON gm.Provider = mp.Id
-		WHERE mp.Name = ? AND gm.IsDefault = 1
-		LIMIT 1
+    	INNER JOIN model_providers mp ON gm.Provider = mp.Id
+    	INNER JOIN realtime_models rm ON rm.Provider = mp.Id
+    	WHERE mp.Name = ?
+    		AND gm.IsDefault = 1
+    	LIMIT 1;
 	`
 
-	var modelId uint
-	var modelName string
-	err := d.Conn().QueryRowContext(ctx, query, providerName).Scan(&modelId, &modelName)
+	var (
+		GptModelId, RealtimeModelId     uint
+		GptModelName, RealtimeModelName string
+	)
+
+	err := d.Conn().QueryRowContext(ctx, query, providerName).Scan(&GptModelId, &GptModelName, &RealtimeModelId, &RealtimeModelName)
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
-			return 0, "", fmt.Errorf("тайм-аут (%d с) при получении модели по умолчанию для провайдера %s: %w", sqlTimeToCancel, providerName, err)
+			return create.DefaultProvidersModels{}, fmt.Errorf("тайм-аут (%d с) при получении модели по умолчанию для провайдера %s: %w", sqlTimeToCancel, providerName, err)
 		case errors.Is(err, context.Canceled):
-			return 0, "", fmt.Errorf("операция отменена: %w", err)
+			return create.DefaultProvidersModels{}, fmt.Errorf("операция отменена: %w", err)
 		case errors.Is(err, sql.ErrNoRows):
-			return 0, "", fmt.Errorf("модель по умолчанию для провайдера %s не найдена", providerName)
+			return create.DefaultProvidersModels{}, fmt.Errorf("модель по умолчанию для провайдера %s не найдена", providerName)
 		default:
-			return 0, "", fmt.Errorf("ошибка выполнения запроса: %w", err)
+			return create.DefaultProvidersModels{}, fmt.Errorf("ошибка выполнения запроса: %w", err)
 		}
 	}
 
-	return modelId, modelName, nil
+	return create.DefaultProvidersModels{
+		GeneralModelID:    GptModelId,
+		GeneralModelName:  GptModelName,
+		RealTimeModelID:   RealtimeModelId,
+		RealTimeModelName: RealtimeModelName,
+	}, nil
 }
 
 // GetActiveModel получает активную модель пользователя
@@ -1119,10 +1143,13 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 			um.IsActive,
 			ug.Ids,
 			gm.Id,
-			gm.Name
+			gm.Name,
+			rm.Id,
+			rm.Name
 		FROM user_models um
 		JOIN user_gpt ug ON um.ModelId = ug.Id
 		LEFT JOIN gpt_models gm ON gm.Id = ug.Model
+		LEFT JOIN realtime_models rm ON rm.Id = ug.Realtime
 		WHERE um.userID = ? AND um.IsActive = 1
 		LIMIT 1`
 
@@ -1133,6 +1160,8 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 	var idsJson sql.NullString
 	var modelName sql.NullString
 	var modelNameId sql.NullInt64
+	var realtimeName sql.NullString
+	var realtimeNameId sql.NullInt64
 
 	err := d.Conn().QueryRowContext(ctx, query, userID).Scan(
 		&modelId,
@@ -1142,6 +1171,8 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 		&idsJson,
 		&modelNameId,
 		&modelName,
+		&realtimeNameId,
+		&realtimeName,
 	)
 
 	if err != nil {
@@ -1169,6 +1200,12 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 		record.GptType = &create.GptType{
 			ID:   uint(modelNameId.Int64),
 			Name: modelName.String,
+		}
+	}
+	if realtimeName.Valid && realtimeNameId.Valid {
+		record.Realtime = &create.Realtime{
+			ID:   uint(realtimeNameId.Int64),
+			Name: realtimeName.String,
 		}
 	}
 
@@ -1210,10 +1247,13 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 			um.IsActive,
 			ug.Ids,
 			gm.Id,
-			gm.Name
+			gm.Name,
+			rm.Id,
+			rm.Name
 		FROM user_models um
 		INNER JOIN user_gpt ug ON um.ModelId = ug.Id
 		LEFT JOIN gpt_models gm ON gm.Id = ug.Model
+		LEFT JOIN realtime_models rm ON rm.Id = ug.Realtime
 		WHERE um.userID = ? 
 			AND um.Provider = ?
 			AND um.IsActive = 1
@@ -1226,6 +1266,8 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 	var idsJson sql.NullString
 	var modelName sql.NullString
 	var modelNameId sql.NullInt64
+	var realtimeName sql.NullString
+	var realtimeNameId sql.NullInt64
 
 	err := d.Conn().QueryRowContext(ctx, query, userID, uint8(provider)).Scan(
 		&modelId,
@@ -1235,6 +1277,8 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 		&idsJson,
 		&modelNameId,
 		&modelName,
+		&realtimeNameId,
+		&realtimeName,
 	)
 
 	if err != nil {
@@ -1262,6 +1306,12 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 		record.GptType = &create.GptType{
 			ID:   uint(modelNameId.Int64),
 			Name: modelName.String,
+		}
+	}
+	if realtimeName.Valid && realtimeNameId.Valid {
+		record.Realtime = &create.Realtime{
+			ID:   uint(realtimeNameId.Int64),
+			Name: realtimeName.String,
 		}
 	}
 
@@ -1304,10 +1354,13 @@ func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.Provider
 			um.IsActive,
 			ug.Ids,
 			gm.Id,
-			gm.Name
+			gm.Name,
+			rm.Id,
+			rm.Name
 		FROM user_models um
 		INNER JOIN user_gpt ug ON um.ModelId = ug.Id
 		LEFT JOIN gpt_models gm ON gm.Id = ug.Model
+		LEFT JOIN realtime_models rm ON rm.Id = ug.Realtime
 		WHERE um.userID = ? 
 			AND um.Provider = ?
 		LIMIT 1`
@@ -1319,6 +1372,8 @@ func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.Provider
 	var idsJson sql.NullString
 	var modelName sql.NullString
 	var modelNameId sql.NullInt64
+	var realtimeName sql.NullString
+	var realtimeNameId sql.NullInt64
 
 	err := d.Conn().QueryRowContext(ctx, query, userID, uint8(provider)).Scan(
 		&modelId,
@@ -1328,6 +1383,8 @@ func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.Provider
 		&idsJson,
 		&modelNameId,
 		&modelName,
+		&realtimeNameId,
+		&realtimeName,
 	)
 
 	if err != nil {
@@ -1355,6 +1412,12 @@ func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.Provider
 		record.GptType = &create.GptType{
 			ID:   uint(modelNameId.Int64),
 			Name: modelName.String,
+		}
+	}
+	if realtimeName.Valid && realtimeNameId.Valid {
+		record.Realtime = &create.Realtime{
+			ID:   uint(realtimeNameId.Int64),
+			Name: realtimeName.String,
 		}
 	}
 
@@ -2067,9 +2130,9 @@ func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remainin
 	// Получаем текущие значения с блокировкой строки
 	var vLimit, vUsed int64
 	err = tx.QueryRowContext(ctx, `
-  SELECT StorageLimit, StorageUsed
-  FROM subscriptions
-  WHERE userID = ?
+  SELECT quota_bytes, used_bytes
+  FROM user_storage_quota
+  WHERE user_id = ?
   FOR UPDATE`, userID).Scan(&vLimit, &vUsed)
 
 	if err != nil {
@@ -2097,9 +2160,9 @@ func (d *DB) GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remainin
 
 	// Обновляем значение StorageUsed
 	_, err = tx.ExecContext(ctx, `
-  UPDATE subscriptions
-  SET StorageUsed = ?
-  WHERE userID = ?`, vNewUsed, userID)
+  UPDATE user_storage_quota
+  SET used_bytes = ?
+  WHERE user_id = ?`, vNewUsed, userID)
 
 	if err != nil {
 		switch {
@@ -2345,10 +2408,10 @@ func (d *DB) SetUserSubscriptionNotified(user uint32) error {
 	return nil
 }
 
-// SyncProviderModels синхронизирует каталог моделей провайдера с уже полученным списком моделей.
-// При удалении неподдерживаемой модели из провайдера она удаляется из gpt_models и
+// SyncProviderModels синхронизирует каталог моделей провайдера с уже полученным списком моделей в зависимости от типа модели.
+// При удалении неподдерживаемой модели из провайдера она удаляется из gpt_models и realtime_models
 // очищает ссылку в user_models (GptModelId = NULL), чтобы пользователь мог выбрать другую.
-func (d *DB) SyncProviderModels(provider create.ProviderType, modelNames []string) (create.ProviderModelsSyncResult, error) {
+func (d *DB) SyncProviderModels(provider create.ProviderType, modelType create.ModelType, modelNames []string) (create.ProviderModelsSyncResult, error) {
 	result := create.ProviderModelsSyncResult{Provider: provider}
 	if !provider.IsValid() {
 		return result, fmt.Errorf("некорректный provider: %d", provider)
@@ -2356,6 +2419,19 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelNames []strin
 
 	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
 	defer cancel()
+
+	var tableName string
+	var userModelColumn string
+	switch {
+	case modelType.IsGeneral():
+		tableName = "gpt_models"
+		userModelColumn = "Model"
+	case modelType.IsRealtime():
+		tableName = "realtime_models"
+		userModelColumn = "Realtime"
+	default:
+		return result, fmt.Errorf("некорректный тип модели: %d", modelType)
+	}
 
 	normalizedNames := make([]string, 0, len(modelNames))
 	for _, name := range modelNames {
@@ -2379,26 +2455,19 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelNames []strin
 		seenNames[name] = struct{}{}
 
 		var existingID int64
-		err := tx.QueryRowContext(ctx, `
+		err := tx.QueryRowContext(ctx, fmt.Sprintf(`
 			SELECT Id
-			FROM gpt_models
+			FROM %s
 			WHERE Provider = ? AND Name = ?
 			LIMIT 1
-		`, provider, name).Scan(&existingID)
+		`, tableName), provider, name).Scan(&existingID)
 		switch {
 		case err == nil:
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE gpt_models
-				SET IsDefault = IF(gpt_models.IsDefault = 1, 1, 0)
-				WHERE Id = ?
-			`, existingID); err != nil {
-				return result, fmt.Errorf("ошибка обновления модели %s: %w", name, err)
-			}
 		case errors.Is(err, sql.ErrNoRows):
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO gpt_models (Provider, IsDefault, Name)
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+				INSERT INTO %s (Provider, IsDefault, Name)
 				VALUES (?, ?, ?)
-			`, provider, 0, name); err != nil {
+			`, tableName), provider, 0, name); err != nil {
 				return result, fmt.Errorf("ошибка сохранения модели %s: %w", name, err)
 			}
 		default:
@@ -2407,7 +2476,7 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelNames []strin
 		result.Synced++
 	}
 
-	rows, err := tx.QueryContext(ctx, `SELECT Id, Name FROM gpt_models WHERE Provider = ?`, provider)
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT Id, Name FROM %s WHERE Provider = ?`, tableName), provider)
 	if err != nil {
 		return result, fmt.Errorf("ошибка получения текущего списка моделей: %w", err)
 	}
@@ -2418,26 +2487,43 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelNames []strin
 		seen[name] = struct{}{}
 	}
 
+	var staleModels []struct {
+		id   int64
+		name string
+	}
 	for rows.Next() {
 		var modelID int64
 		var modelName string
 		if err := rows.Scan(&modelID, &modelName); err != nil {
-			continue
+			return result, fmt.Errorf("ошибка чтения текущего списка моделей: %w", err)
 		}
 		trimmedModelName := strings.TrimSpace(modelName)
 		if _, ok := seen[trimmedModelName]; ok {
 			continue
 		}
 
+		staleModels = append(staleModels, struct {
+			id   int64
+			name string
+		}{id: modelID, name: trimmedModelName})
+	}
+	if err := rows.Err(); err != nil {
+		return result, fmt.Errorf("ошибка итерации текущего списка моделей: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return result, fmt.Errorf("ошибка закрытия списка моделей: %w", err)
+	}
+
+	for _, stale := range staleModels {
 		var affectedUsers []uint32
-		userRows, err := tx.QueryContext(ctx, `
+		userRows, err := tx.QueryContext(ctx, fmt.Sprintf(`
 			SELECT um.userID
 			FROM user_models um
 			JOIN user_gpt ug ON ug.Id = um.ModelId
-			WHERE um.Provider = ? AND ug.Model = ?
-		`, provider, modelID)
+			WHERE ug.Provider = ? AND ug.%s = ?
+		`, userModelColumn), provider, stale.id)
 		if err != nil {
-			return result, fmt.Errorf("ошибка получения пользователей, использующих удалённую модель %s: %w", trimmedModelName, err)
+			return result, fmt.Errorf("ошибка получения пользователей, использующих удалённую модель %s: %w", stale.name, err)
 		}
 		for userRows.Next() {
 			var userID uint32
@@ -2448,32 +2534,39 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelNames []strin
 		}
 		_ = userRows.Close()
 
-		// Очищаем привязку к удалённой модели:
-		// - um.IsActive = 0  → деактивируем пользователей этой модели
-		// - ug.Model = NULL  → убираем ссылку на gpt_models.Id
-		// - ug.AssistantId = '' → очищаем имя модели, чтобы loadAgentConfig
-		//   подхватил DefaultProvidersModels и переключил на дефолтную модель
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE user_models um
-			JOIN user_gpt ug ON ug.Id = um.ModelId
-			SET um.IsActive = 0, ug.Model = NULL, ug.AssistantId = ''
-			WHERE um.Provider = ? AND ug.Model = ?
-		`, provider, modelID); err != nil {
-			return result, fmt.Errorf("ошибка очистки привязки к модели %s в user_gpt: %w", trimmedModelName, err)
+		var replacementID int64
+		err = tx.QueryRowContext(ctx, fmt.Sprintf(`
+			SELECT Id FROM %s
+			WHERE Provider = ? AND IsDefault = 1 AND Id <> ?
+			LIMIT 1
+		`, tableName), provider, stale.id).Scan(&replacementID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return result, fmt.Errorf("невозможно удалить модель %s: отсутствует модель по умолчанию для замены", stale.name)
+		}
+		if err != nil {
+			return result, fmt.Errorf("ошибка поиска модели для замены %s: %w", stale.name, err)
 		}
 
-		if _, err := tx.ExecContext(ctx, `DELETE FROM gpt_models WHERE Id = ?`, modelID); err != nil {
-			return result, fmt.Errorf("ошибка удаления модели %s из gpt_models: %w", trimmedModelName, err)
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			UPDATE user_gpt
+			SET %s = ?, AssistantId = ''
+			WHERE Provider = ? AND %s = ?
+		`, userModelColumn, userModelColumn), replacementID, provider, stale.id); err != nil {
+			return result, fmt.Errorf("ошибка переназначения пользователей с модели %s: %w", stale.name, err)
+		}
+
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE Id = ?`, tableName), stale.id); err != nil {
+			return result, fmt.Errorf("ошибка удаления модели %s из %s: %w", stale.name, tableName, err)
 		}
 
 		result.Removed++
-		result.RemovedNames = append(result.RemovedNames, trimmedModelName)
+		result.RemovedNames = append(result.RemovedNames, stale.name)
 		result.ClearedUsers += len(affectedUsers)
 		for _, userID := range affectedUsers {
 			result.AffectedUsers = append(result.AffectedUsers, create.ProviderModelUserChange{
 				UserID:    userID,
-				ModelID:   uint64(modelID),
-				ModelName: trimmedModelName,
+				ModelID:   uint64(stale.id),
+				ModelName: stale.name,
 			})
 		}
 	}
@@ -2484,31 +2577,3 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelNames []strin
 
 	return result, nil
 }
-
-func (d *DB) ModelsNameByProvider(provider create.ProviderType) ([]string, error) {
-	if !provider.IsValid() {
-		return nil, fmt.Errorf("некорректный provider: %d", provider)
-	}
-
-	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
-	defer cancel()
-
-	rows, err := d.conn.QueryContext(ctx, `SELECT Id, Name FROM gpt_models WHERE Provider = ?`, provider)
-	if err != nil {
-		return nil, fmt.Errorf("ошибка получения текущего списка моделей: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var modelNames []string
-	for rows.Next() {
-		var modelID int64
-		var modelName string
-		if err := rows.Scan(&modelID, &modelName); err != nil {
-			continue
-		}
-		modelNames = append(modelNames, strings.TrimSpace(modelName))
-	}
-
-	return modelNames, nil
-}
-

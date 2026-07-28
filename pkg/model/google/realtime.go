@@ -185,7 +185,7 @@ func (m *Model) StartRealtimeSession(userID uint32, dialogID, respId uint64) err
 		return fmt.Errorf("StartRealtimeSession: Realtime не включён для userID=%d (установите флаг Realtime в настройках модели)", userID)
 	}
 
-	conn, err := create.DialGoogleRealtimeSession(m.client.GetAPIKeyForUser(userID), rm.AgentConfig.RealtimeModel)
+	conn, err := create.DialGoogleRealtimeSession(m.client.GetAPIKeyForUser(userID))
 	if err != nil {
 		return fmt.Errorf("StartRealtimeSession: ошибка подключения к Google Live API: %w", err)
 	}
@@ -483,12 +483,10 @@ func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 		outputTranscription = *gvad.OutputAudioTranscription
 	}
 
-	// Определяем realtime-модель: используем RealtimeModel (напр. gemini-2.0-flash-lite),
-	// а не ModelName (который является обычной текстовой моделью пользователя).
-	// ЗАЩИТА: если RealtimeModel совпадает с текстовой ModelName — принудительно используем константу.
+	// Хотя этого не может быть
 	realtimeModel := cfg.RealtimeModel
-	if realtimeModel == "" || realtimeModel == cfg.ModelName || realtimeModel == "gemini-3.1-flash-live-preview" {
-		realtimeModel = create.RealtimeGoogleModel
+	if realtimeModel == "" {
+		return fmt.Errorf("realtime-модель не задана")
 	}
 
 	setup := map[string]any{

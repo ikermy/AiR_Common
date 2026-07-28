@@ -527,9 +527,7 @@ func (m *MistralAgentClient) executeMistralGetRequest(url string) ([]byte, error
 
 // ListLibraries получает список всех библиотек
 func (m *MistralAgentClient) ListLibraries() ([]MistralLibrary, error) {
-	const librariesURL = "https://api.mistral.ai/v1/libraries"
-
-	responseBody, err := m.executeMistralGetRequest(librariesURL)
+	responseBody, err := m.executeMistralGetRequest(mode.MistralBaseURL + "/libraries")
 	if err != nil {
 		return nil, fmt.Errorf("ошибка при вызове API: %w", err)
 	}
@@ -546,7 +544,7 @@ func (m *MistralAgentClient) ListLibraries() ([]MistralLibrary, error) {
 
 // DeleteLibrary удаляет библиотеку
 func (m *MistralAgentClient) DeleteLibrary(libraryID string) error {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s", libraryID)
+	url := fmt.Sprintf(mode.MistralBaseURL+"/libraries/%s", libraryID)
 
 	return m.executeMistralDeleteRequest(url)
 }
@@ -554,7 +552,7 @@ func (m *MistralAgentClient) DeleteLibrary(libraryID string) error {
 // DeleteDocumentFromLibrary удаляет документ из библиотеки
 // DELETE /v1/libraries/{library_id}/documents/{document_id}
 func (m *MistralAgentClient) DeleteDocumentFromLibrary(libraryID, documentID string) error {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents/%s", libraryID, documentID)
+	url := fmt.Sprintf(mode.MistralBaseURL+"/libraries/%s/documents/%s", libraryID, documentID)
 
 	return m.executeMistralDeleteRequest(url)
 }

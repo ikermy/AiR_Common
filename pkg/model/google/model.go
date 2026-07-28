@@ -255,25 +255,28 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	if found == nil {
 		return fmt.Errorf("модель Google не найдена для userID %d", userID)
 	}
+	if found.Realtime == nil || found.Realtime.Name == "" {
+		return fmt.Errorf("realtime-модель Google не найдена для userID %d", userID)
+	}
 
 	// Инициализируем базовую конфигурацию.
 	// RealtimeModel выставляется сразу в константу — НЕ в found.AssistId (это текстовая модель).
 	// Это гарантирует что realtime-сессия не получит обычную модель (gemini-2.5-flash и т.п.),
 	// которая не поддерживает v1alpha BidiGenerateContent.
-	modelName := found.AssistId
-	if modelName == "" {
+	generalModelName := found.AssistId
+	if generalModelName == "" {
 		// AssistId не заполнен — берём модель по умолчанию из gpt_models (IsDefault=1)
-		_, defaultName, err := m.db.DefaultProvidersModels(create.ProviderGoogle.String())
+		defData, err := m.db.DefaultProvidersModels(create.ProviderGoogle.String())
 		if err != nil {
 			return fmt.Errorf("имя модели Google не задано и получить модель по умолчанию не удалось: %w", err)
 		}
-		modelName = defaultName
+		generalModelName = defData.GeneralModelName
 	}
 	agentConfig := GoogleAgentConfig{
 		ModelId:       found.ModelId,
-		ModelName:     modelName,
+		ModelName:     generalModelName,
 		HasVector:     false,
-		RealtimeModel: create.RealtimeGoogleModel, // всегда realtime-модель (gemini-2.0-flash-lite)
+		RealtimeModel: found.Realtime.Name,
 	}
 
 	// Загружаем полные данные модели из БД для получения всех параметров
@@ -318,9 +321,6 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 				agentConfig.Interpreter = modelData.Interpreter
 				agentConfig.RealtimeEnabled = modelData.Realtime
 				agentConfig.RealtimeVAD = modelData.RealtimeVAD
-				// RealtimeModel: берём из RealtimeVAD.Google.VoiceName нет — это фиксированная модель.
-				// Используем константу RealtimeGoogleModel, если в данных не переопределена.
-				agentConfig.RealtimeModel = create.RealtimeGoogleModel
 			}
 		} else {
 			return fmt.Errorf("UniversalModel не установлен, невозможно загрузить данные модели для пользователя %d", userID)
@@ -889,9 +889,9 @@ func (m *Model) DisconnectUser(userID uint32) {
 	})
 }
 
-func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, apiKey string) error {
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, modelType create.ModelType, apiKey string) error {
 	if provider != create.ProviderGoogle {
 		return fmt.Errorf("неверный провайдер для Google модели: %s", provider.String())
 	}
-	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderGoogle, apiKey)
+	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderGoogle, modelType, apiKey)
 }

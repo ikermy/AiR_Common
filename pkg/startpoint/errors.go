@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ikermy/AiR_Common/pkg/com"
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 )
@@ -179,6 +180,15 @@ func (s *Start) AskWithRetry(userID uint32, respId, dialogID uint64, arrAsk []st
 
 		// Критическая ошибка — немедленный возврат
 		if isFatalErrorPattern(err) {
+			message := s.End.TranslateMessageWithUserID(userID, "event.model-fatal")
+			select {
+			case mode.CarpinteroCh <- com.CarpCh{
+				Event:  "model-fatal",
+				Target: message,
+				UserID: userID,
+			}:
+			default:
+			}
 			//logger.Warn("Критическая ошибка для диалога %d: %v", dialogID, err)
 			return response, &FatalError{Err: fmt.Errorf("критическая ошибка: %w", err)}
 		}
@@ -186,6 +196,15 @@ func (s *Start) AskWithRetry(userID uint32, respId, dialogID uint64, arrAsk []st
 		// Временная ошибка — retry
 		if isRetryableErrorPattern(err) {
 			if attempt == mode.RetryMaxAttempts-1 {
+				message := s.End.TranslateMessageWithUserID(userID, "event.model-retry-exhausted")
+				select {
+				case mode.CarpinteroCh <- com.CarpCh{
+					Event:  "model-retry-exhausted",
+					Target: message,
+					UserID: userID,
+				}:
+				default:
+				}
 				break
 			}
 

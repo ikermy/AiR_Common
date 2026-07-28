@@ -255,6 +255,11 @@ func simpleLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"mode.operator.disabled","translation":"Режим оператора отключен"},
 			{"id":"operator.disconnected","translation":"Оператор отключился. Маруся AI снова с вами!"},
 			{"id":"operator.mode.is.disabled","translation":"Режим оператора отключен, возобновляю работу AI"},
+			{"id":"model.response.failed","translation":"⚠️ Не удалось получить ответ, попробуйте ещё раз."},
+			{"id":"event.model-fatal","translation":"⚠️ Ошибка работы AI-модели. Проверьте настройки доступа к провайдеру."},
+			{"id":"event.model-retry-exhausted","translation":"⚠️ Не удалось получить ответ от AI-модели после нескольких попыток. Попробуйте повторить запрос позже."},
+			{"id":"operator.timeout.minutes","translation":"⏱️ Оператор не ответил в течение %d мин\nПродолжаю работу в режиме AI-агента 🧠"},
+			{"id":"operator.timeout.seconds","translation":"⏱️ Оператор не ответил в течение %d сек\nПродолжаю работу в режиме AI-агента 🧠"},
 			{"id":"notification","translation":"Уведомление"},
 			{"id":"notification.from.marusia","translation":"Уведомление от MarusiaAI"},
 			{"id":"sincerely.marusia.team","translation":"С уважением,<br>Команда MarusiaAI"},
@@ -271,7 +276,12 @@ func simpleLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"system","translation":"System"},
 			{"id":"mode.operator.disabled","translation":"Operator mode is disabled"},	
 			{"id":"operator.disconnected","translation":"The operator has disconnected. Marusya AI is back with you!"},
-			{"id":"operator.mode.is.disabled","translation":"Operator mode is disabled, resuming AI operation"},
+			{"id":"operator.mode.is.disabled","translation":"Operator mode is disabled, resuming AI operation"},	
+			{"id":"model.response.failed","translation":"⚠️ Failed to get a response. Please try again."},
+			{"id":"event.model-fatal","translation":"⚠️ AI model error. Please check the provider access settings."},
+			{"id":"event.model-retry-exhausted","translation":"⚠️ The AI model did not respond after several attempts. Please try again later."},
+			{"id":"operator.timeout.minutes","translation":"⏱️ The operator did not respond within %d min\nContinuing in AI agent mode 🧠"},
+			{"id":"operator.timeout.seconds","translation":"⏱️ The operator did not respond within %d sec\nContinuing in AI agent mode 🧠"},
 			{"id":"notification","translation":"Notification"},
 			{"id":"notification.from.marusia","translation":"Notification from MarusiaAI"},
 			{"id":"sincerely.marusia.team","translation":"Sincerely,<br>MarusiaAI Team"},
@@ -289,6 +299,11 @@ func simpleLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"mode.operator.disabled","translation":"El modo operador está deshabilitado"},
 			{"id":"operator.disconnected","translation":"El operador se ha desconectado. Marusya AI está de vuelta contigo!"},
 			{"id":"operator.mode.is.disabled","translation":"El modo operador está deshabilitado, reanudando la operación de AI"},
+			{"id":"model.response.failed","translation":"⚠️ No se pudo obtener una respuesta. Inténtelo de nuevo."},
+			{"id":"event.model-fatal","translation":"⚠️ Error de la modelo de IA. Verifique la configuración de acceso al proveedor."},
+			{"id":"event.model-retry-exhausted","translation":"⚠️ La modelo de IA no respondió después de varios intentos. Inténtelo de nuevo más tarde."},
+			{"id":"operator.timeout.minutes","translation":"⏱️ El operador no respondió en %d min\nContinuo trabajando en modo agente de IA 🧠"},
+			{"id":"operator.timeout.seconds","translation":"⏱️ El operador no respondió en %d seg\nContinuo trabajando en modo agente de IA 🧠"},
 			{"id":"notification","translation":"Notificación"},
 			{"id":"notification.from.marusia","translation":"Notificación de MarusiaAI"},
 			{"id":"sincerely.marusia.team","translation":"Atentamente,<br>Equipo MarusiaAI"},
@@ -337,6 +352,10 @@ func eventLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"event.reauth-userkey","translation":"Для работы требуется расшифровка пользовательских данных, пожалуйста, войдите в систему заново."},
 			{"id":"event.model-removed","translation":"Провайдер {{.Target}} удалил доступную модель '{{.AssistName}}'. Пожалуйста, выберите другую модель или повторно подключите провайдера."},
 			{"id":"event.model-operator","translation":"Ассистент {{.AssistName}} запросил переключение на оператора в диалоге с пользователем {{.UserName}}"},
+			{"id":"event.model-fatal","translation":"⚠️ Ошибка работы AI-модели. Проверьте настройки доступа к провайдеру."},
+			{"id":"event.model-retry-exhausted","translation":"⚠️ Не удалось получить ответ от AI-модели после нескольких попыток. Попробуйте повторить запрос позже."},
+			{"id":"operator.timeout.minutes","translation":"⏱️ Оператор не ответил в течение %d мин\nПродолжаю работу в режиме AI-агента 🧠"},
+			{"id":"operator.timeout.seconds","translation":"⏱️ Оператор не ответил в течение %d сек\nПродолжаю работу в режиме AI-агента 🧠"},
 			{"id":"subscription.no_subscription","translation":"У вас нет подписки. Пожалуйста, оформите подписку."},
 			{"id":"subscription.expired","translation":"Ваша подписка истекла. Пожалуйста, продлите подписку."},
 			{"id":"subscription.limit_exceeded","translation":"Вы превысили лимит сообщений. Пожалуйста, пополните баланс."},
@@ -364,6 +383,10 @@ func eventLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"event.reauth","translation":"Channel {{.Target}} is disconnected, re-authorization is required"},
 			{"id":"event.reauth-userkey","translation":"User data decryption is required to continue, please sign in again."},
 			{"id":"event.model-operator","translation":"Assistant {{.AssistName}} requested switching to an operator in the dialog with user {{.UserName}}"},
+			{"id":"event.model-fatal","translation":"⚠️ AI model error. Please check the provider access settings."},
+			{"id":"event.model-retry-exhausted","translation":"⚠️ The AI model did not respond after several attempts. Please try again later."},
+			{"id":"operator.timeout.minutes","translation":"⏱️ The operator did not respond within %d min\nContinuing in AI agent mode 🧠"},
+			{"id":"operator.timeout.seconds","translation":"⏱️ The operator did not respond within %d sec\nContinuing in AI agent mode 🧠"},
 			{"id":"event.model-removed","translation":"Provider {{.Target}} removed the available model '{{.AssistName}}'. Please select another model or reconnect the provider."},
 			{"id":"subscription.no_subscription","translation":"You do not have a subscription. Please subscribe."},
 			{"id":"subscription.expired","translation":"Your subscription has expired. Please renew it."},
@@ -392,6 +415,10 @@ func eventLocalizer(lang string) (*localizerWrapper, error) {
 			{"id":"event.reauth","translation":"El canal {{.Target}} está desconectado, se requiere una nueva autorización"},
 			{"id":"event.reauth-userkey","translation":"Se requiere descifrar los datos del usuario para continuar; por favor, vuelva a iniciar sesión."},
 			{"id":"event.model-operator","translation":"El asistente {{.AssistName}} solicitó cambiar a un operador en el diálogo con el usuario {{.UserName}}"},
+			{"id":"event.model-fatal","translation":"⚠️ Error de la modelo de IA. Verifique la configuración de acceso al proveedor."},
+			{"id":"event.model-retry-exhausted","translation":"⚠️ La modelo de IA no respondió después de varios intentos. Inténtelo de nuevo más tarde."},
+			{"id":"operator.timeout.minutes","translation":"⏱️ El operador no respondió en %d min\nContinuo trabajando en modo agente de IA 🧠"},
+			{"id":"operator.timeout.seconds","translation":"⏱️ El operador no respondió en %d seg\nContinuo trabajando en modo agente de IA 🧠"},
 			{"id":"subscription.no_subscription","translation":"No tiene una suscripción. Por favor, suscríbase."},
 			{"id":"subscription.expired","translation":"Su suscripción ha expirado. Por favor, renuévela."},
 			{"id":"subscription.limit_exceeded","translation":"Ha superado el límite de mensajes. Por favor, recargue su saldo."},
@@ -544,6 +571,10 @@ func CreateMessageFromEvent(lang, Event, UserName, AssistName, Target string) (s
 		msg, err = loc.mustLocalize("event.model-removed", map[string]any{"Target": Target, "AssistName": AssistName})
 	case "model-operator":
 		msg, err = loc.mustLocalize("event.model-operator", map[string]any{"AssistName": AssistName, "UserName": UserName})
+	case "model-fatal":
+		msg = Target
+	case "model-retry-exhausted":
+		msg = Target
 	// События подписки
 	case "subscription":
 		errMsg := map[com.ErrorCode]string{

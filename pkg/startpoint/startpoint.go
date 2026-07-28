@@ -93,9 +93,10 @@ func (s *Start) trySendAnswer(answerCh chan<- Answer, ans Answer) {
 	}
 }
 
-func (s *Start) sendFallbackAnswer(answerCh chan<- Answer, err error) {
+func (s *Start) sendFallbackAnswer(userID uint32, answerCh chan<- Answer, err error) {
+	msg := s.End.TranslateMessageWithUserID(userID, "model.response.failed")
 	s.trySendAnswer(answerCh, Answer{
-		Answer: model.AssistResponse{Message: "⚠️ Не удалось получить ответ, попробуйте ещё раз."},
+		Answer: model.AssistResponse{Message: msg},
 		Err:    err,
 	})
 }
@@ -115,7 +116,9 @@ func (s *Start) handleAskFailure(
 		s.sendError(errCh, fmt.Errorf("%s: %v", fatalMessage, err))
 		return true
 	}
-	s.sendFallbackAnswer(answerCh, err)
+	if mode.ErrMsgToUser {
+		s.sendFallbackAnswer(u.Assist.UserID, answerCh, err)
+	}
 	return false
 }
 
@@ -126,11 +129,13 @@ func operatorSystemAnswer(message string) Answer {
 	}
 }
 
-func operatorTimeoutMessage() string {
+func (s *Start) operatorTimeoutMessage(userId uint32) string {
 	if mode.OperatorResponseTimeout%60 == 0 && mode.OperatorResponseTimeout >= 60 {
-		return fmt.Sprintf("⏱️ Оператор не ответил в течение %d мин\nПродолжаю работу в режиме AI-агента 🧠", mode.OperatorResponseTimeout/60)
+		message := s.End.TranslateMessageWithUserID(userId, "operator.timeout.minutes")
+		return fmt.Sprintf(message, mode.OperatorResponseTimeout/60)
 	}
-	return fmt.Sprintf("⏱️ Оператор не ответил в течение %d сек\nПродолжаю работу в режиме AI-агента 🧠", mode.OperatorResponseTimeout)
+	message := s.End.TranslateMessageWithUserID(userId, "operator.timeout.seconds")
+	return fmt.Sprintf(message, mode.OperatorResponseTimeout)
 }
 
 func stopOperatorTimeoutTimer(timer *time.Timer, timeoutCh <-chan struct{}) *time.Timer {
@@ -952,7 +957,7 @@ func (s *Start) Respondent(u *model.RespModel, questionCh chan Question, answerC
 			}
 
 			// Отправляем информационное сообщение пользователю о переключении на AI
-			s.trySendAnswer(answerCh, operatorSystemAnswer(operatorTimeoutMessage()))
+			s.trySendAnswer(answerCh, operatorSystemAnswer(s.operatorTimeoutMessage(u.Assist.UserID)))
 
 			// Если есть текущий вопрос без ответа, обрабатываем его через AI
 			if !deaf && currentQuest.Question != nil && len(currentQuest.Question) > 0 {

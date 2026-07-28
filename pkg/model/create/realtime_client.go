@@ -60,12 +60,9 @@ const (
 
 // DialGoogleRealtimeSession устанавливает WebSocket соединение к Google Multimodal Live API.
 // Возвращает готовое *websocket.Conn. После установки соединения необходимо отправить setup-сообщение.
-func DialGoogleRealtimeSession(apiKey, model string) (*websocket.Conn, error) {
+func DialGoogleRealtimeSession(apiKey string) (*websocket.Conn, error) {
 	if apiKey == "" {
 		return nil, fmt.Errorf("DialGoogleRealtimeSession: apiKey не может быть пустым")
-	}
-	if model == "" {
-		model = RealtimeGoogleModel
 	}
 
 	// API key передаётся как заголовок x-goog-api-key (НЕ ?key= в URL!)
@@ -94,7 +91,7 @@ func DialRealtimeSession(apiKey, model string) (*websocket.Conn, error) {
 		return nil, fmt.Errorf("DialRealtimeSession: apiKey не может быть пустым")
 	}
 	if model == "" {
-		model = RealtimeOpenAIModel
+		return nil, fmt.Errorf("DialRealtimeSession: не указана модель")
 	}
 
 	baseURL, _ := url.Parse(RealtimeOpenAIURL)

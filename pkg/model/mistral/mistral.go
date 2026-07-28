@@ -111,8 +111,6 @@ type MistralDocument struct {
 // CreateLibrary создаёт новую библиотеку документов
 // POST /v1/libraries
 func (m *MistralAgentClient) CreateLibrary(name, description string) (*MistralLibrary, error) {
-	const librariesURL = "https://api.mistral.ai/v1/libraries"
-
 	payload := map[string]any{
 		"name": name,
 	}
@@ -125,7 +123,7 @@ func (m *MistralAgentClient) CreateLibrary(name, description string) (*MistralLi
 		return nil, fmt.Errorf("ошибка сериализации запроса: %v", err)
 	}
 
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, librariesURL, bytes.NewBuffer(body))
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodPost, mode.MistralBaseURL+"/libraries", bytes.NewBuffer(body))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка создания POST запроса: %v", err)
 	}
@@ -159,7 +157,7 @@ func (m *MistralAgentClient) CreateLibrary(name, description string) (*MistralLi
 // DeleteLibrary удаляет библиотеку
 // DELETE /v1/libraries/{library_id}
 func (m *MistralAgentClient) DeleteLibrary(libraryID string) error {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s", libraryID)
+	url := fmt.Sprintf(mode.MistralBaseURL+"/libraries/%s", libraryID)
 
 	req, err := http.NewRequestWithContext(m.ctx, http.MethodDelete, url, nil)
 	if err != nil {
@@ -185,7 +183,7 @@ func (m *MistralAgentClient) DeleteLibrary(libraryID string) error {
 // UploadDocumentToLibrary загружает документ в библиотеку
 // POST /v1/libraries/{library_id}/documents
 func (m *MistralAgentClient) UploadDocumentToLibrary(libraryID, fileName string, fileData []byte) (string, error) {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents", libraryID)
+	url := fmt.Sprintf(mode.MistralBaseURL+"/libraries/%s/documents", libraryID)
 
 	// Создаём multipart форму
 	body := &bytes.Buffer{}
@@ -236,7 +234,7 @@ func (m *MistralAgentClient) UploadDocumentToLibrary(libraryID, fileName string,
 // DeleteDocumentFromLibrary удаляет документ из библиотеки
 // DELETE /v1/libraries/{library_id}/documents/{document_id}
 func (m *MistralAgentClient) DeleteDocumentFromLibrary(libraryID, documentID string) error {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents/%s", libraryID, documentID)
+	url := fmt.Sprintf(mode.MistralBaseURL+"/libraries/%s/documents/%s", libraryID, documentID)
 
 	req, err := http.NewRequestWithContext(m.ctx, http.MethodDelete, url, nil)
 	if err != nil {
@@ -262,7 +260,7 @@ func (m *MistralAgentClient) DeleteDocumentFromLibrary(libraryID, documentID str
 // GetDocumentStatus получает статус документа
 // GET /v1/libraries/{library_id}/documents/{document_id}
 func (m *MistralAgentClient) GetDocumentStatus(libraryID, documentID string) (string, error) {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/libraries/%s/documents/%s", libraryID, documentID)
+	url := fmt.Sprintf(mode.MistralBaseURL+"/libraries/%s/documents/%s", libraryID, documentID)
 
 	req, err := http.NewRequestWithContext(m.ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -297,7 +295,7 @@ func (m *MistralAgentClient) GetDocumentStatus(libraryID, documentID string) (st
 // DownloadFile скачивает файл (изображение) по file_id через Mistral Files API
 // Документация: https://docs.mistral.ai/api/#tag/files/operation/files_api_routes_download_file
 func (m *MistralAgentClient) DownloadFile(fileID string) ([]byte, error) {
-	url := fmt.Sprintf("https://api.mistral.ai/v1/files/%s/content", fileID)
+	url := fmt.Sprintf(mode.MistralBaseURL+"/files/%s/content", fileID)
 
 	req, err := http.NewRequestWithContext(m.ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -871,7 +869,7 @@ func (m *MistralAgentClient) DeleteFile(fileID string) error {
 	}
 
 	// Формируем DELETE запрос
-	req, err := http.NewRequestWithContext(m.ctx, http.MethodDelete, fmt.Sprintf("https://api.mistral.ai/v1/files/%s", fileID), nil)
+	req, err := http.NewRequestWithContext(m.ctx, http.MethodDelete, fmt.Sprintf(mode.MistralBaseURL+"/files/%s", fileID), nil)
 	if err != nil {
 		return fmt.Errorf("ошибка создания HTTP запроса: %w", err)
 	}

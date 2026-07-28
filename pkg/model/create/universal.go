@@ -13,7 +13,9 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 )
 
+// Список моделей которые поддерживают 24h - extending кеширование
 var OpenAIExtandingCacheModels = []string{
+	"gpt-5.5",
 	"gpt-5.5-instant",
 	"gpt-5.5-pro",
 	"gpt-5.4-pro",
@@ -26,11 +28,11 @@ var OpenAIExtandingCacheModels = []string{
 
 const (
 	// RealtimeOpenAIModel фиксированная realtime-модель OpenAI
-	RealtimeOpenAIModel = "gpt-realtime-mini"
+	//RealtimeOpenAIModel = "gpt-realtime-mini"
 	//RealtimeOpenAIModel = "gpt-realtime"
 
 	// RealtimeGoogleModel — Live-модель для Google Live API (AI Studio).
-	RealtimeGoogleModel = "gemini-3.1-flash-live-preview"
+	//RealtimeGoogleModel = "gemini-3.1-flash-live-preview"
 
 	// RealtimeOpenAIURL базовый WebSocket URL для OpenAI Realtime API
 	RealtimeOpenAIURL = "wss://api.openai.com/v1/realtime"
@@ -118,6 +120,43 @@ func (p ProviderType) IsValid() bool {
 	return false
 }
 
+// ModelType Поддерживаемый режим работы модели
+type ModelType uint8
+
+const (
+	General  ModelType = 1 // Модель общего назначения например GPT
+	RealTime ModelType = 2 // Модель может работу с голосом в режиме RealTime
+)
+
+func (m ModelType) IsRealtime() bool {
+	switch m {
+	case General:
+		return false
+	case RealTime:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m ModelType) IsGeneral() bool {
+	switch m {
+	case General:
+		return true
+	case RealTime:
+		return false
+	default:
+		return false
+	}
+}
+
+type DefaultProvidersModels struct {
+	GeneralModelID    uint
+	GeneralModelName  string
+	RealTimeModelID   uint
+	RealTimeModelName string
+}
+
 // ProviderModelUserChange описывает пользователя, который использовал удалённую модель провайдера.
 type ProviderModelUserChange struct {
 	UserID    uint32 `json:"user_id"`
@@ -144,7 +183,7 @@ type DB interface {
 	// SyncProviderModels синхронизирует каталог моделей провайдера с уже полученным списком моделей.
 	// При удалении неподдерживаемой модели из провайдера она удаляется из gpt_models и
 	// очищает ссылку в user_models (GptModelId = NULL), чтобы пользователь мог выбрать другую.
-	SyncProviderModels(provider ProviderType, modelNames []string) (ProviderModelsSyncResult, error)
+	SyncProviderModels(provider ProviderType, modelType ModelType, modelNames []string) (ProviderModelsSyncResult, error)
 
 	// SaveUserModel сохраняет модель в user_gpt и создает связь в user_models (всё в одной транзакции)
 	// Автоматически определяет IsActive (первая модель пользователя становится активной)
@@ -241,6 +280,7 @@ type UserModelRecord struct {
 	IsActive bool         `json:"is_active"`
 	AssistId string       `json:"assist_id"`
 	GptType  *GptType     `json:"gpttype"`
+	Realtime *Realtime    `json:"realtime"`
 	FileIds  []Ids        `json:"file_ids"`
 	AllIds   []byte       `json:"all_ids"` // Raw JSON с FileIds и VectorId из БД
 }
@@ -379,7 +419,14 @@ func (m *UniversalModel) DeleteUserAPIKey(userID uint32, provider ProviderType) 
 	return m.db.DeleteUserAPIKey(userID, provider)
 }
 
+// General models (GPT)
 type GptType struct {
+	Name string `json:"name"`
+	ID   uint   `json:"id"`
+}
+
+// RealTime models
+type Realtime struct {
 	Name string `json:"name"`
 	ID   uint   `json:"id"`
 }
