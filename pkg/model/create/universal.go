@@ -150,6 +150,18 @@ func (m ModelType) IsGeneral() bool {
 	}
 }
 
+// ModelTypeFromString преобразует строку в ModelType
+func ModelTypeFromString(s string) (ModelType, error) {
+	switch s {
+	case "general":
+		return General, nil
+	case "realtime":
+		return RealTime, nil
+	default:
+		return 0, fmt.Errorf("неизвестный тип модели: %s", s)
+	}
+}
+
 type DefaultProvidersModels struct {
 	GeneralModelID    uint
 	GeneralModelName  string

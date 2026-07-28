@@ -479,11 +479,14 @@ func (r *Router) CleanUp() {
 func (r *Router) CreateModel(
 	userID uint32,
 	provider create.ProviderType,
-	modelType create.ModelType,
 	modelData *create.UniversalModelData,
 	fileIDs []create.Ids,
 ) (create.UMCR, error) {
-	go r.syncProviderModelsCatalog(userID, provider, modelType)
+	if modelData.Realtime {
+		go r.syncProviderModelsCatalog(userID, provider, create.RealTime)
+	} else {
+		go r.syncProviderModelsCatalog(userID, provider, create.General)
+	}
 
 	if _, err := r.getModel(provider); err != nil {
 		return create.UMCR{}, err
