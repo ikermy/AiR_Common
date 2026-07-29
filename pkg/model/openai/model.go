@@ -910,9 +910,10 @@ func (m *Model) saveAllContextsGracefullyCtx(_ context.Context) error {
 	return nil
 }
 
-func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, modelType create.ModelType, apiKey string) error {
-	if provider != create.ProviderOpenAI {
-		return fmt.Errorf("неверный провайдер для OpenAI модели: %s", provider)
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, union create.Union, apiKey string) ([]create.ProviderModel, error) {
+	if union.Provider != create.ProviderOpenAI {
+		return nil, fmt.Errorf("неверный провайдер для OpenAI модели: %s", union.Provider)
 	}
-	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderOpenAI, modelType, apiKey)
+	res, err := provider_catalog.SyncProviderModels(ctx, m.db, union, apiKey)
+	return res.Models, err
 }

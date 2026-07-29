@@ -483,9 +483,15 @@ func (r *Router) CreateModel(
 	fileIDs []create.Ids,
 ) (create.UMCR, error) {
 	if modelData.Realtime {
-		go r.syncProviderModelsCatalog(userID, provider, create.RealTime)
+		go r.syncProviderModelsCatalog(userID, create.Union{
+			Provider:  provider,
+			ModelType: create.RealTime,
+		})
 	} else {
-		go r.syncProviderModelsCatalog(userID, provider, create.General)
+		go r.syncProviderModelsCatalog(userID, create.Union{
+			Provider:  provider,
+			ModelType: create.General,
+		})
 	}
 
 	if _, err := r.getModel(provider); err != nil {
@@ -503,12 +509,12 @@ func (r *Router) CreateModel(
 	return umcr, nil
 }
 
-func (r *Router) syncProviderModelsCatalog(userID uint32, provider create.ProviderType, modelType create.ModelType) {
-	if r.db == nil || !provider.IsValid() {
+func (r *Router) syncProviderModelsCatalog(userID uint32, union create.Union) {
+	if r.db == nil || !union.Provider.IsValid() {
 		return
 	}
 
-	apiKey, err := r.db.GetUserAPIKey(userID, provider)
+	apiKey, err := r.db.GetUserAPIKey(userID, union.Provider)
 	if err != nil {
 		return
 	}
@@ -521,16 +527,16 @@ func (r *Router) syncProviderModelsCatalog(userID uint32, provider create.Provid
 	defer cancel()
 
 	client := provider_catalog.NewClient()
-	modelNames, err := client.FetchModelNames(syncCtx, provider, modelType, apiKey)
+	modelNames, err := client.FetchModelNames(syncCtx, union, apiKey)
 	if err != nil {
 		return
 	}
 
 	var result create.ProviderModelsSyncResult
-	if !modelType.IsGeneral() && !modelType.IsRealtime() {
+	if !union.ModelType.IsGeneral() && !union.ModelType.IsRealtime() {
 		return
 	}
-	result, err = r.db.SyncProviderModels(provider, modelType, modelNames)
+	result, err = r.db.SyncProviderModels(union, modelNames)
 	if err != nil {
 		return
 	}
@@ -544,7 +550,7 @@ func (r *Router) syncProviderModelsCatalog(userID uint32, provider create.Provid
 		case mode.CarpinteroCh <- com.CarpCh{
 			Event:      "model-removed",
 			UserID:     affectedUser.UserID,
-			Target:     provider.String(),
+			Target:     union.Provider.String(),
 			AssistName: affectedUser.ModelName,
 		}:
 		default:
@@ -555,12 +561,12 @@ func (r *Router) syncProviderModelsCatalog(userID uint32, provider create.Provid
 	return
 }
 
-func (r *Router) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, modelType create.ModelType, apiKey string) error {
-	m, err := r.getModel(provider)
+func (r *Router) UpdateModelsListByProvider(ctx context.Context, union create.Union, apiKey string) ([]create.ProviderModel, error) {
+	m, err := r.getModel(union.Provider)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return m.UpdateModelsListByProvider(ctx, provider, modelType, apiKey)
+	return m.UpdateModelsListByProvider(ctx, union, apiKey)
 }
 
 // UploadFileToProvider загружает файл в указанный провайдер (только Mistral)

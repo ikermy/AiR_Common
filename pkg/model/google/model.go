@@ -93,7 +93,7 @@ type GoogleAgentConfig struct {
 
 	// Голосовой режим реального времени (Google Multimodal Live API)
 	RealtimeEnabled bool                `json:"realtime_enabled"`       // Голосовой режим включён
-	RealtimeModel   string              `json:"realtime_model"`         // Имя realtime-модели (gemini-2.0-flash-lite)
+	RealtimeModel   string              `json:"realtime_model"`         // Имя realtime-модели (gemini-2.0-flash-lite...)
 	RealtimeVAD     *create.RealtimeVAD `json:"realtime_vad,omitempty"` // Параметры VAD и голоса
 }
 
@@ -889,9 +889,10 @@ func (m *Model) DisconnectUser(userID uint32) {
 	})
 }
 
-func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, modelType create.ModelType, apiKey string) error {
-	if provider != create.ProviderGoogle {
-		return fmt.Errorf("неверный провайдер для Google модели: %s", provider.String())
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, union create.Union, apiKey string) ([]create.ProviderModel, error) {
+	if union.Provider != create.ProviderGoogle {
+		return nil, fmt.Errorf("неверный провайдер для Google модели: %s", union.Provider.String())
 	}
-	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderGoogle, modelType, apiKey)
+	res, err := provider_catalog.SyncProviderModels(ctx, m.db, union, apiKey)
+	return res.Models, err
 }

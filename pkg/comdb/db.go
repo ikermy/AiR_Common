@@ -42,7 +42,7 @@ type Exterior interface {
 	GetUserVectorStorage(userID uint32) (string, error)
 	SetChannelEnabled(userID uint32, chName string, status bool) error
 	SaveUserModel(userID uint32, provider create.ProviderType, name, assistantId string, data []byte, def create.DefaultProvidersModels, ids json.RawMessage, operator bool) error
-	SyncProviderModels(provider create.ProviderType, modelType create.ModelType, modelNames []string) (create.ProviderModelsSyncResult, error)
+	SyncProviderModels(union create.Union, modelNames []string) (create.ProviderModelsSyncResult, error)
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
 	ReadUserModel(userID uint32) ([]byte, *create.VecIds, error)
 	SetUserSubscriptionNotified(user uint32) error
@@ -2412,10 +2412,10 @@ func (d *DB) SetUserSubscriptionNotified(user uint32) error {
 // SyncProviderModels синхронизирует каталог моделей провайдера с уже полученным списком моделей в зависимости от типа модели.
 // При удалении неподдерживаемой модели из провайдера она удаляется из gpt_models и realtime_models
 // очищает ссылку в user_models (GptModelId = NULL), чтобы пользователь мог выбрать другую.
-func (d *DB) SyncProviderModels(provider create.ProviderType, modelType create.ModelType, modelNames []string) (create.ProviderModelsSyncResult, error) {
-	result := create.ProviderModelsSyncResult{Provider: provider}
-	if !provider.IsValid() {
-		return result, fmt.Errorf("некорректный provider: %d", provider)
+func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create.ProviderModelsSyncResult, error) {
+	result := create.ProviderModelsSyncResult{Provider: union.Provider}
+	if !union.Provider.IsValid() {
+		return result, fmt.Errorf("некорректный provider: %d", union.Provider)
 	}
 
 	ctx, cancel := context.WithTimeout(d.Context(), sqlTimeToCancel*time.Second)
@@ -2424,14 +2424,14 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelType create.M
 	var tableName string
 	var userModelColumn string
 	switch {
-	case modelType.IsGeneral():
+	case union.ModelType.IsGeneral():
 		tableName = "gpt_models"
 		userModelColumn = "Model"
-	case modelType.IsRealtime():
+	case union.ModelType.IsRealtime():
 		tableName = "realtime_models"
 		userModelColumn = "Realtime"
 	default:
-		return result, fmt.Errorf("некорректный тип модели: %d", modelType)
+		return result, fmt.Errorf("некорректный тип модели: %d", union.ModelType)
 	}
 
 	normalizedNames := make([]string, 0, len(modelNames))
@@ -2461,14 +2461,14 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelType create.M
 			FROM %s
 			WHERE Provider = ? AND Name = ?
 			LIMIT 1
-		`, tableName), provider, name).Scan(&existingID)
+		`, tableName), union.Provider, name).Scan(&existingID)
 		switch {
 		case err == nil:
 		case errors.Is(err, sql.ErrNoRows):
 			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`
 				INSERT INTO %s (Provider, IsDefault, Name)
 				VALUES (?, ?, ?)
-			`, tableName), provider, 0, name); err != nil {
+			`, tableName), union.Provider, 0, name); err != nil {
 				return result, fmt.Errorf("ошибка сохранения модели %s: %w", name, err)
 			}
 		default:
@@ -2477,7 +2477,7 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelType create.M
 		result.Synced++
 	}
 
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT Id, Name FROM %s WHERE Provider = ?`, tableName), provider)
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT Id, Name FROM %s WHERE Provider = ?`, tableName), union.Provider)
 	if err != nil {
 		return result, fmt.Errorf("ошибка получения текущего списка моделей: %w", err)
 	}
@@ -2522,7 +2522,7 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelType create.M
 			FROM user_models um
 			JOIN user_gpt ug ON ug.Id = um.ModelId
 			WHERE ug.Provider = ? AND ug.%s = ?
-		`, userModelColumn), provider, stale.id)
+		`, userModelColumn), union.Provider, stale.id)
 		if err != nil {
 			return result, fmt.Errorf("ошибка получения пользователей, использующих удалённую модель %s: %w", stale.name, err)
 		}
@@ -2540,7 +2540,7 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelType create.M
 			SELECT Id FROM %s
 			WHERE Provider = ? AND IsDefault = 1 AND Id <> ?
 			LIMIT 1
-		`, tableName), provider, stale.id).Scan(&replacementID)
+		`, tableName), union.Provider, stale.id).Scan(&replacementID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return result, fmt.Errorf("невозможно удалить модель %s: отсутствует модель по умолчанию для замены", stale.name)
 		}
@@ -2552,7 +2552,7 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelType create.M
 			UPDATE user_gpt
 			SET %s = ?, AssistantId = ''
 			WHERE Provider = ? AND %s = ?
-		`, userModelColumn, userModelColumn), replacementID, provider, stale.id); err != nil {
+		`, userModelColumn, userModelColumn), replacementID, union.Provider, stale.id); err != nil {
 			return result, fmt.Errorf("ошибка переназначения пользователей с модели %s: %w", stale.name, err)
 		}
 
@@ -2570,6 +2570,32 @@ func (d *DB) SyncProviderModels(provider create.ProviderType, modelType create.M
 				ModelName: stale.name,
 			})
 		}
+	}
+
+	// Читаем фактический список после синхронизации в рамках той же транзакции.
+	modelRows, err := tx.QueryContext(ctx, fmt.Sprintf(
+		`SELECT Id, Name FROM %s WHERE Provider = ? ORDER BY Name`, tableName), union.Provider)
+	if err != nil {
+		return result, fmt.Errorf("ошибка получения актуального списка моделей: %w", err)
+	}
+	for modelRows.Next() {
+		var modelID uint64
+		var modelName string
+		if err := modelRows.Scan(&modelID, &modelName); err != nil {
+			_ = modelRows.Close()
+			return result, fmt.Errorf("ошибка чтения актуального списка моделей: %w", err)
+		}
+		result.Models = append(result.Models, create.ProviderModel{
+			ID:   modelID,
+			Name: strings.TrimSpace(modelName),
+		})
+	}
+	if err := modelRows.Err(); err != nil {
+		_ = modelRows.Close()
+		return result, fmt.Errorf("ошибка итерации актуального списка моделей: %w", err)
+	}
+	if err := modelRows.Close(); err != nil {
+		return result, fmt.Errorf("ошибка закрытия актуального списка моделей: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {

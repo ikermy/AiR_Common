@@ -24,34 +24,34 @@ func NewClient() *Client {
 }
 
 type Syncer interface {
-	SyncProviderModels(provider create.ProviderType, modelType create.ModelType, modelNames []string) (create.ProviderModelsSyncResult, error)
+	SyncProviderModels(union create.Union, modelNames []string) (create.ProviderModelsSyncResult, error)
 }
 
-func SyncProviderModels(ctx context.Context, syncer Syncer, provider create.ProviderType, modelType create.ModelType, apiKey string) error {
+func SyncProviderModels(ctx context.Context, syncer Syncer, union create.Union, apiKey string) (create.ProviderModelsSyncResult, error) {
+	result := create.ProviderModelsSyncResult{Provider: union.Provider}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	client := NewClient()
-	modelNames, err := client.FetchModelNames(ctx, provider, modelType, apiKey)
+	modelNames, err := client.FetchModelNames(ctx, union, apiKey)
 	if err != nil {
-		return fmt.Errorf("не удалось получить каталог моделей провайдера %s: %w", provider, err)
+		return result, fmt.Errorf("не удалось получить каталог моделей провайдера %s: %w", union.Provider, err)
 	}
 
-	if modelType.IsGeneral() || modelType.IsRealtime() {
-		_, err = syncer.SyncProviderModels(provider, modelType, modelNames)
+	if union.ModelType.IsGeneral() || union.ModelType.IsRealtime() {
+		result, err = syncer.SyncProviderModels(union, modelNames)
 	}
 	if err != nil {
-		return fmt.Errorf("не удалось синхронизировать каталог моделей провайдера %s: %w", provider, err)
+		return result, fmt.Errorf("не удалось синхронизировать каталог моделей провайдера %s: %w", union.Provider, err)
 	}
-	return nil
+	return result, nil
 }
 
 // FetchModelNames получает актуальный список моделей провайдера из внешнего API.
 func (c *Client) FetchModelNames(
 	ctx context.Context,
-	provider create.ProviderType,
-	modelType create.ModelType,
+	union create.Union,
 	apiKey string,
 ) ([]string, error) {
 	if ctx == nil {
@@ -63,43 +63,43 @@ func (c *Client) FetchModelNames(
 		client = NewClient()
 	}
 
-	if !provider.IsValid() {
-		return nil, fmt.Errorf("некорректный provider: %d", provider)
+	if !union.Provider.IsValid() {
+		return nil, fmt.Errorf("некорректный provider: %d", union.Provider)
 	}
 	if strings.TrimSpace(apiKey) == "" {
-		return nil, fmt.Errorf("пустой API-ключ для провайдера %s", provider.String())
+		return nil, fmt.Errorf("пустой API-ключ для провайдера %s", union.Provider.String())
 	}
 
-	switch provider {
+	switch union.Provider {
 	case create.ProviderOpenAI:
 		switch {
-		case modelType.IsGeneral():
+		case union.ModelType.IsGeneral():
 			return client.generalOpenAIModels(ctx, apiKey)
-		case modelType.IsRealtime():
+		case union.ModelType.IsRealtime():
 			return client.realtimeOpenAIModels(ctx, apiKey)
 		default:
 			return client.fetchOpenAIModels(ctx, apiKey)
 		}
 	case create.ProviderMistral:
 		switch {
-		case modelType.IsGeneral():
+		case union.ModelType.IsGeneral():
 			return client.generalMistralModels(ctx, apiKey)
-		case modelType.IsRealtime():
+		case union.ModelType.IsRealtime():
 			return client.realtimeMistralModels(ctx, apiKey)
 		default:
 			return client.fetchMistralModels(ctx, apiKey)
 		}
 	case create.ProviderGoogle:
 		switch {
-		case modelType.IsGeneral():
+		case union.ModelType.IsGeneral():
 			return client.generalGoogleModels(ctx, apiKey)
-		case modelType.IsRealtime():
+		case union.ModelType.IsRealtime():
 			return client.realtimeGoogleModels()
 		default:
 			return client.fetchGoogleModels(ctx, apiKey)
 		}
 	default:
-		return nil, fmt.Errorf("неподдерживаемый провайдер: %s", provider.String())
+		return nil, fmt.Errorf("неподдерживаемый провайдер: %s", union.Provider.String())
 	}
 }
 

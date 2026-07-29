@@ -27,13 +27,6 @@ var OpenAIExtandingCacheModels = []string{
 }
 
 const (
-	// RealtimeOpenAIModel фиксированная realtime-модель OpenAI
-	//RealtimeOpenAIModel = "gpt-realtime-mini"
-	//RealtimeOpenAIModel = "gpt-realtime"
-
-	// RealtimeGoogleModel — Live-модель для Google Live API (AI Studio).
-	//RealtimeGoogleModel = "gemini-3.1-flash-live-preview"
-
 	// RealtimeOpenAIURL базовый WebSocket URL для OpenAI Realtime API
 	RealtimeOpenAIURL = "wss://api.openai.com/v1/realtime"
 
@@ -162,6 +155,11 @@ func ModelTypeFromString(s string) (ModelType, error) {
 	}
 }
 
+type Union struct {
+	Provider  ProviderType
+	ModelType ModelType
+}
+
 type DefaultProvidersModels struct {
 	GeneralModelID    uint
 	GeneralModelName  string
@@ -176,9 +174,16 @@ type ProviderModelUserChange struct {
 	ModelName string `json:"model_name,omitempty"`
 }
 
+// ProviderModel описывает модель провайдера в каталоге.
+type ProviderModel struct {
+	ID   uint64 `json:"Id"`
+	Name string `json:"Name"`
+}
+
 // ProviderModelsSyncResult содержит результат синхронизации каталога моделей провайдера.
 type ProviderModelsSyncResult struct {
 	Provider      ProviderType              `json:"provider"`
+	Models        []ProviderModel           `json:"models,omitempty"`
 	Synced        int                       `json:"synced"`
 	Removed       int                       `json:"removed"`
 	ClearedUsers  int                       `json:"cleared_users"`
@@ -195,7 +200,7 @@ type DB interface {
 	// SyncProviderModels синхронизирует каталог моделей провайдера с уже полученным списком моделей.
 	// При удалении неподдерживаемой модели из провайдера она удаляется из gpt_models и
 	// очищает ссылку в user_models (GptModelId = NULL), чтобы пользователь мог выбрать другую.
-	SyncProviderModels(provider ProviderType, modelType ModelType, modelNames []string) (ProviderModelsSyncResult, error)
+	SyncProviderModels(union Union, modelNames []string) (ProviderModelsSyncResult, error)
 
 	// SaveUserModel сохраняет модель в user_gpt и создает связь в user_models (всё в одной транзакции)
 	// Автоматически определяет IsActive (первая модель пользователя становится активной)
@@ -485,9 +490,9 @@ type UniversalModelData struct {
 	// Используется MCP-сервером. Провайдеры получают инструменты только через FetchToolsList.
 	GOAuth GOAuth `json:"g_oauth"`
 	//////////////////////////////////
-	Espero       EsperoConfig  `json:"espero"` // Настройки ожидания из ModelDataRequest.Espero
-	UseModelName *UseModelName `json:"use_model_name"`
-	Provider     ProviderType  `json:"provider"` // "openai=1", "mistral=2..."
+	Espero       EsperoConfig  `json:"espero"`         // Настройки ожидания из ModelDataRequest.Espero
+	UseModelName *UseModelName `json:"use_model_name"` // Хранит параметры name и id моделей general и realtime
+	Provider     ProviderType  `json:"provider"`       // "openai=1", "mistral=2..."
 }
 
 // RealtimeVAD универсальные параметры голосовой активности (VAD) и генерации.
@@ -582,26 +587,41 @@ func (m *UniversalModel) CreateModel(userID uint32, provider ProviderType, model
 // Работает для любого провайдера (OpenAI, Mistral..)
 // Автоматически устанавливает модель как активную если это первая модель пользователя
 func (m *UniversalModel) SaveModel(userID uint32, umcr UMCR, data *UniversalModelData) error {
-	if data == nil || data.UseModelName == nil {
+	if data == nil {
 		return fmt.Errorf("не указана модель провайдера")
+	}
+	if data.UseModelName == nil {
+		data.UseModelName = &UseModelName{}
+	}
+
+	// При частичном обновлении клиент может прислать только часть UseModelName.
+	// Восстанавливаем отсутствующие ссылки на модели из актуальных данных БД.
+	if data.UseModelName.GptType == nil || data.UseModelName.GptType.ID == 0 || data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0 {
+		existingModels, lookupErr := m.db.GetAllUserModels(userID)
+		if lookupErr == nil {
+			for _, existing := range existingModels {
+				if existing.Provider != umcr.Provider {
+					continue
+				}
+				if (data.UseModelName.GptType == nil || data.UseModelName.GptType.ID == 0) && existing.GptType != nil && existing.GptType.ID != 0 {
+					data.UseModelName.GptType = existing.GptType
+				}
+				if (data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0) && existing.Realtime != nil && existing.Realtime.ID != 0 {
+					data.UseModelName.Realtime = existing.Realtime
+				}
+				break
+			}
+		}
 	}
 
 	// При обновлении конфигурации клиент может прислать только имя модели.
 	// Model в user_gpt — это FK на gpt_models.Id, поэтому нельзя сохранять ID=0.
 	// Восстанавливаем ID из уже существующей записи для любого провайдера.
-	if data.UseModelName.GptType.ID == 0 {
-		existingModels, lookupErr := m.db.GetAllUserModels(userID)
-		if lookupErr == nil {
-			for _, existing := range existingModels {
-				if existing.Provider == umcr.Provider && existing.GptType != nil && existing.GptType.ID != 0 {
-					data.UseModelName.GptType.ID = existing.GptType.ID
-					break
-				}
-			}
-		}
-	}
-	if data.UseModelName.GptType.ID == 0 {
+	if data.UseModelName.GptType == nil || data.UseModelName.GptType.ID == 0 {
 		return fmt.Errorf("не указан корректный ID модели gpt_models для провайдера %s", umcr.Provider)
+	}
+	if data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0 {
+		return fmt.Errorf("не указан корректный ID realtime-модели для провайдера %s", umcr.Provider)
 	}
 
 	// Сериализуем данные модели в JSON
@@ -689,6 +709,7 @@ func (m *UniversalModel) ReadModel(userID uint32, provider *ProviderType) (*Univ
 
 	// Устанавливаем провайдера и AssistantId из БД
 	modelData.Provider = record.Provider
+	modelData.UseModelName = &UseModelName{GptType: record.GptType, Realtime: record.Realtime}
 
 	//logger.Debug("Модель успешно загружена (Provider: %s, Name: %s, IsActive: %v)",
 	//	modelData.Provider, modelData.Name, record.IsActive, userID)
@@ -888,6 +909,7 @@ func (m *UniversalModel) UpdateModelEveryWhere(userID uint32, data *UniversalMod
 
 	// Устанавливаем провайдера из БД (он не хранится в Data)
 	existing.Provider = provider
+	existing.UseModelName = &UseModelName{GptType: record.GptType, Realtime: record.Realtime}
 
 	// Проверяем, что провайдер не изменился
 	if data.Provider != existing.Provider {
@@ -948,6 +970,7 @@ func (m *UniversalModel) GetUserModels(userID uint32) ([]UniversalModelData, err
 
 		// Обновляем провайдера и AssistantId из БД
 		modelData.Provider = record.Provider
+		modelData.UseModelName = &UseModelName{GptType: record.GptType, Realtime: record.Realtime}
 		models = append(models, *modelData)
 	}
 
@@ -992,6 +1015,12 @@ func (m *UniversalModel) GetAllUserModelsResponse(userID uint32) (*UserModelsRes
 		}
 		// Устанавливаем провайдера из user_models
 		modelData.Provider = record.Provider
+		// Имена и ID моделей берём из каталогов моделей БД, а не из сжатого JSON.
+		// Это гарантирует актуальные значения после синхронизации каталогов.
+		modelData.UseModelName = &UseModelName{
+			GptType:  record.GptType,
+			Realtime: record.Realtime,
+		}
 
 		// Сохраняем активный провайдер
 		if record.IsActive {
@@ -1039,6 +1068,7 @@ func (m *UniversalModel) GetActiveUserModel(userID uint32) (*UniversalModelData,
 
 	// Устанавливаем провайдера и AssistantId из БД
 	modelData.Provider = record.Provider
+	modelData.UseModelName = &UseModelName{GptType: record.GptType, Realtime: record.Realtime}
 
 	//logger.Debug("Загружена активная модель (Provider: %s, Name: %s)",
 	//	modelData.Provider, modelData.Name, userID)
@@ -1075,6 +1105,7 @@ func (m *UniversalModel) GetUserModelByProvider(userID uint32, provider Provider
 
 	// Устанавливаем провайдера и AssistantId из БД
 	modelData.Provider = record.Provider
+	modelData.UseModelName = &UseModelName{GptType: record.GptType, Realtime: record.Realtime}
 
 	//logger.Debug("Загружена модель провайдера %s (ID: %d)",
 	//	provider, modelData.Provider, userID)

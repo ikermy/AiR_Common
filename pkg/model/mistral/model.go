@@ -682,9 +682,10 @@ func (m *Model) DisconnectUser(userID uint32) {
 	})
 }
 
-func (m *Model) UpdateModelsListByProvider(ctx context.Context, provider create.ProviderType, modelType create.ModelType, apiKey string) error {
-	if provider != create.ProviderMistral {
-		return fmt.Errorf("неверный провайдер для Mistral модели: %s", provider.String())
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, union create.Union, apiKey string) ([]create.ProviderModel, error) {
+	if union.Provider != create.ProviderMistral {
+		return nil, fmt.Errorf("неверный провайдер для Mistral модели: %s", union.Provider.String())
 	}
-	return provider_catalog.SyncProviderModels(ctx, m.db, create.ProviderMistral, modelType, apiKey)
+	res, err := provider_catalog.SyncProviderModels(ctx, m.db, union, apiKey)
+	return res.Models, err
 }

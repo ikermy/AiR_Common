@@ -1,5 +1,5 @@
 git add .
-git commit -m "v1.50.69"
-git tag -a v1.50.69 -m "fetch realtime models"
+git commit -m "v1.50.70"
+git tag -a v1.50.70 -m "fetch realtime models fix"
 git push origin master
-git push origin v1.50.69
+git push origin v1.50.70
