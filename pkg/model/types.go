@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // ============================================================================
@@ -37,7 +38,7 @@ type Assistant struct {
 	Events     Notifications
 	UserID     uint32
 	Limit      uint32
-	Provider   create.ProviderType
+	Provider   domain.ProviderType
 	Espero     uint8
 	Ignore     bool
 }

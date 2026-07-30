@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // ============================================================================
@@ -369,7 +370,7 @@ func normalizeLiveAPIToolKeys(tools []map[string]any) []map[string]any {
 func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 	cfg := rs.agentConfig
 	vad := cfg.RealtimeVAD             // может быть nil
-	var gvad *create.GoogleRealtimeVAD // Google-специфичный блок, может быть nil
+	var gvad *domain.GoogleRealtimeVAD // Google-специфичный блок, может быть nil
 	if vad != nil {
 		gvad = vad.Google
 	}

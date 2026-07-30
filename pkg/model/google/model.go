@@ -13,11 +13,12 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 	"github.com/ikermy/AiR_Common/pkg/model/provider_catalog"
 )
 
 type Inter interface {
-	UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata create.DocumentMetadata) (string, error)
+	UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata domain.DocumentMetadata) (string, error)
 }
 
 type DB = comdb.Exterior
@@ -94,7 +95,7 @@ type GoogleAgentConfig struct {
 	// Голосовой режим реального времени (Google Multimodal Live API)
 	RealtimeEnabled bool                `json:"realtime_enabled"`       // Голосовой режим включён
 	RealtimeModel   string              `json:"realtime_model"`         // Имя realtime-модели (gemini-2.0-flash-lite...)
-	RealtimeVAD     *create.RealtimeVAD `json:"realtime_vad,omitempty"` // Параметры VAD и голоса
+	RealtimeVAD     *domain.RealtimeVAD `json:"realtime_vad,omitempty"` // Параметры VAD и голоса
 }
 
 // DialogCache кэширует историю диалога в памяти для быстрого доступа
@@ -130,17 +131,17 @@ func New(parent context.Context, d DB, actionHandler model.ActionHandler) *Model
 	googleClient := create.NewGoogleAgentClient(ctx)
 
 	googleClient.SetKeyResolver(func(userID uint32) string {
-		if key, err := d.GetUserAPIKey(userID, create.ProviderGoogle); err == nil {
+		if key, err := d.GetUserAPIKey(userID, domain.ProviderGoogle); err == nil {
 			return key
 		}
 		return ""
 	})
 	if mcpProvider, ok := actionHandler.(model.MCPConfigProvider); ok {
 		googleClient.SetMCPConfigFetchers(
-			func(fetchCtx context.Context, userID uint32, provider create.ProviderType) (string, error) {
+			func(fetchCtx context.Context, userID uint32, provider domain.ProviderType) (string, error) {
 				return mcpProvider.FetchSystemPrompt(fetchCtx, userID, provider)
 			},
-			func(fetchCtx context.Context, userID uint32, provider create.ProviderType) ([]create.FunctionDeclaration, error) {
+			func(fetchCtx context.Context, userID uint32, provider domain.ProviderType) ([]create.FunctionDeclaration, error) {
 				mcpTools, err := mcpProvider.FetchToolsList(fetchCtx, userID, provider)
 				if err != nil {
 					return nil, err
@@ -229,7 +230,7 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	// Получаем API-ключ напрямую через DB: это обеспечивает правильную обработку $mk$-ключей —
 	// если MasterKey недоступен (Landing не ответил / пользователь не входил), ошибка и уведомление
 	// пропагируются явно, а не теряются внутри HasAPIKey.
-	apiKey, err := m.db.GetUserAPIKey(userID, create.ProviderGoogle)
+	apiKey, err := m.db.GetUserAPIKey(userID, domain.ProviderGoogle)
 	if err != nil {
 		return fmt.Errorf("ошибка получения Google API-ключа для пользователя %d: %w", userID, err)
 	}
@@ -244,9 +245,9 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	}
 
 	// Ищем активную модель Google
-	var found *create.UserModelRecord
+	var found *domain.UserModelRecord
 	for i := range userModels {
-		if userModels[i].Provider == create.ProviderGoogle {
+		if userModels[i].Provider == domain.ProviderGoogle {
 			found = &userModels[i]
 			break
 		}
@@ -266,7 +267,7 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	generalModelName := found.AssistId
 	if generalModelName == "" {
 		// AssistId не заполнен — берём модель по умолчанию из gpt_models (IsDefault=1)
-		defData, err := m.db.DefaultProvidersModels(create.ProviderGoogle.String())
+		defData, err := m.db.DefaultProvidersModels(domain.ProviderGoogle.String())
 		if err != nil {
 			return fmt.Errorf("имя модели Google не задано и получить модель по умолчанию не удалось: %w", err)
 		}
@@ -280,7 +281,7 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	}
 
 	// Загружаем полные данные модели из БД для получения всех параметров
-	compressedData, _, err := m.db.ReadUserModelByProvider(userID, create.ProviderGoogle)
+	compressedData, _, err := m.db.ReadUserModelByProvider(userID, domain.ProviderGoogle)
 	if err != nil {
 		//logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, userID)
 	} else if compressedData != nil {
@@ -293,7 +294,7 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 				// SystemInstruction: базовый prompt + hint от MCP, если он доступен.
 				promptText := modelData.Prompt
 				if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
-					if hint, fetchErr := mcpProvider.FetchSystemPrompt(m.ctx, userID, create.ProviderGoogle); fetchErr == nil && hint != "" {
+					if hint, fetchErr := mcpProvider.FetchSystemPrompt(m.ctx, userID, domain.ProviderGoogle); fetchErr == nil && hint != "" {
 						promptText = modelData.Prompt + "\n\n" + hint
 					}
 				}
@@ -339,7 +340,7 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	// Если MCP недоступен — function tools не добавляются (модель работает только с modelData.Prompt).
 	var functionDeclarations []map[string]any
 	if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
-		if mcpTools, fetchErr := mcpProvider.FetchToolsList(m.ctx, userID, create.ProviderGoogle); fetchErr == nil {
+		if mcpTools, fetchErr := mcpProvider.FetchToolsList(m.ctx, userID, domain.ProviderGoogle); fetchErr == nil {
 			for _, t := range mcpTools {
 				functionDeclarations = append(functionDeclarations, map[string]any{
 					"name":        t.Name,
@@ -373,7 +374,7 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	// Это важно для Google моделей, т.к. эмбеддинги хранятся в отдельной таблице
 	// ВАЖНО: Загружаем эмбеддинги ТОЛЬКО если флаг VSearch включен
 	if agentConfig.VSearch {
-		embeddings, err := m.db.ListModelEmbeddings(found.ModelId, create.ProviderGoogle)
+		embeddings, err := m.db.ListModelEmbeddings(found.ModelId, domain.ProviderGoogle)
 		if err != nil {
 			//logger.Warn("Ошибка получения эмбеддингов для modelId=%d: %v", found.ModelId, err, userID)
 		} else if len(embeddings) > 0 {
@@ -889,8 +890,8 @@ func (m *Model) DisconnectUser(userID uint32) {
 	})
 }
 
-func (m *Model) UpdateModelsListByProvider(ctx context.Context, union create.Union, apiKey string) ([]create.ProviderModel, error) {
-	if union.Provider != create.ProviderGoogle {
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, union domain.Union, apiKey string) ([]domain.ProviderModel, error) {
+	if union.Provider != domain.ProviderGoogle {
 		return nil, fmt.Errorf("неверный провайдер для Google модели: %s", union.Provider.String())
 	}
 	res, err := provider_catalog.SyncProviderModels(ctx, m.db, union, apiKey)

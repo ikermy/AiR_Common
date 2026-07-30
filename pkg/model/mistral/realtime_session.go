@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/model"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // STTTransport is implemented by a concrete Voxtral streaming adapter
@@ -46,7 +46,7 @@ type MistralRealtimeSession struct {
 	dialogID      uint64
 	respID        uint64
 	RealtimeModel string
-	Config        *create.MistralRealtimeVAD
+	Config        *domain.MistralRealtimeVAD
 
 	AudioIn       chan []byte
 	AudioOut      chan []byte

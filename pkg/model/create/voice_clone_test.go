@@ -2,20 +2,21 @@ package create
 
 import (
 	"encoding/json"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 	"testing"
 )
 
 func TestMistralVoiceCloneConfigValidate(t *testing.T) {
-	if err := (&MistralVoiceCloneConfig{Enabled: true}).Validate(); err == nil {
+	if err := (&domain.MistralVoiceCloneConfig{Enabled: true}).Validate(); err == nil {
 		t.Fatal("expected missing voice reference error")
 	}
-	if err := (&MistralVoiceCloneConfig{Enabled: true, ProfileID: "profile", ReferenceAudioID: "audio"}).Validate(); err == nil {
+	if err := (&domain.MistralVoiceCloneConfig{Enabled: true, ProfileID: "profile", ReferenceAudioID: "audio"}).Validate(); err == nil {
 		t.Fatal("expected mutually exclusive reference error")
 	}
-	if err := (&MistralVoiceCloneConfig{Enabled: true, ReferenceAudioID: "audio", ReferenceDurationMs: 1000}).Validate(); err == nil {
+	if err := (&domain.MistralVoiceCloneConfig{Enabled: true, ReferenceAudioID: "audio", ReferenceDurationMs: 1000}).Validate(); err == nil {
 		t.Fatal("expected duration validation error")
 	}
-	if err := (&MistralVoiceCloneConfig{Enabled: true, ReferenceAudioID: "audio", ReferenceDurationMs: 3000}).Validate(); err != nil {
+	if err := (&domain.MistralVoiceCloneConfig{Enabled: true, ReferenceAudioID: "audio", ReferenceDurationMs: 3000}).Validate(); err != nil {
 		t.Fatalf("valid config rejected: %v", err)
 	}
 }
@@ -24,14 +25,14 @@ func TestMistralRealtimeVoiceCloneJSONRoundTrip(t *testing.T) {
 	ttsModel := "voxtral-mini-tts-2603"
 	voiceID := "voice-123"
 	referenceID := "audio-456"
-	data := UniversalModelData{
+	data := domain.UniversalModelData{
 		Realtime: true,
-		RealtimeVAD: &RealtimeVAD{
-			Mistral: &MistralRealtimeVAD{
+		RealtimeVAD: &domain.RealtimeVAD{
+			Mistral: &domain.MistralRealtimeVAD{
 				TTSModel:         &ttsModel,
 				VoiceID:          &voiceID,
 				ReferenceAudioID: &referenceID,
-				VoiceClone: &MistralVoiceCloneConfig{
+				VoiceClone: &domain.MistralVoiceCloneConfig{
 					Enabled:             true,
 					ReferenceAudioID:    referenceID,
 					ReferenceFormat:     "wav",
@@ -44,7 +45,7 @@ func TestMistralRealtimeVoiceCloneJSONRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal() error: %v", err)
 	}
-	var decoded UniversalModelData
+	var decoded domain.UniversalModelData
 	if err := json.Unmarshal(b, &decoded); err != nil {
 		t.Fatalf("Unmarshal() error: %v", err)
 	}

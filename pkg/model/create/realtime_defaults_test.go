@@ -1,9 +1,10 @@
 package create
 
 import "testing"
+import "github.com/ikermy/AiR_Common/pkg/model/domain"
 
 func TestApplyRealtimeVADDefaultsMistral(t *testing.T) {
-	vad := applyRealtimeVADDefaults(&RealtimeVAD{Mistral: &MistralRealtimeVAD{}})
+	vad := applyRealtimeVADDefaults(&domain.RealtimeVAD{Mistral: &domain.MistralRealtimeVAD{}})
 	if vad.Mistral == nil || vad.Mistral.STTStream == nil || !*vad.Mistral.STTStream {
 		t.Fatal("Mistral STT stream should default to true")
 	}
@@ -18,7 +19,7 @@ func TestApplyRealtimeVADDefaultsMistral(t *testing.T) {
 func TestApplyRealtimeVADDefaultsPreservesMistralValues(t *testing.T) {
 	stream := false
 	format := "mp3"
-	vad := applyRealtimeVADDefaults(&RealtimeVAD{Mistral: &MistralRealtimeVAD{
+	vad := applyRealtimeVADDefaults(&domain.RealtimeVAD{Mistral: &domain.MistralRealtimeVAD{
 		STTStream:    &stream,
 		TTSStream:    &stream,
 		SpeechFormat: &format,

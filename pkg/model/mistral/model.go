@@ -18,6 +18,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 	"github.com/ikermy/AiR_Common/pkg/model/provider_catalog"
 )
 
@@ -36,6 +37,9 @@ type Model struct {
 	universalModel *create.UniversalModel // Для доступа к DecompressModelData
 	realtime       *RealtimeManager
 }
+
+var _ model.RealtimeProvider = (*Model)(nil)
+var _ model.MistralManager = (*Model)(nil)
 
 type DB comdb.Exterior
 
@@ -91,7 +95,7 @@ func New(parent context.Context, actionHandler model.ActionHandler, db DB, route
 
 	// Резолвер персональных ключей Mistral: возвращаем только ключ из БД или пустую строку.
 	mistralClient.SetKeyResolver(func(userID uint32) string {
-		if key, err := db.GetUserAPIKey(userID, create.ProviderMistral); err == nil {
+		if key, err := db.GetUserAPIKey(userID, domain.ProviderMistral); err == nil {
 			return key
 		}
 		return ""
@@ -117,7 +121,7 @@ func (m *Model) StartMistralRealtimeSession(userID uint32, dialogID, respID uint
 	if m == nil || m.realtime == nil {
 		return nil, fmt.Errorf("Mistral realtime manager is not initialized")
 	}
-	record, err := m.db.GetModelByProviderAnyStatus(userID, create.ProviderMistral)
+	record, err := m.db.GetModelByProviderAnyStatus(userID, domain.ProviderMistral)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения Mistral-модели для realtime: %w", err)
 	}
@@ -125,7 +129,7 @@ func (m *Model) StartMistralRealtimeSession(userID uint32, dialogID, respID uint
 		return nil, fmt.Errorf("realtime-модель Mistral не настроена для userID=%d", userID)
 	}
 	if m.universalModel != nil {
-		compressedData, vecIDs, readErr := m.db.ReadUserModelByProvider(userID, create.ProviderMistral)
+		compressedData, vecIDs, readErr := m.db.ReadUserModelByProvider(userID, domain.ProviderMistral)
 		if readErr != nil {
 			return nil, fmt.Errorf("ошибка чтения конфигурации Mistral realtime: %w", readErr)
 		}
@@ -422,6 +426,25 @@ func (m *Model) SetRealtimeDisconnectCallback(respID uint64, callback func(uint6
 	return m.SetMistralRealtimeDisconnectCallback(respID, callback)
 }
 
+func (m *Model) CreateVoice(userID uint32, request domain.CreateVoiceRequest) (domain.Voice, error) {
+	return m.client.CreateVoice(m.ctx, userID, request)
+}
+func (m *Model) ListVoices(userID uint32, limit, offset int, voiceType string) (domain.VoiceList, error) {
+	return m.client.ListVoices(m.ctx, userID, limit, offset, voiceType)
+}
+func (m *Model) GetVoice(userID uint32, voiceID string) (domain.Voice, error) {
+	return m.client.GetVoice(m.ctx, userID, voiceID)
+}
+func (m *Model) UpdateVoice(userID uint32, voiceID string, request domain.UpdateVoiceRequest) (domain.Voice, error) {
+	return m.client.UpdateVoice(m.ctx, userID, voiceID, request)
+}
+func (m *Model) DeleteVoice(userID uint32, voiceID string) (domain.Voice, error) {
+	return m.client.DeleteVoice(m.ctx, userID, voiceID)
+}
+func (m *Model) GetVoiceSample(userID uint32, voiceID string) (io.ReadCloser, string, error) {
+	return m.client.GetVoiceSample(m.ctx, userID, voiceID)
+}
+
 // NewAsRouterOption создаёт Mistral модель и возвращает её как опцию для ModelRouter
 // Использование: router := model.NewModelRouter(ctx, db, mistral.NewAsRouterOption())
 func NewAsRouterOption() model.RouterOption {
@@ -439,10 +462,10 @@ func NewAsRouterOption() model.RouterOption {
 		// Аналогично google/model.go: function declarations и prompt hint — только от MCP.
 		if mcpProvider, ok := model.ActionHandler(actionHandler).(model.MCPConfigProvider); ok {
 			universalModel.SetMistralMCPFetchers(
-				func(fetchCtx context.Context, userID uint32, provider create.ProviderType) (string, error) {
+				func(fetchCtx context.Context, userID uint32, provider domain.ProviderType) (string, error) {
 					return mcpProvider.FetchSystemPrompt(fetchCtx, userID, provider)
 				},
-				func(fetchCtx context.Context, userID uint32, provider create.ProviderType) ([]create.FunctionDeclaration, error) {
+				func(fetchCtx context.Context, userID uint32, provider domain.ProviderType) ([]create.FunctionDeclaration, error) {
 					mcpTools, err := mcpProvider.FetchToolsList(fetchCtx, userID, provider)
 					if err != nil {
 						return nil, err
@@ -520,7 +543,7 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 	// Проверяем наличие API-ключа для пользователя до создания респондента.
 	// Получаем ключ напрямую через DB: это обеспечивает правильную обработку $mk$-ключей —
 	// если MasterKey недоступен, ошибка и уведомление пропагируются явно, а не теряются в HasAPIKey.
-	apiKey, err := m.db.GetUserAPIKey(assist.UserID, create.ProviderMistral)
+	apiKey, err := m.db.GetUserAPIKey(assist.UserID, domain.ProviderMistral)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения Mistral API-ключа для пользователя %d: %w", assist.UserID, err)
 	}
@@ -550,7 +573,7 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 	// Локальный контекст используется ТОЛЬКО для сохранения в БД при выходе.
 
 	// Загружаем conversation_id из БД (если есть)
-	contextData, err := m.db.ReadContext(dialogID, create.ProviderMistral)
+	contextData, err := m.db.ReadContext(dialogID, domain.ProviderMistral)
 	if err != nil {
 		if strings.Contains(err.Error(), "получены пустые данные") {
 			//logger.Debug("Инициализация нового диалога %d", dialogID, assist.userID)
@@ -587,7 +610,7 @@ func (m *Model) GetOrSetRespGPT(assist model.Assistant, dialogID, respId uint64,
 	}
 
 	// Загружаем параметры модели из БД (включая Haunter)
-	compressedData, _, err := m.db.ReadUserModelByProvider(assist.UserID, create.ProviderMistral)
+	compressedData, _, err := m.db.ReadUserModelByProvider(assist.UserID, domain.ProviderMistral)
 	if err != nil {
 		//logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, assist.userID)
 	} else if compressedData != nil && m.universalModel != nil {
@@ -652,7 +675,7 @@ func (m *Model) SaveAllContextDuringExit() {
 				if err != nil {
 					//logger.Error("Ошибка сериализации conversation_id для dialogID %d: %v", dialogID, err)
 				} else {
-					err = m.db.SaveContext(dialogID, create.ProviderMistral, contextJSON)
+					err = m.db.SaveContext(dialogID, domain.ProviderMistral, contextJSON)
 					if err != nil {
 						//logger.Error("Ошибка сохранения conversation_id для dialogID %d: %v", dialogID, err)
 					}
@@ -706,7 +729,7 @@ func (m *Model) saveConversationId(dialogID uint64, conversationId string) {
 			return
 		}
 
-		err = m.db.SaveContext(dialogID, create.ProviderMistral, contextJSON)
+		err = m.db.SaveContext(dialogID, domain.ProviderMistral, contextJSON)
 		if err != nil {
 			//logger.Error("Ошибка удаления conversation_id для dialogID %d: %v", dialogID, err)
 		}
@@ -723,7 +746,7 @@ func (m *Model) saveConversationId(dialogID uint64, conversationId string) {
 		return
 	}
 
-	err = m.db.SaveContext(dialogID, create.ProviderMistral, contextJSON)
+	err = m.db.SaveContext(dialogID, domain.ProviderMistral, contextJSON)
 	if err != nil {
 		//logger.Error("Ошибка сохранения conversation_id для dialogID %d: %v", dialogID, err)
 	}
@@ -999,8 +1022,8 @@ func (m *Model) DisconnectUser(userID uint32) {
 	})
 }
 
-func (m *Model) UpdateModelsListByProvider(ctx context.Context, union create.Union, apiKey string) ([]create.ProviderModel, error) {
-	if union.Provider != create.ProviderMistral {
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, union domain.Union, apiKey string) ([]domain.ProviderModel, error) {
+	if union.Provider != domain.ProviderMistral {
 		return nil, fmt.Errorf("неверный провайдер для Mistral модели: %s", union.Provider.String())
 	}
 	res, err := provider_catalog.SyncProviderModels(ctx, m.db, union, apiKey)

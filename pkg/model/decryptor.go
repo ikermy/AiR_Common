@@ -9,7 +9,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/comdb"
 	"github.com/ikermy/AiR_Common/pkg/crypto"
 	"github.com/ikermy/AiR_Common/pkg/mode"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // MasterKeyProvider умеет получать пользовательский MasterKey от Landing-сервиса.
@@ -53,7 +53,7 @@ func WrapDBWithMasterKeyDecryption(ctx context.Context, db comdb.Exterior, mkPro
 //   - Ключ зашифрован $mk$ и mkProvider == nil → уведомление "reauth-userkey" + ErrMasterKeyUnavailable.
 //   - Ключ зашифрован $mk$ и GetUserMasterKey вернул ошибку (codes.Unavailable = ключ не в кэше,
 //     пользователь не входил с момента перезапуска Landing) → уведомление "reauth-userkey" + ErrMasterKeyUnavailable.
-func (d *masterKeyDecryptingDB) GetUserAPIKey(userID uint32, provider create.ProviderType) (string, error) {
+func (d *masterKeyDecryptingDB) GetUserAPIKey(userID uint32, provider domain.ProviderType) (string, error) {
 	key, err := d.Exterior.GetUserAPIKey(userID, provider)
 	if err != nil {
 		return "", err

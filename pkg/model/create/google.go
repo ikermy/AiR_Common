@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/mode"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // GoogleSchemaJSON - JSON Schema для структурированных ответов Gemini Agent
@@ -80,10 +81,10 @@ type GoogleAgentClient struct {
 }
 
 // GooglePromptHintFetcher опционально получает prompt hint от внешнего MCP-источника.
-type GooglePromptHintFetcher func(ctx context.Context, userID uint32, provider ProviderType) (string, error)
+type GooglePromptHintFetcher func(ctx context.Context, userID uint32, provider domain.ProviderType) (string, error)
 
 // GoogleFunctionDeclarationsFetcher опционально получает function declarations от внешнего MCP-источника.
-type GoogleFunctionDeclarationsFetcher func(ctx context.Context, userID uint32, provider ProviderType) ([]FunctionDeclaration, error)
+type GoogleFunctionDeclarationsFetcher func(ctx context.Context, userID uint32, provider domain.ProviderType) ([]FunctionDeclaration, error)
 
 // ============================================================================
 // TYPED STRUCTURES FOR FUNCTION DECLARATIONS
@@ -250,13 +251,13 @@ func executeGoogleAPIDeleteRequest(ctx context.Context, url string) error {
 }
 
 // createGoogleAgent создает нового Gemini агента с указанными параметрами
-func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, userID uint32, _ []Ids) (UMCR, error) {
+func (m *GoogleAgentClient) createGoogleAgent(modelData *domain.UniversalModelData, userID uint32, _ []domain.Ids) (domain.UMCR, error) {
 	if modelData == nil {
-		return UMCR{}, fmt.Errorf("modelData не может быть nil")
+		return domain.UMCR{}, fmt.Errorf("modelData не может быть nil")
 	}
 
 	if modelData.UseModelName == nil {
-		return UMCR{}, fmt.Errorf("modelData.UseModelName не может быть пустым")
+		return domain.UMCR{}, fmt.Errorf("modelData.UseModelName не может быть пустым")
 	}
 
 	// System prompt: базовый prompt + hint от MCP, если он доступен.
@@ -264,7 +265,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	// Локальный legacy builder удалён (MCP_MIGRATION.md раздел 14).
 	enhancedPrompt := modelData.Prompt
 	if m.promptFetcher != nil {
-		if hint, fetchErr := m.promptFetcher(m.ctx, userID, ProviderGoogle); fetchErr == nil && hint != "" {
+		if hint, fetchErr := m.promptFetcher(m.ctx, userID, domain.ProviderGoogle); fetchErr == nil && hint != "" {
 			enhancedPrompt = modelData.Prompt + "\n\n" + hint
 		}
 	}
@@ -301,7 +302,7 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 	// При недоступности MCP инструменты не добавляются (MCP_MIGRATION.md раздел 14).
 	var allFunctions []FunctionDeclaration
 	if m.toolsFetcher != nil {
-		if fetched, fetchErr := m.toolsFetcher(m.ctx, userID, ProviderGoogle); fetchErr == nil {
+		if fetched, fetchErr := m.toolsFetcher(m.ctx, userID, domain.ProviderGoogle); fetchErr == nil {
 			allFunctions = fetched
 		}
 	}
@@ -392,28 +393,28 @@ func (m *GoogleAgentClient) createGoogleAgent(modelData *UniversalModelData, use
 
 	responseBody, err := executeGoogleAPIRequest(m.ctx, testURL, testPayload)
 	if err != nil {
-		return UMCR{}, fmt.Errorf("ошибка API запроса: %v", err)
+		return domain.UMCR{}, fmt.Errorf("ошибка API запроса: %v", err)
 	}
 
 	// Проверяем, что ответ валидный
 	var response map[string]any
 	if err := json.Unmarshal(responseBody, &response); err != nil {
-		return UMCR{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
+		return domain.UMCR{}, fmt.Errorf("ошибка парсинга JSON: %v", err)
 	}
 
 	// Проверяем наличие candidates в ответе (признак успешной конфигурации)
 	if _, ok := response["candidates"]; !ok {
-		return UMCR{}, fmt.Errorf("модель не вернула candidates, возможно конфигурация некорректна: %s", string(responseBody))
+		return domain.UMCR{}, fmt.Errorf("модель не вернула candidates, возможно конфигурация некорректна: %s", string(responseBody))
 	}
 
-	// Для Google моделей AllIds всегда nil (пустое поле Ids в БД)
+	// Для Google моделей Alldomain.Ids всегда nil (пустое поле domain.Ids в БД)
 	// Конфигурация модели не сохраняется в БД, только имя модели в AssistID
 	// Эмбеддинги хранятся в отдельной таблице vector_embeddings
 
-	return UMCR{
+	return domain.UMCR{
 		AssistID: modelData.UseModelName.GptType.Name, // "просто имя модели например gemini-2.5-flash" фактически это легаси
-		AllIds:   nil,                                 // Для Google моделей Ids всегда пустой (NULL в БД)
-		Provider: ProviderGoogle,
+		AllIds:   nil,                                 // Для Google моделей domain.Ids всегда пустой (NULL в БД)
+		Provider: domain.ProviderGoogle,
 	}, nil
 }
 
@@ -827,7 +828,7 @@ func GenerateGoogleEmbedding(ctx context.Context, apiKey, text string) ([]float3
 }
 
 // updateGoogleModelInPlace обновляет модель google
-func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updated *UniversalModelData) error {
+func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updated *domain.UniversalModelData) error {
 	if m.googleClient == nil {
 		return fmt.Errorf("google клиент не инициализирован")
 	}
@@ -838,7 +839,7 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 		return fmt.Errorf("ошибка получения моделей пользователя: %w", err)
 	}
 
-	var existingModelData *UserModelRecord
+	var existingModelData *domain.UserModelRecord
 	for i := range allModels {
 		if allModels[i].Provider == existing.Provider {
 			existingModelData = &allModels[i]
@@ -873,14 +874,14 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 			//logger.Warn("Не удалось удалить эмбеддинги для modelId=%d: %v", modelId, err)
 		}
 
-		// Очищаем VectorIds (они всегда пустые для Google)
+		// Очищаем Vectordomain.Ids (они всегда пустые для Google)
 		updated.VecIds.VectorId = []string{}
-		updated.VecIds.FileIds = []Ids{}
+		updated.VecIds.FileIds = []domain.Ids{}
 	} else if updated.Search {
 		// Случай 2: VSearch включён - управляем эмбеддингами
 
 		// Проверяем, изменились ли файлы
-		filesChanged := !slices.EqualFunc(existing.FileIds, updated.FileIds, func(a, b Ids) bool {
+		filesChanged := !slices.EqualFunc(existing.FileIds, updated.FileIds, func(a, b domain.Ids) bool {
 			return a.ID == b.ID && a.Name == b.Name
 		})
 
@@ -896,7 +897,7 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 
 			// 2.2. Добавляем новые файлы как эмбеддинги в БД
 			if len(updated.FileIds) > 0 {
-				//logger.Debug("Добавляем %d новых файлов как эмбеддинги в БД для modelId=%d", len(updated.FileIds), modelId)
+				//logger.Debug("Добавляем %d новых файлов как эмбеддинги в БД для modelId=%d", len(updated.Filedomain.Ids), modelId)
 
 				// Добавляем каждый файл как документ с эмбеддингом в MariaDB
 				for idx, fileID := range updated.FileIds {
@@ -957,14 +958,14 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 
 					// Сохраняем в БД с привязкой к modelId
 					docID := fmt.Sprintf("doc_%d_%d", modelId, time.Now().UnixNano())
-					metadata := DocumentMetadata{
+					metadata := domain.DocumentMetadata{
 						Source:    "file_upload",
 						FileName:  docName,
 						FileID:    fileID.ID,
 						CreatedAt: time.Now().Format(time.RFC3339),
 					}
 
-					if err := m.db.SaveEmbedding(userID, modelId, ProviderGoogle, docID, docName, content, embedding, metadata); err != nil {
+					if err := m.db.SaveEmbedding(userID, modelId, domain.ProviderGoogle, docID, docName, content, embedding, metadata); err != nil {
 						//	logger.Warn("Не удалось сохранить эмбеддинг для файла %s: %v", docName, err)
 						//} else {
 						//	logger.Debug("Документ '%s' успешно добавлен в векторное хранилище БД для modelId=%d", docName, modelId)
@@ -974,7 +975,7 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 				// Обновляем VectorIds - всегда пустой (эмбеддинги привязаны к modelId в БД)
 				updated.VecIds.VectorId = []string{}
 			} else {
-				// Файлы удалены - очищаем VectorIds
+				// Файлы удалены - очищаем Vectordomain.Ids
 				updated.VecIds.VectorId = []string{}
 			}
 		} else {
@@ -986,7 +987,7 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 	} else {
 		// Случай 3: VSearch не был включён и не включается сейчас
 		// Сохраняем существующие FileIds если не изменились
-		if slices.EqualFunc(existing.FileIds, updated.FileIds, func(a, b Ids) bool {
+		if slices.EqualFunc(existing.FileIds, updated.FileIds, func(a, b domain.Ids) bool {
 			return a.ID == b.ID && a.Name == b.Name
 		}) {
 			updated.FileIds = existing.FileIds
@@ -1007,9 +1008,9 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 		updated.UseModelName = existing.UseModelName
 	}
 
-	// Формируем UMCR для сохранения в БД (без вызова API)
-	umcr := UMCR{
-		Provider: ProviderGoogle,
+	// Формируем domain.UMCR для сохранения в БД (без вызова API)
+	umcr := domain.UMCR{
+		Provider: domain.ProviderGoogle,
 		AssistID: assistId, // Сохраняем существующий assistId (название модели)
 		AllIds:   nil,      // AllIds не используется для Google (конфигурация в Data)
 	}
@@ -1023,7 +1024,7 @@ func (m *UniversalModel) updateGoogleModelInPlace(userID uint32, existing, updat
 }
 
 // deleteGoogleModel удаляет модель google
-func (m *UniversalModel) deleteGoogleModel(_ uint32, modelData *UserModelRecord, _ bool, progressCallback func(string)) error {
+func (m *UniversalModel) deleteGoogleModel(_ uint32, modelData *domain.UserModelRecord, _ bool, progressCallback func(string)) error {
 	if m.googleClient == nil {
 		return fmt.Errorf("google client not initialized")
 	}
@@ -1036,27 +1037,27 @@ func (m *UniversalModel) deleteGoogleModel(_ uint32, modelData *UserModelRecord,
 }
 
 // createGoogleModel создает модель Google — обёртка для парсинга JSON и делегирования клиенту
-// ПРИМЕЧАНИЕ: fileIDs игнорируются для Google моделей, так как Google API не хранит файлы.
+// ПРИМЕЧАНИЕ: filedomain.Ids игнорируются для Google моделей, так как Google API не хранит файлы.
 // Вместо этого документы загружаются как эмбеддинги в нашу БД через UploadDocumentWithEmbedding().
-func (m *UniversalModel) createGoogleModel(userID uint32, modelData *UniversalModelData, fileIDs []Ids) (UMCR, error) {
+func (m *UniversalModel) createGoogleModel(userID uint32, modelData *domain.UniversalModelData, fileIds []domain.Ids) (domain.UMCR, error) {
 	if m.googleClient == nil {
-		return UMCR{}, fmt.Errorf("google клиент не инициализирован")
+		return domain.UMCR{}, fmt.Errorf("google клиент не инициализирован")
 	}
 
 	if modelData == nil {
-		return UMCR{}, fmt.Errorf("modelData не может быть nil")
+		return domain.UMCR{}, fmt.Errorf("modelData не может быть nil")
 	}
 
 	if modelData.Prompt == "" {
-		return UMCR{}, fmt.Errorf("поле 'prompt' отсутствует или пустое")
+		return domain.UMCR{}, fmt.Errorf("поле 'prompt' отсутствует или пустое")
 	}
 
-	//logger.Debug("Создание Google модели: name=%s (fileIDs игнорируются)", modelData.Name, userID)
+	//logger.Debug("Создание Google модели: name=%s (fileIds игнорируются)", modelData.Name, userID)
 
 	// Делегируем создание клиенту
-	umcr, err := m.googleClient.createGoogleAgent(modelData, userID, fileIDs)
+	umcr, err := m.googleClient.createGoogleAgent(modelData, userID, fileIds)
 	if err != nil {
-		return UMCR{}, err
+		return domain.UMCR{}, err
 	}
 
 	return umcr, nil

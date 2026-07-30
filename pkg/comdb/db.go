@@ -17,7 +17,7 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/crypto"
 	"github.com/ikermy/AiR_Common/pkg/mode"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 	"golang.org/x/oauth2"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -34,37 +34,37 @@ type Exterior interface {
 	ReadDialog(dialogId uint64, limit ...uint8) (json.RawMessage, error)
 	DeleteDialog(userID uint32, dialogId uint64) error
 	UpdateDialogsMeta(dialogId uint64, meta string) error
-	ReadContext(dialogId uint64, provider create.ProviderType) (json.RawMessage, error)
-	SaveContext(threadId uint64, provider create.ProviderType, dialogContext json.RawMessage) error
-	GetActiveProvider(userID uint32) (create.ProviderType, error)
-	GetAllUserModels(userID uint32) ([]create.UserModelRecord, error)
+	ReadContext(dialogId uint64, provider domain.ProviderType) (json.RawMessage, error)
+	SaveContext(threadId uint64, provider domain.ProviderType, dialogContext json.RawMessage) error
+	GetActiveProvider(userID uint32) (domain.ProviderType, error)
+	GetAllUserModels(userID uint32) ([]domain.UserModelRecord, error)
 	UpdateUserGPT(userID uint32, modelId uint64, assistId string, allIds []byte) error
 	GetUserVectorStorage(userID uint32) (string, error)
 	SetChannelEnabled(userID uint32, chName string, status bool) error
-	SaveUserModel(userID uint32, provider create.ProviderType, name, assistantId string, data []byte, def create.DefaultProvidersModels, ids json.RawMessage, operator bool) error
-	SyncProviderModels(union create.Union, modelNames []string) (create.ProviderModelsSyncResult, error)
+	SaveUserModel(userID uint32, provider domain.ProviderType, name, assistantId string, data []byte, def domain.DefaultProvidersModels, ids json.RawMessage, operator bool) error
+	SyncProviderModels(union domain.Union, modelNames []string) (domain.ProviderModelsSyncResult, error)
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
-	ReadUserModel(userID uint32) ([]byte, *create.VecIds, error)
+	ReadUserModel(userID uint32) ([]byte, *domain.VecIds, error)
 	SetUserSubscriptionNotified(user uint32) error
-	DefaultProvidersModels(providerName string) (create.DefaultProvidersModels, error)
+	DefaultProvidersModels(providerName string) (domain.DefaultProvidersModels, error)
 
-	// User Model Management - методы для управления моделями пользователя (для create.DB)
-	ReadUserModelByProvider(userID uint32, provider create.ProviderType) ([]byte, *create.VecIds, error)
-	GetActiveModel(userID uint32) (*create.UserModelRecord, error)
-	GetModelByProvider(userID uint32, provider create.ProviderType) (*create.UserModelRecord, error)
-	GetModelByProviderAnyStatus(userID uint32, provider create.ProviderType) (*create.UserModelRecord, error)
+	// User Model Management - методы для управления моделями пользователя (для domain.DB)
+	ReadUserModelByProvider(userID uint32, provider domain.ProviderType) ([]byte, *domain.VecIds, error)
+	GetActiveModel(userID uint32) (*domain.UserModelRecord, error)
+	GetModelByProvider(userID uint32, provider domain.ProviderType) (*domain.UserModelRecord, error)
+	GetModelByProviderAnyStatus(userID uint32, provider domain.ProviderType) (*domain.UserModelRecord, error)
 	SetActiveModel(userID uint32, modelId uint64) error
-	SetActiveModelByProvider(userID uint32, provider create.ProviderType) error
+	SetActiveModelByProvider(userID uint32, provider domain.ProviderType) error
 	RemoveModelFromUser(userID uint32, modelId uint64) error
 
 	// Vector Embeddings - методы для работы с эмбеддингами в MariaDB
-	SaveEmbedding(userID uint32, modelId uint64, provider create.ProviderType, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error
+	SaveEmbedding(userID uint32, modelId uint64, provider domain.ProviderType, docID, docName, content string, embedding []float32, metadata domain.DocumentMetadata) error
 	GetEmbedding(modelId uint64, docID string) ([]float32, error)
 	DeleteEmbedding(modelId uint64, docID string) error
 	DeleteAllModelEmbeddings(modelId uint64) error
 	CountModelEmbeddings(modelId uint64) (int, error)
-	ListModelEmbeddings(modelId uint64, provider create.ProviderType) ([]create.VectorDocument, error)
-	SearchSimilarEmbeddings(modelId uint64, provider create.ProviderType, queryEmbedding []float32, limit int) ([]create.VectorDocument, error)
+	ListModelEmbeddings(modelId uint64, provider domain.ProviderType) ([]domain.VectorDocument, error)
+	SearchSimilarEmbeddings(modelId uint64, provider domain.ProviderType, queryEmbedding []float32, limit int) ([]domain.VectorDocument, error)
 
 	// Contact Availability - методы для работы с доступностью контактов в разных провайдерах
 	SetContactAvailability(userID uint32, contact, provider string, isAvailable bool) error
@@ -118,12 +118,12 @@ const (
 	SpeechRealTimeUser CreatorType = 6 // Лево
 )
 
-// Используем типы из пакета model/create для совместимости с интерфейсом create.DB
+// Используем типы из пакета model/create для совместимости с интерфейсом domain.DB
 type (
-	Ids             = create.Ids
-	VecIds          = create.VecIds
-	UserModelRecord = create.UserModelRecord
-	ProviderType    = create.ProviderType
+	Ids             = domain.Ids
+	VecIds          = domain.VecIds
+	UserModelRecord = domain.UserModelRecord
+	ProviderType    = domain.ProviderType
 )
 
 // DB представляет соединение с базой данных
@@ -304,7 +304,7 @@ func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, tri
 }
 
 // ReadContext читает контекст диалога из базы данных
-func (d *DB) ReadContext(dialogId uint64, provider create.ProviderType) (json.RawMessage, error) {
+func (d *DB) ReadContext(dialogId uint64, provider domain.ProviderType) (json.RawMessage, error) {
 	if dialogId == 0 {
 		return nil, fmt.Errorf("получен пустой dialogId")
 	}
@@ -334,7 +334,7 @@ func (d *DB) ReadContext(dialogId uint64, provider create.ProviderType) (json.Ra
 }
 
 // SaveContext сохраняет контекст диалога в базу данных
-func (d *DB) SaveContext(threadId uint64, provider create.ProviderType, dialogContext json.RawMessage) error {
+func (d *DB) SaveContext(threadId uint64, provider domain.ProviderType, dialogContext json.RawMessage) error {
 	if threadId == 0 {
 		return fmt.Errorf("получен пустой тред")
 	}
@@ -779,7 +779,7 @@ func (d *DB) GetNotificationChannel(userID uint32) (json.RawMessage, error) {
 }
 
 // GetAllUserModels получает все модели пользователя из таблицы user_models
-func (d *DB) GetAllUserModels(userID uint32) ([]create.UserModelRecord, error) {
+func (d *DB) GetAllUserModels(userID uint32) ([]domain.UserModelRecord, error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("получен пустой userID")
 	}
@@ -817,9 +817,9 @@ func (d *DB) GetAllUserModels(userID uint32) ([]create.UserModelRecord, error) {
 	}
 	defer rows.Close()
 
-	var records []create.UserModelRecord
+	var records []domain.UserModelRecord
 	for rows.Next() {
-		var record create.UserModelRecord
+		var record domain.UserModelRecord
 		var isActive int8
 		var idsRaw sql.NullString
 		var gptModelID sql.NullInt64
@@ -834,13 +834,13 @@ func (d *DB) GetAllUserModels(userID uint32) ([]create.UserModelRecord, error) {
 
 		record.IsActive = isActive == 1
 		if gptModelName.Valid && gptModelID.Valid {
-			record.GptType = &create.GptType{
+			record.GptType = &domain.GptType{
 				ID:   uint(gptModelID.Int64),
 				Name: gptModelName.String,
 			}
 		}
 		if realtimeModelName.Valid && realtimeModelID.Valid {
-			record.Realtime = &create.Realtime{
+			record.Realtime = &domain.Realtime{
 				ID:   uint(realtimeModelID.Int64),
 				Name: realtimeModelName.String,
 			}
@@ -853,7 +853,7 @@ func (d *DB) GetAllUserModels(userID uint32) ([]create.UserModelRecord, error) {
 
 			// Парсим FileIds для обратной совместимости
 			var data struct {
-				FileIds  []create.Ids `json:"FileIds"`
+				FileIds  []domain.Ids `json:"FileIds"`
 				VectorId []string     `json:"VectorId"`
 			}
 			if err := json.Unmarshal([]byte(idsRaw.String), &data); err != nil {
@@ -956,7 +956,7 @@ func (d *DB) GetUserVectorStorage(userID uint32) (string, error) {
 }
 
 // GetActiveProvider получает тип провайдера активной модели пользователя без создания дочернего контекста дял максимальной производительности
-func (d *DB) GetActiveProvider(userID uint32) (create.ProviderType, error) {
+func (d *DB) GetActiveProvider(userID uint32) (domain.ProviderType, error) {
 	if userID == 0 {
 		return 0, fmt.Errorf("получен некорректный userID")
 	}
@@ -998,11 +998,11 @@ func (d *DB) GetActiveProvider(userID uint32) (create.ProviderType, error) {
 		return 0, fmt.Errorf("найдено несколько активных моделей (найдено %d)", len(providers))
 	}
 
-	return create.ProviderType(providers[0]), nil
+	return domain.ProviderType(providers[0]), nil
 }
 
 // ReadUserModelByProvider получает сжатые данные модели пользователя по провайдеру
-func (d *DB) ReadUserModelByProvider(userID uint32, provider create.ProviderType) ([]byte, *create.VecIds, error) {
+func (d *DB) ReadUserModelByProvider(userID uint32, provider domain.ProviderType) ([]byte, *domain.VecIds, error) {
 	// Проверяем входные значения
 	if userID == 0 {
 		return nil, nil, fmt.Errorf("получен некорректный userID")
@@ -1045,15 +1045,15 @@ func (d *DB) ReadUserModelByProvider(userID uint32, provider create.ProviderType
 	}
 
 	// Инициализируем структуру VecIds по умолчанию с пустыми массивами
-	vecIds := &create.VecIds{
+	vecIds := &domain.VecIds{
 		VectorId: []string{},
-		FileIds:  []create.Ids{},
+		FileIds:  []domain.Ids{},
 	}
 
 	// ВАЖНО: Для Google провайдера (provider=3) поле Ids содержит конфигурацию модели,
 	// а не file_ids/vector_id, поэтому НЕ парсим его в VecIds
 	// Эмбеддинги для Google хранятся в отдельной таблице vector_embeddings
-	if provider != create.ProviderGoogle {
+	if provider != domain.ProviderGoogle {
 		// Для OpenAI и Mistral парсим Ids в VecIds (file_ids, vector_id)
 		if idsJson.Valid && idsJson.String != "" && idsJson.String != "null" {
 			if err := json.Unmarshal([]byte(idsJson.String), vecIds); err != nil {
@@ -1073,10 +1073,10 @@ func (d *DB) ReadUserModelByProvider(userID uint32, provider create.ProviderType
 }
 
 // DefaultProvidersModels возвращает модель по умолчанию для указанного провайдера
-func (d *DB) DefaultProvidersModels(providerName string) (create.DefaultProvidersModels, error) {
+func (d *DB) DefaultProvidersModels(providerName string) (domain.DefaultProvidersModels, error) {
 	// Проверяем входные данные
 	if providerName == "" {
-		return create.DefaultProvidersModels{}, fmt.Errorf("получено пустое имя провайдера")
+		return domain.DefaultProvidersModels{}, fmt.Errorf("получено пустое имя провайдера")
 	}
 
 	// Дочерний контекст с тайм-аутом на операцию
@@ -1105,17 +1105,17 @@ func (d *DB) DefaultProvidersModels(providerName string) (create.DefaultProvider
 	if err != nil {
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
-			return create.DefaultProvidersModels{}, fmt.Errorf("тайм-аут (%d с) при получении модели по умолчанию для провайдера %s: %w", sqlTimeToCancel, providerName, err)
+			return domain.DefaultProvidersModels{}, fmt.Errorf("тайм-аут (%d с) при получении модели по умолчанию для провайдера %s: %w", sqlTimeToCancel, providerName, err)
 		case errors.Is(err, context.Canceled):
-			return create.DefaultProvidersModels{}, fmt.Errorf("операция отменена: %w", err)
+			return domain.DefaultProvidersModels{}, fmt.Errorf("операция отменена: %w", err)
 		case errors.Is(err, sql.ErrNoRows):
-			return create.DefaultProvidersModels{}, fmt.Errorf("модель по умолчанию для провайдера %s не найдена", providerName)
+			return domain.DefaultProvidersModels{}, fmt.Errorf("модель по умолчанию для провайдера %s не найдена", providerName)
 		default:
-			return create.DefaultProvidersModels{}, fmt.Errorf("ошибка выполнения запроса: %w", err)
+			return domain.DefaultProvidersModels{}, fmt.Errorf("ошибка выполнения запроса: %w", err)
 		}
 	}
 
-	return create.DefaultProvidersModels{
+	return domain.DefaultProvidersModels{
 		GeneralModelID:    GptModelId,
 		GeneralModelName:  GptModelName,
 		RealTimeModelID:   RealtimeModelId,
@@ -1124,7 +1124,7 @@ func (d *DB) DefaultProvidersModels(providerName string) (create.DefaultProvider
 }
 
 // GetActiveModel получает активную модель пользователя
-func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
+func (d *DB) GetActiveModel(userID uint32) (*domain.UserModelRecord, error) {
 	// Проверяем входное значение
 	if userID == 0 {
 		return nil, fmt.Errorf("получен некорректный userID")
@@ -1189,21 +1189,21 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 	}
 
 	// Создаем запись модели
-	record := &create.UserModelRecord{
+	record := &domain.UserModelRecord{
 		ModelId:  modelId,
 		AssistId: assistId,
-		Provider: create.ProviderType(provider),
+		Provider: domain.ProviderType(provider),
 		IsActive: isActive,
-		FileIds:  []create.Ids{},
+		FileIds:  []domain.Ids{},
 	}
 	if modelName.Valid && modelNameId.Valid {
-		record.GptType = &create.GptType{
+		record.GptType = &domain.GptType{
 			ID:   uint(modelNameId.Int64),
 			Name: modelName.String,
 		}
 	}
 	if realtimeName.Valid && realtimeNameId.Valid {
-		record.Realtime = &create.Realtime{
+		record.Realtime = &domain.Realtime{
 			ID:   uint(realtimeNameId.Int64),
 			Name: realtimeName.String,
 		}
@@ -1213,7 +1213,7 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 	if idsJson.Valid && idsJson.String != "" && idsJson.String != "null" {
 		record.AllIds = []byte(idsJson.String)
 
-		var vecIds create.VecIds
+		var vecIds domain.VecIds
 		if err := json.Unmarshal([]byte(idsJson.String), &vecIds); err != nil {
 			return nil, fmt.Errorf("ошибка разбора Ids: %w", err)
 		}
@@ -1225,7 +1225,7 @@ func (d *DB) GetActiveModel(userID uint32) (*create.UserModelRecord, error) {
 
 // GetModelByProvider получает АКТИВНУЮ модель пользователя по провайдеру
 // Если модель не активна - возвращает nil
-func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*create.UserModelRecord, error) {
+func (d *DB) GetModelByProvider(userID uint32, provider domain.ProviderType) (*domain.UserModelRecord, error) {
 	// Проверяем входные значения
 	if userID == 0 {
 		return nil, fmt.Errorf("получен некорректный userID")
@@ -1295,21 +1295,21 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 	}
 
 	// Создаем запись модели
-	record := &create.UserModelRecord{
+	record := &domain.UserModelRecord{
 		ModelId:  modelId,
 		AssistId: assistId,
-		Provider: create.ProviderType(providerDb),
+		Provider: domain.ProviderType(providerDb),
 		IsActive: isActive,
-		FileIds:  []create.Ids{},
+		FileIds:  []domain.Ids{},
 	}
 	if modelName.Valid && modelNameId.Valid {
-		record.GptType = &create.GptType{
+		record.GptType = &domain.GptType{
 			ID:   uint(modelNameId.Int64),
 			Name: modelName.String,
 		}
 	}
 	if realtimeName.Valid && realtimeNameId.Valid {
-		record.Realtime = &create.Realtime{
+		record.Realtime = &domain.Realtime{
 			ID:   uint(realtimeNameId.Int64),
 			Name: realtimeName.String,
 		}
@@ -1319,7 +1319,7 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 	if idsJson.Valid && idsJson.String != "" && idsJson.String != "null" {
 		record.AllIds = []byte(idsJson.String)
 
-		var vecIds create.VecIds
+		var vecIds domain.VecIds
 		if err := json.Unmarshal([]byte(idsJson.String), &vecIds); err != nil {
 			return nil, fmt.Errorf("ошибка разбора Ids: %w", err)
 		}
@@ -1332,7 +1332,7 @@ func (d *DB) GetModelByProvider(userID uint32, provider create.ProviderType) (*c
 // GetModelByProviderAnyStatus получает модель пользователя по провайдеру НЕЗАВИСИМО от статуса активности
 // В отличие от GetModelByProvider, эта функция не требует IsActive = 1
 // Используется для обновления неактивных моделей
-func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.ProviderType) (*create.UserModelRecord, error) {
+func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider domain.ProviderType) (*domain.UserModelRecord, error) {
 	// Проверяем входные значения
 	if userID == 0 {
 		return nil, fmt.Errorf("получен некорректный userID")
@@ -1401,21 +1401,21 @@ func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.Provider
 	}
 
 	// Создаем запись модели
-	record := &create.UserModelRecord{
+	record := &domain.UserModelRecord{
 		ModelId:  modelId,
 		AssistId: assistId,
-		Provider: create.ProviderType(providerDb),
+		Provider: domain.ProviderType(providerDb),
 		IsActive: isActive,
-		FileIds:  []create.Ids{},
+		FileIds:  []domain.Ids{},
 	}
 	if modelName.Valid && modelNameId.Valid {
-		record.GptType = &create.GptType{
+		record.GptType = &domain.GptType{
 			ID:   uint(modelNameId.Int64),
 			Name: modelName.String,
 		}
 	}
 	if realtimeName.Valid && realtimeNameId.Valid {
-		record.Realtime = &create.Realtime{
+		record.Realtime = &domain.Realtime{
 			ID:   uint(realtimeNameId.Int64),
 			Name: realtimeName.String,
 		}
@@ -1425,7 +1425,7 @@ func (d *DB) GetModelByProviderAnyStatus(userID uint32, provider create.Provider
 	if idsJson.Valid && idsJson.String != "" && idsJson.String != "null" {
 		record.AllIds = []byte(idsJson.String)
 
-		var vecIds create.VecIds
+		var vecIds domain.VecIds
 		if err := json.Unmarshal([]byte(idsJson.String), &vecIds); err != nil {
 			return nil, fmt.Errorf("ошибка разбора Ids: %w", err)
 		}
@@ -1516,7 +1516,7 @@ func (d *DB) SetActiveModel(userID uint32, modelId uint64) error {
 //   - provider: тип провайдера (ProviderOpenAI, ProviderMistral, ...)
 //
 // Функция снимает IsActive с других моделей пользователя в этой же транзакции
-func (d *DB) SetActiveModelByProvider(userID uint32, provider create.ProviderType) error {
+func (d *DB) SetActiveModelByProvider(userID uint32, provider domain.ProviderType) error {
 	if userID == 0 {
 		return fmt.Errorf("получен пустой userID")
 	}
@@ -1863,7 +1863,7 @@ func (d *DB) RemoveModelFromUser(userID uint32, modelId uint64) error {
 }
 
 func (d *DB) SaveUserModel(
-	userID uint32, provider create.ProviderType, name, assistantId string, data []byte, def create.DefaultProvidersModels, ids json.RawMessage, operator bool) error {
+	userID uint32, provider domain.ProviderType, name, assistantId string, data []byte, def domain.DefaultProvidersModels, ids json.RawMessage, operator bool) error {
 	// Проверяю входные значения
 	if userID == 0 || name == "" || assistantId == "" {
 		return fmt.Errorf("получены некорректные значения: userID, name или assistantId пусты")
@@ -2050,7 +2050,7 @@ func (d *DB) SaveUserModel(
 }
 
 // ReadUserModel получает данные модели пользователя и идентификаторы файлов
-func (d *DB) ReadUserModel(userID uint32) ([]byte, *create.VecIds, error) {
+func (d *DB) ReadUserModel(userID uint32) ([]byte, *domain.VecIds, error) {
 	// Проверяем входное значение
 	if userID == 0 {
 		return nil, nil, fmt.Errorf("получен некорректный userID")
@@ -2090,9 +2090,9 @@ func (d *DB) ReadUserModel(userID uint32) ([]byte, *create.VecIds, error) {
 	}
 
 	// Инициализируем структуру VecIds по умолчанию с пустыми массивами
-	vecIds := &create.VecIds{
+	vecIds := &domain.VecIds{
 		VectorId: []string{},
-		FileIds:  []create.Ids{},
+		FileIds:  []domain.Ids{},
 	}
 
 	// Проверяем и парсим Ids, если они есть
@@ -2413,8 +2413,8 @@ func (d *DB) SetUserSubscriptionNotified(user uint32) error {
 // При удалении неподдерживаемой модели из провайдера она удаляется из
 // gpt_models или realtime_models, а ссылка в user_gpt (Model или Realtime)
 // переводится на модель по умолчанию. Связь user_models при этом сохраняется.
-func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create.ProviderModelsSyncResult, error) {
-	result := create.ProviderModelsSyncResult{Provider: union.Provider}
+func (d *DB) SyncProviderModels(union domain.Union, modelNames []string) (domain.ProviderModelsSyncResult, error) {
+	result := domain.ProviderModelsSyncResult{Provider: union.Provider}
 	if !union.Provider.IsValid() {
 		return result, fmt.Errorf("некорректный provider: %d", union.Provider)
 	}
@@ -2424,7 +2424,7 @@ func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create
 
 	var tableName string
 	var userModelColumn string
-	modelCategory := create.ProviderModelGeneral
+	modelCategory := domain.ProviderModelGeneral
 	switch {
 	case union.ModelType.IsGeneral():
 		tableName = "gpt_models"
@@ -2432,7 +2432,7 @@ func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create
 	case union.ModelType.IsRealtime():
 		tableName = "realtime_models"
 		userModelColumn = "Realtime"
-		modelCategory = create.ProviderModelRealtime
+		modelCategory = domain.ProviderModelRealtime
 	default:
 		return result, fmt.Errorf("некорректный тип модели: %d", union.ModelType)
 	}
@@ -2567,7 +2567,7 @@ func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create
 		result.RemovedNames = append(result.RemovedNames, stale.name)
 		result.ClearedUsers += len(affectedUsers)
 		for _, userID := range affectedUsers {
-			result.AffectedUsers = append(result.AffectedUsers, create.ProviderModelUserChange{
+			result.AffectedUsers = append(result.AffectedUsers, domain.ProviderModelUserChange{
 				UserID:    userID,
 				ModelID:   uint64(stale.id),
 				ModelName: stale.name,
@@ -2589,7 +2589,7 @@ func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create
 			return result, fmt.Errorf("ошибка чтения актуального списка моделей: %w", err)
 		}
 		trimmedName := strings.TrimSpace(modelName)
-		result.Models = append(result.Models, create.ProviderModel{
+		result.Models = append(result.Models, domain.ProviderModel{
 			ID:       modelID,
 			Name:     trimmedName,
 			Category: providerModelCategory(trimmedName, modelCategory),
@@ -2614,9 +2614,9 @@ func providerModelCategory(name, defaultCategory string) string {
 	lower := strings.ToLower(name)
 	switch {
 	case strings.Contains(lower, "tts"):
-		return create.ProviderModelTTS
+		return domain.ProviderModelTTS
 	case strings.Contains(lower, "transcribe") || strings.Contains(lower, "stt"):
-		return create.ProviderModelSTT
+		return domain.ProviderModelSTT
 	default:
 		return defaultCategory
 	}

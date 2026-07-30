@@ -5,10 +5,11 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // CreateModel создаёт новую модель Google
-func (m *Model) CreateModel(userID uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error) {
+func (m *Model) CreateModel(userID uint32, provider domain.ProviderType, modelData *domain.UniversalModelData, fileIDs []domain.Ids) (domain.UMCR, error) {
 	// Создаем экземпляр universalModel для делегирования
 	modelsManager := &create.UniversalModel{}
 
@@ -21,7 +22,7 @@ func (m *Model) CreateModel(userID uint32, provider create.ProviderType, modelDa
 
 // UploadDocumentWithEmbedding загружает документ и сохраняет эмбеддинг в MariaDB
 // Автоматически использует modelId активной Google модели пользователя
-func (m *Model) UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata create.DocumentMetadata) (string, error) {
+func (m *Model) UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata domain.DocumentMetadata) (string, error) {
 	// Получаем modelId активной Google модели
 	modelId, err := m.getActiveModelId(userID)
 	if err != nil {
@@ -49,7 +50,7 @@ func (m *Model) UploadDocumentWithEmbedding(userID uint32, docName, content stri
 }
 
 // SearchSimilarDocuments ищет похожие документы по запросу через векторный поиск
-func (m *Model) SearchSimilarDocuments(userID uint32, query string, limit int) ([]create.VectorDocument, error) {
+func (m *Model) SearchSimilarDocuments(userID uint32, query string, limit int) ([]domain.VectorDocument, error) {
 	// Получаем modelId активной Google модели
 	modelId, err := m.getActiveModelId(userID)
 	if err != nil {
@@ -66,7 +67,7 @@ func (m *Model) SearchSimilarDocuments(userID uint32, query string, limit int) (
 	if count == 0 {
 		// Нет эмбеддингов для поиска - возвращаем пустой массив без вызова API
 		//logger.Debug("SearchSimilarDocuments: нет эмбеддингов для modelId=%d, пропуск поиска", modelId)
-		return []create.VectorDocument{}, nil
+		return []domain.VectorDocument{}, nil
 	}
 
 	//logger.Debug("SearchSimilarDocuments: найдено %d эмбеддингов для modelId=%d, выполняем поиск", count, modelId)
@@ -93,7 +94,7 @@ func (m *Model) DeleteDocument(userID uint32, docID string) error {
 }
 
 // ListUserDocuments возвращает список документов модели из БД
-func (m *Model) ListUserDocuments(userID uint32) ([]create.VectorDocument, error) {
+func (m *Model) ListUserDocuments(userID uint32) ([]domain.VectorDocument, error) {
 	// Получаем modelId активной Google модели
 	modelId, err := m.getActiveModelId(userID)
 	if err != nil {
@@ -112,9 +113,9 @@ func (m *Model) getActiveModelId(userID uint32) (uint64, error) {
 	}
 
 	// Находим Google модель
-	var model *create.UserModelRecord
+	var model *domain.UserModelRecord
 	for i := range allModels {
-		if allModels[i].Provider == create.ProviderGoogle {
+		if allModels[i].Provider == domain.ProviderGoogle {
 			model = &allModels[i]
 			break
 		}

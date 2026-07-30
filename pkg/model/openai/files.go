@@ -2,6 +2,7 @@ package openai
 
 import (
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // ============================================================================
@@ -15,7 +16,7 @@ import (
 // Использует модель text-embedding-3-small (512 dimensions)
 // Возвращает []float32 с эмбеддингом или ошибку
 //
-// ПРИМЕЧАНИЕ: Использует функцию create.GenerateOpenAIEmbedding() из пакета create
+// ПРИМЕЧАНИЕ: Использует функцию domain.GenerateOpenAIEmbedding() из пакета create
 // для избежания дублирования кода с OpenAIAgentClient.GenerateEmbedding()
 //
 // Используется внутри UploadDocumentWithEmbedding, SearchSimilarDocuments и других публичных методов OpenAIModel
@@ -31,14 +32,14 @@ func (m *Model) deleteDocument(modelId uint64, docID string) error {
 	return m.db.DeleteEmbedding(modelId, docID)
 }
 
-func (m *Model) listModelDocuments(modelId uint64) ([]create.VectorDocument, error) {
-	return m.db.ListModelEmbeddings(modelId, create.ProviderOpenAI)
+func (m *Model) listModelDocuments(modelId uint64) ([]domain.VectorDocument, error) {
+	return m.db.ListModelEmbeddings(modelId, domain.ProviderOpenAI)
 }
 
-func (m *Model) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]create.VectorDocument, error) {
-	return m.db.SearchSimilarEmbeddings(modelId, create.ProviderOpenAI, queryEmbedding, limit)
+func (m *Model) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]domain.VectorDocument, error) {
+	return m.db.SearchSimilarEmbeddings(modelId, domain.ProviderOpenAI, queryEmbedding, limit)
 }
 
-func (m *Model) saveEmbedding(userID uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
-	return m.db.SaveEmbedding(userID, modelId, create.ProviderOpenAI, docID, docName, content, embedding, metadata)
+func (m *Model) saveEmbedding(userID uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata domain.DocumentMetadata) error {
+	return m.db.SaveEmbedding(userID, modelId, domain.ProviderOpenAI, docID, docName, content, embedding, metadata)
 }

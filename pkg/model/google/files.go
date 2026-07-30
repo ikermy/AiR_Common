@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // DeleteTempFile ============================================================================
@@ -94,7 +95,7 @@ func (m *Model) downloadFileFromGoogle(fileURI string) ([]byte, error) {
 // Возвращает []float32 с эмбеддингом или ошибку
 //
 // ОПТИМИЗАЦИЯ: Использует кэш для избежания повторных API вызовов (TTL 5 минут)
-// ПРИМЕЧАНИЕ: Использует функцию create.GenerateGoogleEmbedding() из пакета create
+// ПРИМЕЧАНИЕ: Использует функцию domain.GenerateGoogleEmbedding() из пакета create
 // для избежания дублирования кода с GoogleAgentClient.GenerateEmbedding()
 //
 // Используется внутри UploadDocumentWithEmbedding, SearchSimilarDocuments и других публичных методов GoogleModel
@@ -124,14 +125,14 @@ func (m *Model) deleteDocument(modelId uint64, docID string) error {
 	return m.db.DeleteEmbedding(modelId, docID)
 }
 
-func (m *Model) listModelDocuments(modelId uint64) ([]create.VectorDocument, error) {
-	return m.db.ListModelEmbeddings(modelId, create.ProviderGoogle)
+func (m *Model) listModelDocuments(modelId uint64) ([]domain.VectorDocument, error) {
+	return m.db.ListModelEmbeddings(modelId, domain.ProviderGoogle)
 }
 
-func (m *Model) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]create.VectorDocument, error) {
-	return m.db.SearchSimilarEmbeddings(modelId, create.ProviderGoogle, queryEmbedding, limit)
+func (m *Model) searchSimilarEmbeddings(modelId uint64, queryEmbedding []float32, limit int) ([]domain.VectorDocument, error) {
+	return m.db.SearchSimilarEmbeddings(modelId, domain.ProviderGoogle, queryEmbedding, limit)
 }
 
-func (m *Model) saveEmbedding(userID uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
-	return m.db.SaveEmbedding(userID, modelId, create.ProviderGoogle, docID, docName, content, embedding, metadata)
+func (m *Model) saveEmbedding(userID uint32, modelId uint64, docID, docName, content string, embedding []float32, metadata domain.DocumentMetadata) error {
+	return m.db.SaveEmbedding(userID, modelId, domain.ProviderGoogle, docID, docName, content, embedding, metadata)
 }

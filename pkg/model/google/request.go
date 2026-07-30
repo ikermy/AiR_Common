@@ -13,6 +13,7 @@ import (
 
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // DialogMessage представляет сообщение из истории диалога (формат БД)
@@ -450,7 +451,7 @@ func (m *Model) sendToGeminiAPIStreaming(modelName string, payload map[string]an
 // parseGeminiResponseWithFunctionHandling парсит ответ и обрабатывает function calls через multi-turn conversation
 // Если модель вызывает функцию без текста, отправляем результат обратно модели для продолжения
 func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, history []GoogleContent,
-	payload map[string]any, modelName string, provider create.ProviderType, userID uint32) (model.AssistResponse, error) {
+	payload map[string]any, modelName string, provider domain.ProviderType, userID uint32) (model.AssistResponse, error) {
 
 	var emptyResponse model.AssistResponse
 
@@ -647,7 +648,7 @@ func (m *Model) parseGeminiResponseWithFunctionHandling(responseBody []byte, his
 }
 
 // handleFunctionCall обрабатывает вызов функции от модели
-func (m *Model) handleFunctionCall(functionCall map[string]any, provider create.ProviderType, userID uint32) (map[string]any, error) {
+func (m *Model) handleFunctionCall(functionCall map[string]any, provider domain.ProviderType, userID uint32) (map[string]any, error) {
 	functionName, ok := functionCall["name"].(string)
 	if !ok {
 		return nil, fmt.Errorf("function call не содержит имени")
@@ -684,7 +685,7 @@ func (m *Model) handleFunctionCall(functionCall map[string]any, provider create.
 
 // processVideoGeneration автоматически генерирует видео если модель вызвала generate_video
 // или если в промпте агента включен флаг Video и обнаружены ключевые слова
-func (m *Model) processVideoGeneration(userID uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
+func (m *Model) processVideoGeneration(userID uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider domain.ProviderType) (model.AssistResponse, error) {
 	// Проверяем включена ли генерация видео в конфигурации
 	if !m.isVideoEnabled(agentConfig) {
 		return response, nil
@@ -853,7 +854,7 @@ func getStringField(m map[string]any, key string) string {
 
 // processImageGeneration автоматически генерирует изображение если модель включила Image
 // и обнаружены ключевые слова в запросе пользователя
-func (m *Model) processImageGeneration(userID uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider create.ProviderType) (model.AssistResponse, error) {
+func (m *Model) processImageGeneration(userID uint32, userText string, response model.AssistResponse, agentConfig *GoogleAgentConfig, provider domain.ProviderType) (model.AssistResponse, error) {
 	// Проверяем включена ли генерация изображений в конфигурации
 	if !agentConfig.Image {
 		return response, nil

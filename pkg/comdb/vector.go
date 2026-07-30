@@ -1,4 +1,4 @@
-﻿package comdb
+package comdb
 
 import (
 	"context"
@@ -10,13 +10,13 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/crypto"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // SaveEmbedding сохраняет эмбеддинг документа в MariaDB с привязкой к модели
 // Поддерживает динамические размерности: 512 (OpenAI small), 768 (Google), 1536 (OpenAI medium), 3072 (OpenAI large)
 // Использует нативный тип VECTOR(3072) с padding нулями для эффективного хранения
-func (d *DB) SaveEmbedding(userID uint32, modelId uint64, provider create.ProviderType, docID, docName, content string, embedding []float32, metadata create.DocumentMetadata) error {
+func (d *DB) SaveEmbedding(userID uint32, modelId uint64, provider domain.ProviderType, docID, docName, content string, embedding []float32, metadata domain.DocumentMetadata) error {
 	ctx, cancel := context.WithTimeout(d.MainCTX(), time.Duration(sqlTimeToCancel)*time.Second)
 	defer cancel()
 
@@ -151,7 +151,7 @@ func (d *DB) CountModelEmbeddings(modelId uint64) (int, error) {
 
 // ListModelEmbeddings возвращает список всех эмбеддингов для модели с обрезкой padding
 // Читает реальную размерность из embedding_dim и обрезает вектор
-func (d *DB) ListModelEmbeddings(modelId uint64, provider create.ProviderType) ([]create.VectorDocument, error) {
+func (d *DB) ListModelEmbeddings(modelId uint64, provider domain.ProviderType) ([]domain.VectorDocument, error) {
 	ctx, cancel := context.WithTimeout(d.MainCTX(), time.Duration(sqlTimeToCancel)*time.Second)
 	defer cancel()
 
@@ -170,9 +170,9 @@ func (d *DB) ListModelEmbeddings(modelId uint64, provider create.ProviderType) (
 	defer rows.Close()
 
 	// Инициализируем пустой срез, чтобы JSON возвращал [] вместо null
-	documents := make([]create.VectorDocument, 0)
+	documents := make([]domain.VectorDocument, 0)
 	for rows.Next() {
-		var doc create.VectorDocument
+		var doc domain.VectorDocument
 		var embeddingStr string
 		var metadataJSON []byte
 		var provider sql.NullString
@@ -228,7 +228,7 @@ func (d *DB) ListModelEmbeddings(modelId uint64, provider create.ProviderType) (
 // Поддерживает динамические размерности: сравнивает только первые N измерений вектора согласно embedding_dim
 // Фильтрует по provider для поиска только среди документов своего провайдера
 // Это намного быстрее чем вычисление в Go, т.к. выполняется на уровне БД с векторными индексами
-func (d *DB) SearchSimilarEmbeddings(modelId uint64, provider create.ProviderType, queryEmbedding []float32, limit int) ([]create.VectorDocument, error) {
+func (d *DB) SearchSimilarEmbeddings(modelId uint64, provider domain.ProviderType, queryEmbedding []float32, limit int) ([]domain.VectorDocument, error) {
 	ctx, cancel := context.WithTimeout(d.MainCTX(), time.Duration(sqlTimeToCancel)*time.Second)
 	defer cancel()
 
@@ -275,9 +275,9 @@ func (d *DB) SearchSimilarEmbeddings(modelId uint64, provider create.ProviderTyp
 	}
 	defer rows.Close()
 
-	var documents []create.VectorDocument
+	var documents []domain.VectorDocument
 	for rows.Next() {
-		var doc create.VectorDocument
+		var doc domain.VectorDocument
 		var embeddingStr string
 		var metadataJSON []byte
 		var provider sql.NullString

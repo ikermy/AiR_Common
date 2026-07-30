@@ -5,11 +5,12 @@ import (
 	"time"
 
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 )
 
 // CreateModel создаёт новую модель OpenAI
 // Делегирует вызов к UniversalModel из пакета create
-func (m *Model) CreateModel(userID uint32, provider create.ProviderType, modelData *create.UniversalModelData, fileIDs []create.Ids) (create.UMCR, error) {
+func (m *Model) CreateModel(userID uint32, provider domain.ProviderType, modelData *domain.UniversalModelData, fileIDs []domain.Ids) (domain.UMCR, error) {
 	// Создаем экземпляр UniversalModel для делегирования
 	modelsManager := &create.UniversalModel{}
 
@@ -21,7 +22,7 @@ func (m *Model) CreateModel(userID uint32, provider create.ProviderType, modelDa
 // ============================================================================
 
 // UploadDocumentWithEmbedding загружает документ с генерацией эмбеддинга
-func (m *Model) UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata create.DocumentMetadata) (string, error) {
+func (m *Model) UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata domain.DocumentMetadata) (string, error) {
 	// Получаем modelId из БД
 	modelId, err := m.getModelId(userID)
 	if err != nil {
@@ -62,7 +63,7 @@ func (m *Model) DeleteDocument(userID uint32, docID string) error {
 }
 
 // ListUserDocuments возвращает список документов модели из БД
-func (m *Model) ListUserDocuments(userID uint32) ([]create.VectorDocument, error) {
+func (m *Model) ListUserDocuments(userID uint32) ([]domain.VectorDocument, error) {
 	modelId, err := m.getModelId(userID)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения modelId: %w", err)
@@ -78,7 +79,7 @@ func (m *Model) ListUserDocuments(userID uint32) ([]create.VectorDocument, error
 }
 
 // SearchSimilarDocuments ищет похожие документы используя семантический поиск
-func (m *Model) SearchSimilarDocuments(userID uint32, query string, limit int) ([]create.VectorDocument, error) {
+func (m *Model) SearchSimilarDocuments(userID uint32, query string, limit int) ([]domain.VectorDocument, error) {
 	modelId, err := m.getModelId(userID)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения modelId: %w", err)
@@ -104,7 +105,7 @@ func (m *Model) SearchSimilarDocuments(userID uint32, query string, limit int) (
 // getModelId получает modelId пользователя из БД (для работы с vector_embeddings)
 func (m *Model) getModelId(userID uint32) (uint64, error) {
 	// Получаем запись модели OpenAI для пользователя из БД
-	record, err := m.db.GetModelByProviderAnyStatus(userID, create.ProviderOpenAI)
+	record, err := m.db.GetModelByProviderAnyStatus(userID, domain.ProviderOpenAI)
 	if err != nil {
 		return 0, fmt.Errorf("ошибка получения модели OpenAI из БД: %w", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/ikermy/AiR_Common/pkg/mode"
 	"github.com/ikermy/AiR_Common/pkg/model"
 	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/AiR_Common/pkg/model/domain"
 	"github.com/ikermy/AiR_Common/pkg/model/provider_catalog"
 )
 
@@ -86,7 +87,7 @@ type AgentConfig struct {
 	// Голосовой режим реального времени (OpenAI Realtime API)
 	RealtimeEnabled bool                `json:"realtime_enabled"`       // Голосовой режим включён для этой модели
 	RealtimeModel   string              `json:"realtime_model"`         // Имя realtime-модели
-	RealtimeVAD     *create.RealtimeVAD `json:"realtime_vad,omitempty"` // Параметры VAD и генерации
+	RealtimeVAD     *domain.RealtimeVAD `json:"realtime_vad,omitempty"` // Параметры VAD и генерации
 }
 
 // openaiRagResp — результат работы applyRAG для OpenAI провайдера
@@ -131,7 +132,7 @@ func New(parent context.Context, d DB, actionHandler model.ActionHandler) *Model
 	openaiClient := create.NewOpenAIAgentClient(ctx)
 
 	openaiClient.SetKeyResolver(func(userID uint32) string {
-		if key, err := d.GetUserAPIKey(userID, create.ProviderOpenAI); err == nil {
+		if key, err := d.GetUserAPIKey(userID, domain.ProviderOpenAI); err == nil {
 			return key
 		}
 		return ""
@@ -309,7 +310,7 @@ func (m *Model) GetRespIdByDialogID(dialogID uint64) (uint64, error) {
 func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool, error) {
 	// Получаем API-ключ напрямую через DB: это обеспечивает правильную обработку $mk$-ключей —
 	// если MasterKey недоступен, ошибка и уведомление пропагируются явно, а не теряются в HasAPIKey.
-	apiKey, err := m.db.GetUserAPIKey(userID, create.ProviderOpenAI)
+	apiKey, err := m.db.GetUserAPIKey(userID, domain.ProviderOpenAI)
 	if err != nil {
 		return nil, false, fmt.Errorf("ошибка получения OpenAI API-ключа для пользователя %d: %w", userID, err)
 	}
@@ -324,9 +325,9 @@ func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool
 	}
 
 	// Ищем активную модель OpenAI
-	var found *create.UserModelRecord
+	var found *domain.UserModelRecord
 	for i := range userModels {
-		if userModels[i].Provider == create.ProviderOpenAI {
+		if userModels[i].Provider == domain.ProviderOpenAI {
 			found = &userModels[i]
 			break
 		}
@@ -345,7 +346,7 @@ func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool
 	modelName := found.AssistId
 	if modelName == "" {
 		// AssistId не заполнен — берём модель по умолчанию из gpt_models (IsDefault=1)
-		defData, err := m.db.DefaultProvidersModels(create.ProviderOpenAI.String())
+		defData, err := m.db.DefaultProvidersModels(domain.ProviderOpenAI.String())
 		if err != nil {
 			return nil, false, fmt.Errorf("имя модели OpenAI не задано и получить модель по умолчанию не удалось: %w", err)
 		}
@@ -360,7 +361,7 @@ func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool
 	var haunter bool
 
 	// Загружаем полные данные модели из БД
-	compressedData, _, err := m.db.ReadUserModelByProvider(userID, create.ProviderOpenAI)
+	compressedData, _, err := m.db.ReadUserModelByProvider(userID, domain.ProviderOpenAI)
 	if err != nil {
 		//logger.Warn("Ошибка чтения данных модели из БД: %v, используем конфигурацию по умолчанию", err, userID)
 	} else if compressedData != nil {
@@ -388,7 +389,7 @@ func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool
 	// Загружаем vector store IDs если есть файлы
 	if found.FileIds != nil && len(found.FileIds) > 0 {
 		// Извлекаем VectorId из VecIds в AllIds
-		var vecIds create.VecIds
+		var vecIds domain.VecIds
 		if err := json.Unmarshal(found.AllIds, &vecIds); err == nil {
 			agentConfig.VectorStoreIds = vecIds.VectorId
 			// Конвертируем []Ids в []any
@@ -425,7 +426,7 @@ func (m *Model) buildAgentConfiguration(userID uint32, config *AgentConfig, comp
 	// =========================================================================
 	mcpAvailable := false
 	if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
-		if hint, err := mcpProvider.FetchSystemPrompt(m.ctx, userID, create.ProviderOpenAI); err == nil {
+		if hint, err := mcpProvider.FetchSystemPrompt(m.ctx, userID, domain.ProviderOpenAI); err == nil {
 			config.SystemPrompt = modelData.Prompt + "\n\n" + hint
 			mcpAvailable = true
 		}
@@ -464,7 +465,7 @@ func (m *Model) buildAgentConfiguration(userID uint32, config *AgentConfig, comp
 	// Function tools — только от MCP; если сервер недоступен — не добавляем
 	if mcpAvailable {
 		if mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider); ok {
-			if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, userID, create.ProviderOpenAI); err == nil {
+			if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, userID, domain.ProviderOpenAI); err == nil {
 				for _, t := range mcpTools {
 					tools = append(tools, map[string]any{
 						"type":        "function",
@@ -910,8 +911,8 @@ func (m *Model) saveAllContextsGracefullyCtx(_ context.Context) error {
 	return nil
 }
 
-func (m *Model) UpdateModelsListByProvider(ctx context.Context, union create.Union, apiKey string) ([]create.ProviderModel, error) {
-	if union.Provider != create.ProviderOpenAI {
+func (m *Model) UpdateModelsListByProvider(ctx context.Context, union domain.Union, apiKey string) ([]domain.ProviderModel, error) {
+	if union.Provider != domain.ProviderOpenAI {
 		return nil, fmt.Errorf("неверный провайдер для OpenAI модели: %s", union.Provider)
 	}
 	res, err := provider_catalog.SyncProviderModels(ctx, m.db, union, apiKey)
