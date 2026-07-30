@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	mcpURL    = "https://localhost:8080/mcp"
+	mcpURL    = "https://127.0.0.1:8080/mcp"
 	testUID   = 23
 	testProv  = 1 // ProviderOpenAI
 	sessionID = "23:1"

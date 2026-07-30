@@ -20,6 +20,7 @@ type MistralAgentClient struct {
 	cancel      context.CancelFunc
 	apiKey      string
 	url         string
+	httpClient  *http.Client
 	keyResolver func(userID uint32) string // Резолвер персональных ключей; nil → глобальный apiKey
 }
 
@@ -49,10 +50,11 @@ func NewMistralAgentClient(parent context.Context) *MistralAgentClient {
 	ctx, cancel := context.WithCancel(parent)
 
 	return &MistralAgentClient{
-		ctx:    ctx,
-		cancel: cancel,
-		apiKey: "",
-		url:    mode.MistralAgentsURL,
+		ctx:        ctx,
+		cancel:     cancel,
+		apiKey:     "",
+		url:        mode.MistralAgentsURL,
+		httpClient: &http.Client{},
 	}
 }
 

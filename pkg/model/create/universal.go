@@ -176,9 +176,17 @@ type ProviderModelUserChange struct {
 
 // ProviderModel описывает модель провайдера в каталоге.
 type ProviderModel struct {
-	ID   uint64 `json:"Id"`
-	Name string `json:"Name"`
+	ID       uint64 `json:"Id"`
+	Name     string `json:"Name"`
+	Category string `json:"category,omitempty"`
 }
+
+const (
+	ProviderModelGeneral  = "general"
+	ProviderModelRealtime = "realtime"
+	ProviderModelSTT      = "stt"
+	ProviderModelTTS      = "tts"
+)
 
 // ProviderModelsSyncResult содержит результат синхронизации каталога моделей провайдера.
 type ProviderModelsSyncResult struct {
@@ -526,6 +534,10 @@ type RealtimeVAD struct {
 	// ── Google-специфичные параметры ────────────────────────────────────────
 	// При наличии переопределяют соответствующие общие поля для Google провайдера.
 	Google *GoogleRealtimeVAD `json:"google,omitempty"`
+
+	// ── Mistral-специфичные параметры ───────────────────────────────────────
+	// Используются каскадным pipeline Voxtral STT → Mistral LLM → Voxtral TTS.
+	Mistral *MistralRealtimeVAD `json:"mistral,omitempty"`
 }
 
 // GoogleRealtimeVAD Google-специфичные параметры для Multimodal Live API.
@@ -544,6 +556,60 @@ type GoogleRealtimeVAD struct {
 	AutomaticActivityDetection *bool `json:"automatic_activity_detection,omitempty"` // авто-VAD, дефолт true
 	BargeIn                    *bool `json:"barge_in,omitempty"`                     // перебивание модели, дефолт true
 	SilenceDurationMs          *int  `json:"silence_duration_ms,omitempty"`          // мс тишины, дефолт 500
+}
+
+// MistralRealtimeVAD содержит настройки каскадного голосового pipeline Mistral.
+// RealtimeModel выбирается отдельно из realtime_models, а эти поля управляют
+// STT, sentence-to-speech и voice cloning.
+type MistralRealtimeVAD struct {
+	STTModel         *string                  `json:"stt_model,omitempty"`
+	TTSModel         *string                  `json:"tts_model,omitempty"`
+	Voice            *string                  `json:"voice,omitempty"`
+	VoiceID          *string                  `json:"voice_id,omitempty"`
+	ReferenceAudioID *string                  `json:"reference_audio_id,omitempty"`
+	VoiceClone       *MistralVoiceCloneConfig `json:"voice_clone,omitempty"`
+	SpeechFormat     *string                  `json:"speech_format,omitempty"` // wav или mp3
+	STTLanguage      *string                  `json:"stt_language,omitempty"`
+	STTStream        *bool                    `json:"stt_stream,omitempty"`
+	TTSStream        *bool                    `json:"tts_stream,omitempty"`
+}
+
+// MistralVoiceCloneConfig stores voice-cloning resource references.
+// Raw reference audio is deliberately not persisted in model data.
+type MistralVoiceCloneConfig struct {
+	Enabled             bool   `json:"enabled"`
+	ProfileID           string `json:"profile_id,omitempty"`
+	ReferenceAudioID    string `json:"reference_audio_id,omitempty"`
+	ReferenceFormat     string `json:"reference_format,omitempty"`
+	ReferenceDurationMs int    `json:"reference_duration_ms,omitempty"`
+}
+
+// MistralVoiceProfile is a persisted reference to a voice managed by Mistral
+// or by the application voice-profile storage. Raw audio is never included.
+type MistralVoiceProfile struct {
+	ID                  string `json:"id"`
+	Name                string `json:"name,omitempty"`
+	TTSModel            string `json:"tts_model,omitempty"`
+	ReferenceAudioID    string `json:"reference_audio_id,omitempty"`
+	ReferenceFormat     string `json:"reference_format,omitempty"`
+	ReferenceDurationMs int    `json:"reference_duration_ms,omitempty"`
+}
+
+// Validate checks the mutually exclusive voice profile references.
+func (v *MistralVoiceCloneConfig) Validate() error {
+	if v == nil || !v.Enabled {
+		return nil
+	}
+	if v.ProfileID == "" && v.ReferenceAudioID == "" {
+		return fmt.Errorf("для voice cloning не задан profile_id или reference_audio_id")
+	}
+	if v.ProfileID != "" && v.ReferenceAudioID != "" {
+		return fmt.Errorf("нельзя одновременно задавать profile_id и reference_audio_id")
+	}
+	if v.ReferenceDurationMs != 0 && (v.ReferenceDurationMs < 2000 || v.ReferenceDurationMs > 10000) {
+		return fmt.Errorf("длительность reference audio должна быть от 2000 до 10000 мс")
+	}
+	return nil
 }
 
 // EsperoConfig представляет настройки ожидания из ModelDataRequest
@@ -622,6 +688,11 @@ func (m *UniversalModel) SaveModel(userID uint32, umcr UMCR, data *UniversalMode
 	}
 	if data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0 {
 		return fmt.Errorf("не указан корректный ID realtime-модели для провайдера %s", umcr.Provider)
+	}
+	if data.RealtimeVAD != nil && data.RealtimeVAD.Mistral != nil && data.RealtimeVAD.Mistral.VoiceClone != nil {
+		if err := data.RealtimeVAD.Mistral.VoiceClone.Validate(); err != nil {
+			return fmt.Errorf("некорректная конфигурация voice cloning: %w", err)
+		}
 	}
 
 	// Сериализуем данные модели в JSON
@@ -1177,6 +1248,8 @@ func (m *UniversalModel) DecompressModelData(compressedData []byte, vecIds *VecI
 // Google-специфичные дефолты (Google-блок): VoiceName="Puck",
 // InputAudioTranscription=true, OutputAudioTranscription=false,
 // AutomaticActivityDetection=true, BargeIn=true, SilenceDurationMs=500.
+// Mistral-специфичные дефолты: STTStream=true, TTSStream=true,
+// SpeechFormat="wav".
 func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
 	if vad == nil {
 		return nil
@@ -1260,6 +1333,22 @@ func applyRealtimeVADDefaults(vad *RealtimeVAD) *RealtimeVAD {
 		if g.SilenceDurationMs == nil {
 			v := GoogleRealtimeSilenceDurationMs
 			g.SilenceDurationMs = &v
+		}
+	}
+
+	// ── Mistral-специфичные дефолты ─────────────────────────────────────────
+	if vad.Mistral != nil {
+		if vad.Mistral.STTStream == nil {
+			v := true
+			vad.Mistral.STTStream = &v
+		}
+		if vad.Mistral.TTSStream == nil {
+			v := true
+			vad.Mistral.TTSStream = &v
+		}
+		if vad.Mistral.SpeechFormat == nil {
+			v := "wav"
+			vad.Mistral.SpeechFormat = &v
 		}
 	}
 

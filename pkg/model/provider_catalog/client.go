@@ -195,6 +195,10 @@ func (c *Client) realtimeGoogleModels() ([]string, error) {
 }
 
 func isRealtimeModel(modelName string) bool {
+	if strings.HasPrefix(modelName, "-realtime-") ||
+		strings.HasPrefix(modelName, "-tts-") {
+		return true
+	}
 	return strings.Contains(modelName, "realtime")
 }
 
@@ -255,7 +259,7 @@ func (c *Client) generalMistralModels(ctx context.Context, apiKey string) ([]str
 }
 
 func isGeneralMistralModel(modelName string) bool {
-	exclude := []string{"embed", "moderation", "ocr", "realtime", "transcribe", "tts", "voxtral"}
+	exclude := []string{"embed", "moderation", "ocr", "realtime", "transcribe", "voxtral"}
 	for _, bad := range exclude {
 		if strings.Contains(modelName, bad) {
 			return false

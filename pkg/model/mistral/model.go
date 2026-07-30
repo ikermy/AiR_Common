@@ -34,6 +34,7 @@ type Model struct {
 	shutdownOnce   sync.Once
 	router         model.RouterInterface  // Ссылка на router
 	universalModel *create.UniversalModel // Для доступа к DecompressModelData
+	realtime       *RealtimeManager
 }
 
 type DB comdb.Exterior
@@ -106,7 +107,319 @@ func New(parent context.Context, actionHandler model.ActionHandler, db DB, route
 		UserModelTTl:  mode.UserModelTTl,
 		actionHandler: actionHandler,
 		router:        router,
+		realtime:      NewRealtimeManager(ctx),
 	}
+}
+
+// StartMistralRealtimeSession creates a managed voice session. The transport
+// pump can be attached after the provider's streaming STT protocol is chosen.
+func (m *Model) StartMistralRealtimeSession(userID uint32, dialogID, respID uint64) (*MistralRealtimeSession, error) {
+	if m == nil || m.realtime == nil {
+		return nil, fmt.Errorf("Mistral realtime manager is not initialized")
+	}
+	record, err := m.db.GetModelByProviderAnyStatus(userID, create.ProviderMistral)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения Mistral-модели для realtime: %w", err)
+	}
+	if record == nil || record.Realtime == nil || record.Realtime.Name == "" {
+		return nil, fmt.Errorf("realtime-модель Mistral не настроена для userID=%d", userID)
+	}
+	if m.universalModel != nil {
+		compressedData, vecIDs, readErr := m.db.ReadUserModelByProvider(userID, create.ProviderMistral)
+		if readErr != nil {
+			return nil, fmt.Errorf("ошибка чтения конфигурации Mistral realtime: %w", readErr)
+		}
+		if compressedData != nil {
+			config, decodeErr := m.universalModel.DecompressModelData(compressedData, vecIDs)
+			if decodeErr != nil {
+				return nil, fmt.Errorf("ошибка распаковки конфигурации Mistral realtime: %w", decodeErr)
+			}
+			if !config.Realtime {
+				return nil, fmt.Errorf("Mistral realtime не включён для userID=%d", userID)
+			}
+			sessionConfig := config.RealtimeVAD
+			session, startErr := m.realtime.Start(userID, dialogID, respID)
+			if startErr != nil {
+				return nil, startErr
+			}
+			session.RealtimeModel = record.Realtime.Name
+			if sessionConfig != nil {
+				session.Config = sessionConfig.Mistral
+			}
+			if err := m.attachMistralRealtimeSTT(session); err != nil {
+				m.realtime.Close(respID)
+				return nil, err
+			}
+			return session, nil
+		}
+	}
+	session, err := m.realtime.Start(userID, dialogID, respID)
+	if err != nil {
+		return nil, err
+	}
+	session.RealtimeModel = record.Realtime.Name
+	if err := m.attachMistralRealtimeSTT(session); err != nil {
+		m.realtime.Close(respID)
+		return nil, err
+	}
+	return session, nil
+}
+
+func (m *Model) attachMistralRealtimeSTT(session *MistralRealtimeSession) error {
+	if session == nil {
+		return fmt.Errorf("Mistral realtime session is nil")
+	}
+	modelName := session.RealtimeModel
+	if session.Config != nil && session.Config.STTModel != nil && *session.Config.STTModel != "" {
+		modelName = *session.Config.STTModel
+	}
+	apiKey := m.client.resolveKey(session.UserID())
+	transport, err := NewMistralRealtimeSTT(RealtimeSTTConfig{
+		Model:  modelName,
+		APIKey: apiKey,
+	})
+	if err != nil {
+		return fmt.Errorf("настройка Mistral realtime STT: %w", err)
+	}
+	return session.StartSTT(transport, func(text string, turnID uint64) error {
+		if strings.TrimSpace(text) == "" {
+			return nil
+		}
+		return m.RequestStreaming(session.UserID(), session.DialogID(), text, func(delta string, done bool) error {
+			if !session.IsCurrentTurn(turnID) {
+				return nil
+			}
+			return m.StreamMistralRealtimeText(session.Context(), session.RespID(), delta, done)
+		})
+	})
+}
+
+// StreamMistralRealtimeText sends ready LLM sentence chunks to Voxtral TTS.
+func (m *Model) StreamMistralRealtimeText(ctx context.Context, respID uint64, delta string, final bool) error {
+	session, ok := m.GetMistralRealtimeSession(respID)
+	if !ok {
+		return fmt.Errorf("Mistral realtime session not found for respID=%d", respID)
+	}
+	if session.Config == nil || session.Config.TTSModel == nil || *session.Config.TTSModel == "" {
+		return fmt.Errorf("Mistral TTS-модель не настроена для respID=%d", respID)
+	}
+	session.Generating().Store(true)
+	defer session.Generating().Store(false)
+	if strings.TrimSpace(delta) != "" {
+		session.MarkFirstLLMToken()
+	}
+	turnID := session.CurrentTurn()
+	if turnID == 0 {
+		turnID = session.BeginTurn()
+	}
+	for _, sentence := range session.PushText(delta, final) {
+		session.PublishEvent(model.RealtimeEvent{Type: "audio_start", Text: sentence})
+		voiceID := stringValue(session.Config.VoiceID)
+		referenceAudio := stringValue(session.Config.ReferenceAudioID)
+		if session.Config.VoiceClone != nil {
+			if voiceID == "" {
+				voiceID = session.Config.VoiceClone.ProfileID
+			}
+			if referenceAudio == "" {
+				referenceAudio = session.Config.VoiceClone.ReferenceAudioID
+			}
+		}
+		body, contentType, err := m.client.Speech(ctx, session.UserID(), SpeechRequest{
+			Model:          *session.Config.TTSModel,
+			Input:          sentence,
+			Voice:          stringValue(session.Config.Voice),
+			VoiceID:        voiceID,
+			ReferenceAudio: referenceAudio,
+			ResponseFormat: stringValue(session.Config.SpeechFormat),
+		})
+		if err != nil {
+			session.Metrics().TTSErrors.Add(1)
+			session.PublishEvent(model.RealtimeEvent{Type: "error", Text: "Mistral TTS завершился с ошибкой", Err: err})
+			return err
+		}
+		streamer := StreamSpeechToSession
+		if strings.HasPrefix(strings.ToLower(contentType), "text/event-stream") {
+			streamer = StreamSpeechSSEToSession
+		}
+		if err := streamer(ctx, session, turnID, body); err != nil {
+			session.PublishEvent(model.RealtimeEvent{Type: "error", Text: "ошибка чтения Mistral TTS", Err: err})
+			return err
+		}
+		session.PublishEvent(model.RealtimeEvent{Type: "audio_end"})
+	}
+	return nil
+}
+
+// TranscribeMistralRealtimeSegment transcribes one finalized audio segment.
+// It is the transport-neutral STT primitive used by a future continuous pump.
+func (m *Model) TranscribeMistralRealtimeSegment(ctx context.Context, respID uint64, audio []byte, fileName string) (string, error) {
+	session, ok := m.GetMistralRealtimeSession(respID)
+	if !ok {
+		return "", fmt.Errorf("Mistral realtime session not found for respID=%d", respID)
+	}
+	modelName := session.RealtimeModel
+	language := ""
+	if session.Config != nil {
+		if session.Config.STTModel != nil && *session.Config.STTModel != "" {
+			modelName = *session.Config.STTModel
+		}
+		language = stringValue(session.Config.STTLanguage)
+	}
+	if modelName == "" {
+		return "", fmt.Errorf("Mistral STT-модель не настроена для respID=%d", respID)
+	}
+	text, err := m.client.TranscribeAudio(ctx, session.UserID(), modelName, language, fileName, audio)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(text) != "" {
+		session.BeginTurn()
+	}
+	return text, nil
+}
+
+// ProcessMistralRealtimeSegment runs one complete cascaded voice turn:
+// STT -> Mistral LLM streaming -> sentence chunking -> Voxtral TTS.
+func (m *Model) ProcessMistralRealtimeSegment(ctx context.Context, respID uint64, audio []byte, fileName string) error {
+	session, ok := m.GetMistralRealtimeSession(respID)
+	if !ok {
+		return fmt.Errorf("Mistral realtime session not found for respID=%d", respID)
+	}
+	text, err := m.TranscribeMistralRealtimeSegment(ctx, respID, audio, fileName)
+	if err != nil {
+		return err
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	err = m.RequestStreaming(session.UserID(), session.DialogID(), text, func(delta string, done bool) error {
+		return m.StreamMistralRealtimeText(ctx, respID, delta, done)
+	})
+	if err != nil {
+		session.Metrics().LLMErrors.Add(1)
+	}
+	return err
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func (m *Model) GetMistralRealtimeSession(respID uint64) (*MistralRealtimeSession, bool) {
+	if m == nil || m.realtime == nil {
+		return nil, false
+	}
+	return m.realtime.Get(respID)
+}
+
+func (m *Model) SendMistralRealtimeAudio(respID uint64, pcm16 []byte) error {
+	session, ok := m.GetMistralRealtimeSession(respID)
+	if !ok {
+		return fmt.Errorf("Mistral realtime session not found for respID=%d", respID)
+	}
+	return session.SendAudio(pcm16)
+}
+
+func (m *Model) CloseMistralRealtimeSession(respID uint64) {
+	if m != nil && m.realtime != nil {
+		m.realtime.Close(respID)
+	}
+}
+
+// SubscribeMistralRealtimeEvents exposes the common realtime event stream
+// without making Mistral depend on the router's RealtimeProvider interface.
+// The provider cannot be registered in the router until its continuous STT
+// transport is available, but callers that explicitly create a Mistral
+// session can already consume the same event contract as other providers.
+func (m *Model) SubscribeMistralRealtimeEvents(respID uint64) (<-chan model.RealtimeEvent, error) {
+	session, ok := m.GetMistralRealtimeSession(respID)
+	if !ok {
+		return nil, fmt.Errorf("Mistral realtime session not found for respID=%d", respID)
+	}
+	return session.SubscribeEvents()
+}
+
+func (m *Model) UnsubscribeMistralRealtimeEvents(respID uint64, sub <-chan model.RealtimeEvent) {
+	if session, ok := m.GetMistralRealtimeSession(respID); ok {
+		session.UnsubscribeEvents(sub)
+	}
+}
+
+func (m *Model) GetMistralRealtimeAudio(respID uint64) (<-chan []byte, error) {
+	session, ok := m.GetMistralRealtimeSession(respID)
+	if !ok {
+		return nil, fmt.Errorf("Mistral realtime session not found for respID=%d", respID)
+	}
+	return session.AudioOutput(), nil
+}
+
+func (m *Model) GetMistralRealtimeDrain(respID uint64) (<-chan struct{}, error) {
+	session, ok := m.GetMistralRealtimeSession(respID)
+	if !ok {
+		return nil, fmt.Errorf("Mistral realtime session not found for respID=%d", respID)
+	}
+	return session.DrainOutput(), nil
+}
+
+func (m *Model) GetMistralRealtimeGenerating(respID uint64) *atomic.Bool {
+	session, ok := m.GetMistralRealtimeSession(respID)
+	if !ok {
+		return nil
+	}
+	return session.Generating()
+}
+
+func (m *Model) SetMistralRealtimeDisconnectCallback(respID uint64, callback func(uint64)) error {
+	session, ok := m.GetMistralRealtimeSession(respID)
+	if !ok {
+		return fmt.Errorf("Mistral realtime session not found for respID=%d", respID)
+	}
+	session.SetDisconnectCallback(callback)
+	return nil
+}
+
+// The following methods implement model.RealtimeProvider. The transport and
+// session orchestration remain Mistral-specific, while the router can expose
+// the same realtime API to clients as it does for OpenAI and Google.
+func (m *Model) StartRealtimeSession(userID uint32, dialogID, respID uint64) error {
+	_, err := m.StartMistralRealtimeSession(userID, dialogID, respID)
+	return err
+}
+
+func (m *Model) CloseRealtimeSession(respID uint64) {
+	m.CloseMistralRealtimeSession(respID)
+}
+
+func (m *Model) SendRealtimeAudio(respID uint64, pcm16 []byte) error {
+	return m.SendMistralRealtimeAudio(respID, pcm16)
+}
+
+func (m *Model) SubscribeEvents(respID uint64) (<-chan model.RealtimeEvent, error) {
+	return m.SubscribeMistralRealtimeEvents(respID)
+}
+
+func (m *Model) UnsubscribeEvents(respID uint64, sub <-chan model.RealtimeEvent) {
+	m.UnsubscribeMistralRealtimeEvents(respID, sub)
+}
+
+func (m *Model) GetRealtimeAudio(respID uint64) (<-chan []byte, error) {
+	return m.GetMistralRealtimeAudio(respID)
+}
+
+func (m *Model) GetRealtimeDrain(respID uint64) (<-chan struct{}, error) {
+	return m.GetMistralRealtimeDrain(respID)
+}
+
+func (m *Model) GetRealtimeGenerating(respID uint64) *atomic.Bool {
+	return m.GetMistralRealtimeGenerating(respID)
+}
+
+func (m *Model) SetRealtimeDisconnectCallback(respID uint64, callback func(uint64)) error {
+	return m.SetMistralRealtimeDisconnectCallback(respID, callback)
 }
 
 // NewAsRouterOption создаёт Mistral модель и возвращает её как опцию для ModelRouter
@@ -582,6 +895,10 @@ func (m *Model) Shutdown(shutCh chan<- com.LogMsg) {
 
 		if m.client != nil {
 			m.client.Shutdown()
+		}
+
+		if m.realtime != nil {
+			m.realtime.CloseAll()
 		}
 
 		m.cleanupAllResponders()

@@ -2410,8 +2410,9 @@ func (d *DB) SetUserSubscriptionNotified(user uint32) error {
 }
 
 // SyncProviderModels синхронизирует каталог моделей провайдера с уже полученным списком моделей в зависимости от типа модели.
-// При удалении неподдерживаемой модели из провайдера она удаляется из gpt_models и realtime_models
-// очищает ссылку в user_models (GptModelId = NULL), чтобы пользователь мог выбрать другую.
+// При удалении неподдерживаемой модели из провайдера она удаляется из
+// gpt_models или realtime_models, а ссылка в user_gpt (Model или Realtime)
+// переводится на модель по умолчанию. Связь user_models при этом сохраняется.
 func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create.ProviderModelsSyncResult, error) {
 	result := create.ProviderModelsSyncResult{Provider: union.Provider}
 	if !union.Provider.IsValid() {
@@ -2423,6 +2424,7 @@ func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create
 
 	var tableName string
 	var userModelColumn string
+	modelCategory := create.ProviderModelGeneral
 	switch {
 	case union.ModelType.IsGeneral():
 		tableName = "gpt_models"
@@ -2430,6 +2432,7 @@ func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create
 	case union.ModelType.IsRealtime():
 		tableName = "realtime_models"
 		userModelColumn = "Realtime"
+		modelCategory = create.ProviderModelRealtime
 	default:
 		return result, fmt.Errorf("некорректный тип модели: %d", union.ModelType)
 	}
@@ -2585,9 +2588,11 @@ func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create
 			_ = modelRows.Close()
 			return result, fmt.Errorf("ошибка чтения актуального списка моделей: %w", err)
 		}
+		trimmedName := strings.TrimSpace(modelName)
 		result.Models = append(result.Models, create.ProviderModel{
-			ID:   modelID,
-			Name: strings.TrimSpace(modelName),
+			ID:       modelID,
+			Name:     trimmedName,
+			Category: providerModelCategory(trimmedName, modelCategory),
 		})
 	}
 	if err := modelRows.Err(); err != nil {
@@ -2603,4 +2608,16 @@ func (d *DB) SyncProviderModels(union create.Union, modelNames []string) (create
 	}
 
 	return result, nil
+}
+
+func providerModelCategory(name, defaultCategory string) string {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.Contains(lower, "tts"):
+		return create.ProviderModelTTS
+	case strings.Contains(lower, "transcribe") || strings.Contains(lower, "stt"):
+		return create.ProviderModelSTT
+	default:
+		return defaultCategory
+	}
 }

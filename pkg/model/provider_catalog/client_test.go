@@ -166,3 +166,21 @@ func TestGeneralMistralModelsIntegration(t *testing.T) {
 		}
 	}
 }
+
+func TestMistralAllModelsIntegration(t *testing.T) {
+	apiKey := os.Getenv("MISTRAL_API_KEY")
+	if apiKey == "" {
+		t.Skip("MISTRAL_API_KEY не задан в окружении")
+	}
+
+	models, err := NewClient().fetchMistralModels(context.Background(), apiKey)
+	if err != nil {
+		t.Fatalf("generalMistralModels() returned error: %v", err)
+	}
+
+	fmt.Println("all mistral general:", models)
+
+	if len(models) == 0 {
+		t.Fatal("generalMistralModels() returned no models")
+	}
+}

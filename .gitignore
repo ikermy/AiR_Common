@@ -55,7 +55,7 @@ gen/
 generated/
 
 # Exclude documentation and migration files
-docs/
+../air_bff/doc/comm/docs/
 migrations/
 
 # Temporary files
