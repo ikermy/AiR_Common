@@ -1,2 +1,2 @@
-v1.50.77
-realtime mistral release fix realtime:null
+v1.50.78
+realtime mistral getkey fix

@@ -520,7 +520,7 @@ func (m *MistralAgentClient) SendFunctionResult(conversationID string, toolCallI
 
 // PatchAgent обновляет конфигурацию Mistral Agent через PATCH /v1/agents/{agent_id}.
 // Используется для синхронизации инструментов (tools) с текущим набором MCP-функций.
-func (m *MistralAgentClient) PatchAgent(agentID string, tools []map[string]any) error {
+func (m *MistralAgentClient) PatchAgent(agentID string, tools []map[string]any, userID uint32) error {
 	patchURL := fmt.Sprintf("%s/%s", mode.MistralAgentsBaseURL, agentID)
 
 	payload := map[string]any{
@@ -537,7 +537,7 @@ func (m *MistralAgentClient) PatchAgent(agentID string, tools []map[string]any) 
 		return fmt.Errorf("ошибка создания PATCH запроса: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+m.apiKey)
+	req.Header.Set("Authorization", "Bearer "+m.resolveKey(userID))
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := http.DefaultClient.Do(req)

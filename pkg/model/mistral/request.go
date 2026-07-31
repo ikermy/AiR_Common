@@ -1001,7 +1001,7 @@ func (m *Model) syncAgentTools(respModel *RespModel) error {
 	}
 
 	// Обновляем агент на стороне Mistral — теперь он знает об актуальных инструментах
-	if err := m.client.PatchAgent(respModel.Assist.AssistId, tools); err != nil {
+	if err := m.client.PatchAgent(respModel.Assist.AssistId, tools, respModel.Assist.UserID); err != nil {
 		return fmt.Errorf("PATCH agent вернул ошибку: %w", err)
 	}
 
