@@ -1,4 +1,4 @@
-package domain
+package commdom
 
 type UniversalModelData struct {
 	Name         string        `json:"name"`

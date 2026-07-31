@@ -1,6 +1,6 @@
 package create
 
-import "github.com/ikermy/air_common/pkg/model/domain"
+import "github.com/ikermy/air_common/pkg/model/commdom"
 
 // applyRealtimeVADDefaults применяет дефолтные значения к RealtimeVAD и вложенному GoogleRealtimeVAD.
 //
@@ -14,7 +14,7 @@ import "github.com/ikermy/air_common/pkg/model/domain"
 // AutomaticActivityDetection=true, BargeIn=true, SilenceDurationMs=500.
 // Mistral-специфичные дефолты: STTStream=true, TTSStream=true,
 // SpeechFormat="wav".
-func applyRealtimeVADDefaults(vad *domain.RealtimeVAD) *domain.RealtimeVAD {
+func applyRealtimeVADDefaults(vad *commdom.RealtimeVAD) *commdom.RealtimeVAD {
 	if vad == nil {
 		return nil
 	}

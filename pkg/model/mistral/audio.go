@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"github.com/ikermy/air_common/pkg/mode"
-	modeldomain "github.com/ikermy/air_common/pkg/model/domain"
+	modeldomain "github.com/ikermy/air_common/pkg/model/commdom"
 )
 
 const (

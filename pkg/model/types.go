@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/ikermy/air_common/pkg/model/commdom"
 	"github.com/ikermy/air_common/pkg/model/create"
-	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 // ============================================================================
@@ -38,7 +38,7 @@ type Assistant struct {
 	Events     Notifications
 	UserID     uint32
 	Limit      uint32
-	Provider   domain.ProviderType
+	Provider   commdom.ProviderType
 	Espero     uint8
 	Ignore     bool
 }

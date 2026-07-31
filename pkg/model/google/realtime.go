@@ -10,8 +10,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/ikermy/air_common/pkg/model"
+	"github.com/ikermy/air_common/pkg/model/commdom"
 	"github.com/ikermy/air_common/pkg/model/create"
-	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 // ============================================================================
@@ -369,8 +369,8 @@ func normalizeLiveAPIToolKeys(tools []map[string]any) []map[string]any {
 //  3. Глобальные константы (GoogleRealtimeDefaultVoice, GoogleRealtimeSilenceDurationMs, ...)
 func (m *Model) sendGoogleSetup(rs *GoogleRealtimeSession) error {
 	cfg := rs.agentConfig
-	vad := cfg.RealtimeVAD             // может быть nil
-	var gvad *domain.GoogleRealtimeVAD // Google-специфичный блок, может быть nil
+	vad := cfg.RealtimeVAD              // может быть nil
+	var gvad *commdom.GoogleRealtimeVAD // Google-специфичный блок, может быть nil
 	if vad != nil {
 		gvad = vad.Google
 	}

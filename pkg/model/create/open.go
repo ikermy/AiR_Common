@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/ikermy/air_common/pkg/mode"
-	"github.com/ikermy/air_common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/model/commdom"
 )
 
 // ============================================================================
@@ -932,7 +932,7 @@ func GenerateModelSchema(hasMetaAction bool, hasOperator bool) map[string]any {
 }
 
 // createModel Создаю новую модель OpenAI Assistant
-func (m *UniversalModel) createModel(_ uint32, modelData *domain.UniversalModelData, _ []domain.Ids) (domain.UMCR, error) {
+func (m *UniversalModel) createModel(_ uint32, modelData *commdom.UniversalModelData, _ []commdom.Ids) (commdom.UMCR, error) {
 	// modelData уже распарсена и типизирована, используем напрямую
 
 	// НОВЫЙ ПОДХОД: Генерируем эмбеддинги локально вместо использования Vector Store API
@@ -958,21 +958,21 @@ func (m *UniversalModel) createModel(_ uint32, modelData *domain.UniversalModelD
 	//logger.Debug("Конфигурация OpenAI модели создана: model=%s, embeddings=local",
 	//	modelData.GptType.Name, userID)
 
-	return domain.UMCR{
+	return commdom.UMCR{
 		AssistID: modelData.UseModelName.GptType.Name, // Просто имя модели (gpt-4o-mini и т.д.) фактически это легаси
 		AllIds:   allIds,                              // null - не используется для OpenAI с локальными эмбеддингами
-		Provider: domain.ProviderOpenAI,
+		Provider: commdom.ProviderOpenAI,
 	}, nil
 }
 
 // deleteModel удаляет модель OpenAI и связанные ресурсы
-func (m *UniversalModel) deleteModel(_ uint32, modelRecord *domain.UserModelRecord, _ bool, progressCallback func(string)) error {
+func (m *UniversalModel) deleteModel(_ uint32, modelRecord *commdom.UserModelRecord, _ bool, progressCallback func(string)) error {
 	if progressCallback != nil {
 		progressCallback("🔄 Удаление модели OpenAI...")
 	}
 
 	// Парсим VecIds из AllIds
-	var vecIds domain.VecIds
+	var vecIds commdom.VecIds
 	if len(modelRecord.AllIds) > 0 {
 		if err := json.Unmarshal(modelRecord.AllIds, &vecIds); err != nil {
 			//logger.Warn("Ошибка парсинга VecIds: %v", err, userID)
@@ -1000,7 +1000,7 @@ func (m *UniversalModel) deleteModel(_ uint32, modelRecord *domain.UserModelReco
 }
 
 // updateOpenAIModelInPlace обновляет OpenAI Assistant
-func (m *UniversalModel) updateOpenAIModelInPlace(userID uint32, _, updated *domain.UniversalModelData) error {
+func (m *UniversalModel) updateOpenAIModelInPlace(userID uint32, _, updated *commdom.UniversalModelData) error {
 
 	// ВАЖНО: В новом подходе с Chat Completions API НЕ создаётся Assistant в OpenAI.
 	// AssistId в БД хранит имя модели (например "gpt-4o-mini"), а не ID ассистента.
@@ -1009,7 +1009,7 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userID uint32, _, updated *dom
 	// Поэтому обновление через ModifyAssistant НЕ требуется и было удалено.
 
 	// Получаем запись из БД для получения AssistId
-	record, err := m.db.GetModelByProviderAnyStatus(userID, domain.ProviderOpenAI)
+	record, err := m.db.GetModelByProviderAnyStatus(userID, commdom.ProviderOpenAI)
 	if err != nil {
 		return fmt.Errorf("ошибка получения записи модели: %w", err)
 	}
@@ -1019,10 +1019,10 @@ func (m *UniversalModel) updateOpenAIModelInPlace(userID uint32, _, updated *dom
 
 	// Для OpenAI с локальными эмбеддингами AllIds не используется
 	// Оставляем существующее значение из БД без изменений
-	umcr := domain.UMCR{
+	umcr := commdom.UMCR{
 		AssistID: record.AssistId,
 		AllIds:   record.AllIds, // Сохраняем как было (для обратной совместимости)
-		Provider: domain.ProviderOpenAI,
+		Provider: commdom.ProviderOpenAI,
 	}
 
 	// Сохраняем в БД

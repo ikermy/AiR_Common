@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/ikermy/air_common/pkg/model/commdom"
 	"github.com/ikermy/air_common/pkg/model/create"
-	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 // CreateModel создаёт новую модель Mistral
 // Делегирует вызов к UniversalModel из пакета create
-func (m *Model) CreateModel(userID uint32, provider domain.ProviderType, modelData *domain.UniversalModelData, fileIDs []domain.Ids) (domain.UMCR, error) {
+func (m *Model) CreateModel(userID uint32, provider commdom.ProviderType, modelData *commdom.UniversalModelData, fileIDs []commdom.Ids) (commdom.UMCR, error) {
 	// Создаем экземпляр UniversalModel для делегирования
 	modelsManager := &create.UniversalModel{}
 
@@ -133,9 +133,9 @@ func (m *Model) getUserLibraryID(userID uint32) (string, error) {
 	}
 
 	// Ищем модель Mistral
-	var mistralModel *domain.UserModelRecord
+	var mistralModel *commdom.UserModelRecord
 	for i := range userModels {
-		if userModels[i].Provider == domain.ProviderMistral {
+		if userModels[i].Provider == commdom.ProviderMistral {
 			mistralModel = &userModels[i]
 			break
 		}
@@ -146,7 +146,7 @@ func (m *Model) getUserLibraryID(userID uint32) (string, error) {
 	}
 
 	// Десериализуем данные модели из AllIds
-	var vecIds domain.VecIds
+	var vecIds commdom.VecIds
 	if len(mistralModel.AllIds) > 0 {
 		if err := json.Unmarshal(mistralModel.AllIds, &vecIds); err != nil {
 			return "", fmt.Errorf("не удалось получить данные библиотеки: %w", err)
@@ -205,9 +205,9 @@ func (m *Model) saveLibraryID(userID uint32, libraryID string) error {
 	}
 
 	// Ищем модель Mistral
-	var mistralModel *domain.UserModelRecord
+	var mistralModel *commdom.UserModelRecord
 	for i := range userModels {
-		if userModels[i].Provider == domain.ProviderMistral {
+		if userModels[i].Provider == commdom.ProviderMistral {
 			mistralModel = &userModels[i]
 			break
 		}
@@ -218,16 +218,16 @@ func (m *Model) saveLibraryID(userID uint32, libraryID string) error {
 	}
 
 	// Десериализуем текущие данные из AllIds
-	var vecIds domain.VecIds
+	var vecIds commdom.VecIds
 	if len(mistralModel.AllIds) > 0 {
 		if err := json.Unmarshal(mistralModel.AllIds, &vecIds); err != nil {
 			//logger.Warn("Ошибка десериализации AllIds, создаём новую структуру: %v", err, userID)
-			vecIds = domain.VecIds{
+			vecIds = commdom.VecIds{
 				FileIds: mistralModel.FileIds, // Сохраняем существующие файлы
 			}
 		}
 	} else {
-		vecIds = domain.VecIds{
+		vecIds = commdom.VecIds{
 			FileIds: mistralModel.FileIds,
 		}
 	}
@@ -260,9 +260,9 @@ func (m *Model) addFileToDatabase(userID uint32, fileID, fileName string) error 
 	}
 
 	// Ищем модель Mistral
-	var mistralModel *domain.UserModelRecord
+	var mistralModel *commdom.UserModelRecord
 	for i := range userModels {
-		if userModels[i].Provider == domain.ProviderMistral {
+		if userModels[i].Provider == commdom.ProviderMistral {
 			mistralModel = &userModels[i]
 			break
 		}
@@ -273,27 +273,27 @@ func (m *Model) addFileToDatabase(userID uint32, fileID, fileName string) error 
 	}
 
 	// Десериализуем текущие данные из AllIds
-	var vecIds domain.VecIds
+	var vecIds commdom.VecIds
 	if len(mistralModel.AllIds) > 0 {
 		if err := json.Unmarshal(mistralModel.AllIds, &vecIds); err != nil {
 			//logger.Warn("Ошибка десериализации AllIds: %v", err, userID)
 			// Создаём новую структуру, сохраняя FileIds из mistralModel
-			vecIds = domain.VecIds{
+			vecIds = commdom.VecIds{
 				FileIds:  mistralModel.FileIds,
 				VectorId: []string{}, // Пустой, т.к. не смогли прочитать
 			}
 		}
 	} else {
 		// AllIds пусто - создаём новую структуру
-		vecIds = domain.VecIds{
-			FileIds:  []domain.Ids{},
+		vecIds = commdom.VecIds{
+			FileIds:  []commdom.Ids{},
 			VectorId: []string{},
 		}
 	}
 
 	// Инициализируем FileIds если nil
 	if vecIds.FileIds == nil {
-		vecIds.FileIds = []domain.Ids{}
+		vecIds.FileIds = []commdom.Ids{}
 	}
 
 	// Проверяем, нет ли уже такого файла
@@ -305,7 +305,7 @@ func (m *Model) addFileToDatabase(userID uint32, fileID, fileName string) error 
 	}
 
 	// Добавляем новый файл
-	vecIds.FileIds = append(vecIds.FileIds, domain.Ids{
+	vecIds.FileIds = append(vecIds.FileIds, commdom.Ids{
 		ID:   fileID,
 		Name: fileName,
 	})
@@ -336,9 +336,9 @@ func (m *Model) removeFileFromDatabase(userID uint32, fileID string) (int, error
 	}
 
 	// Ищем модель Mistral
-	var mistralModel *domain.UserModelRecord
+	var mistralModel *commdom.UserModelRecord
 	for i := range userModels {
-		if userModels[i].Provider == domain.ProviderMistral {
+		if userModels[i].Provider == commdom.ProviderMistral {
 			mistralModel = &userModels[i]
 			break
 		}
@@ -349,7 +349,7 @@ func (m *Model) removeFileFromDatabase(userID uint32, fileID string) (int, error
 	}
 
 	// Десериализуем текущие данные из AllIds
-	var vecIds domain.VecIds
+	var vecIds commdom.VecIds
 	if len(mistralModel.AllIds) > 0 {
 		if err := json.Unmarshal(mistralModel.AllIds, &vecIds); err != nil {
 			//logger.Warn("Ошибка десериализации AllIds: %v", err, userID)
@@ -365,7 +365,7 @@ func (m *Model) removeFileFromDatabase(userID uint32, fileID string) (int, error
 
 	// Ищем и удаляем файл
 	found := false
-	newFileIds := make([]domain.Ids, 0, len(vecIds.FileIds))
+	newFileIds := make([]commdom.Ids, 0, len(vecIds.FileIds))
 	for _, file := range vecIds.FileIds {
 		if file.ID == fileID {
 			found = true
@@ -409,9 +409,9 @@ func (m *Model) clearLibraryID(userID uint32) error {
 	}
 
 	// Ищем модель Mistral
-	var mistralModel *domain.UserModelRecord
+	var mistralModel *commdom.UserModelRecord
 	for i := range userModels {
-		if userModels[i].Provider == domain.ProviderMistral {
+		if userModels[i].Provider == commdom.ProviderMistral {
 			mistralModel = &userModels[i]
 			break
 		}

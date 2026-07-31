@@ -1,12 +1,12 @@
 package create
 
-import "github.com/ikermy/air_common/pkg/model/domain"
+import "github.com/ikermy/air_common/pkg/model/commdom"
 
 // ProvidersWithApiKeys проверяет наличие пользовательских ключей у всех
 // зарегистрированных провайдеров.
-func (m *UniversalModel) ProvidersWithApiKeys(userID uint32) domain.ProvidersAvailability {
-	result := domain.ProvidersAvailability{Available: make([]string, 0), Unavailable: make([]string, 0)}
-	for _, p := range domain.AllProviders {
+func (m *UniversalModel) ProvidersWithApiKeys(userID uint32) commdom.ProvidersAvailability {
+	result := commdom.ProvidersAvailability{Available: make([]string, 0), Unavailable: make([]string, 0)}
+	for _, p := range commdom.AllProviders {
 		key, err := m.db.GetUserAPIKey(userID, p)
 		if err == nil && key != "" {
 			result.Available = append(result.Available, p.String())
@@ -17,12 +17,12 @@ func (m *UniversalModel) ProvidersWithApiKeys(userID uint32) domain.ProvidersAva
 	return result
 }
 
-func (m *UniversalModel) SetUserAPIKey(userID uint32, provider domain.ProviderType, key string) error {
+func (m *UniversalModel) SetUserAPIKey(userID uint32, provider commdom.ProviderType, key string) error {
 	return m.db.SetUserAPIKey(userID, provider, key)
 }
-func (m *UniversalModel) GetUserAPIKey(userID uint32, provider domain.ProviderType) (string, error) {
+func (m *UniversalModel) GetUserAPIKey(userID uint32, provider commdom.ProviderType) (string, error) {
 	return m.db.GetUserAPIKey(userID, provider)
 }
-func (m *UniversalModel) DeleteUserAPIKey(userID uint32, provider domain.ProviderType) error {
+func (m *UniversalModel) DeleteUserAPIKey(userID uint32, provider commdom.ProviderType) error {
 	return m.db.DeleteUserAPIKey(userID, provider)
 }

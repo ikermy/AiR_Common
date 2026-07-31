@@ -1,4 +1,4 @@
-package domain
+package commdom
 
 type DocumentMetadata struct {
 	Source    string `json:"source,omitempty"`

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/ikermy/air_common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/model/commdom"
 )
 
 // Список моделей которые поддерживают 24h - extending кеширование
@@ -53,16 +53,16 @@ type DB interface {
 	// SyncProviderModels синхронизирует каталог моделей провайдера с уже полученным списком моделей.
 	// При удалении неподдерживаемой модели из провайдера она удаляется из gpt_models и
 	// очищает ссылку в user_models (GptModelId = NULL), чтобы пользователь мог выбрать другую.
-	SyncProviderModels(union domain.Union, modelNames []string) (domain.ProviderModelsSyncResult, error)
+	SyncProviderModels(union commdom.Union, modelNames []string) (commdom.ProviderModelsSyncResult, error)
 
 	// SaveUserModel сохраняет модель в user_gpt и создает связь в user_models (всё в одной транзакции)
 	// Автоматически определяет IsActive (первая модель пользователя становится активной)
 	// provider - тип провайдера (1=OpenAI, 2=Mistral)
-	SaveUserModel(userID uint32, provider domain.ProviderType, name, assistantId string, data []byte, def domain.DefaultProvidersModels, ids json.RawMessage, operator bool) error
+	SaveUserModel(userID uint32, provider commdom.ProviderType, name, assistantId string, data []byte, def commdom.DefaultProvidersModels, ids json.RawMessage, operator bool) error
 
 	// ReadUserModelByProvider получает сжатые данные модели по провайдеру
 	// Возвращает: compressedData, vecIds, error
-	ReadUserModelByProvider(userID uint32, provider domain.ProviderType) ([]byte, *domain.VecIds, error)
+	ReadUserModelByProvider(userID uint32, provider commdom.ProviderType) ([]byte, *commdom.VecIds, error)
 
 	// GetUserVectorStorage получает ID векторного хранилища (deprecated: используйте ReadUserModelByProvider)
 	GetUserVectorStorage(userID uint32) (string, error)
@@ -71,22 +71,22 @@ type DB interface {
 	GetOrSetUserStorageLimit(userID uint32, setStorage int64) (remaining uint64, totalLimit uint64, err error)
 
 	// GetAllUserModels GetUserModels получает все модели пользователя из user_models
-	GetAllUserModels(userID uint32) ([]domain.UserModelRecord, error)
+	GetAllUserModels(userID uint32) ([]commdom.UserModelRecord, error)
 
 	// GetActiveModel получает активную модель пользователя
-	GetActiveModel(userID uint32) (*domain.UserModelRecord, error)
+	GetActiveModel(userID uint32) (*commdom.UserModelRecord, error)
 
 	// GetModelByProvider получает АКТИВНУЮ модель пользователя по провайдеру
-	GetModelByProvider(userID uint32, provider domain.ProviderType) (*domain.UserModelRecord, error)
+	GetModelByProvider(userID uint32, provider commdom.ProviderType) (*commdom.UserModelRecord, error)
 
 	// GetModelByProviderAnyStatus получает модель пользователя по провайдеру независимо от статуса активности
-	GetModelByProviderAnyStatus(userID uint32, provider domain.ProviderType) (*domain.UserModelRecord, error)
+	GetModelByProviderAnyStatus(userID uint32, provider commdom.ProviderType) (*commdom.UserModelRecord, error)
 
 	// SetActiveModel переключает активную модель (в транзакции)
 	SetActiveModel(userID uint32, modelId uint64) error
 
 	// SetActiveModelByProvider устанавливает активную модель по провайдеру
-	SetActiveModelByProvider(userID uint32, provider domain.ProviderType) error
+	SetActiveModelByProvider(userID uint32, provider commdom.ProviderType) error
 
 	// RemoveModelFromUser удаляет связь модель-пользователь
 	RemoveModelFromUser(userID uint32, modelId uint64) error
@@ -97,10 +97,10 @@ type DB interface {
 	// ============================================================================
 
 	// SaveEmbedding сохраняет векторный эмбеддинг документа в БД с привязкой к модели
-	SaveEmbedding(userID uint32, modelId uint64, provider domain.ProviderType, docID, docName, content string, embedding []float32, metadata domain.DocumentMetadata) error
+	SaveEmbedding(userID uint32, modelId uint64, provider commdom.ProviderType, docID, docName, content string, embedding []float32, metadata commdom.DocumentMetadata) error
 
 	// ListModelEmbeddings возвращает список всех документов конкретной модели и провайдера с эмбеддингами
-	ListModelEmbeddings(modelId uint64, provider domain.ProviderType) ([]domain.VectorDocument, error)
+	ListModelEmbeddings(modelId uint64, provider commdom.ProviderType) ([]commdom.VectorDocument, error)
 
 	// DeleteEmbedding удаляет эмбеддинг документа по ID модели и docID
 	DeleteEmbedding(modelId uint64, docID string) error
@@ -109,16 +109,16 @@ type DB interface {
 	DeleteAllModelEmbeddings(modelId uint64) error
 
 	// SearchSimilarEmbeddings ищет похожие документы в рамках конкретной модели и провайдера используя VEC_Distance_Cosine
-	SearchSimilarEmbeddings(modelId uint64, provider domain.ProviderType, queryEmbedding []float32, limit int) ([]domain.VectorDocument, error)
+	SearchSimilarEmbeddings(modelId uint64, provider commdom.ProviderType, queryEmbedding []float32, limit int) ([]commdom.VectorDocument, error)
 
 	// GetUserTimeZone получает часовой пояс пользователя из БД
 	UserTimeZone(userID uint32) (string, error)
 
 	// UserAPIKey — персональные API-ключи провайдеров для каждого пользователя.
 	// GetUserAPIKey возвращает ("", nil) если ключ не задан.
-	GetUserAPIKey(userID uint32, provider domain.ProviderType) (string, error)
-	SetUserAPIKey(userID uint32, provider domain.ProviderType, key string) error
-	DeleteUserAPIKey(userID uint32, provider domain.ProviderType) error
+	GetUserAPIKey(userID uint32, provider commdom.ProviderType) (string, error)
+	SetUserAPIKey(userID uint32, provider commdom.ProviderType, key string) error
+	DeleteUserAPIKey(userID uint32, provider commdom.ProviderType) error
 }
 
 type UniversalModel struct {

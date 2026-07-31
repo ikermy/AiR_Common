@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/ikermy/air_common/pkg/model"
+	"github.com/ikermy/air_common/pkg/model/commdom"
 	"github.com/ikermy/air_common/pkg/model/create"
-	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 // createConversationInputs создаёт структуру inputs для Mistral Conversations API StartConversation
@@ -352,7 +352,7 @@ func (m *Model) Request(userID uint32, dialogID uint64, text string, files ...mo
 	} // Конец цикла обработки функций
 
 	if functionCallCount >= create.MaxFunctionCalls {
-		//logger.Warn("Достигнут лимит вызовов функций (%d), прерываем цепочку", domain.MaxFunctionCalls, userID)
+		//logger.Warn("Достигнут лимит вызовов функций (%d), прерываем цепочку", commdom.MaxFunctionCalls, userID)
 	}
 
 	// Добавляем ответ ассистента в контекст только если он не пустой
@@ -373,7 +373,7 @@ func (m *Model) Request(userID uint32, dialogID uint64, text string, files ...mo
 }
 
 // processResponse обрабатывает ответ от Mistral
-func (m *Model) processResponse(response Response, userID uint32, provider domain.ProviderType) model.AssistResponse {
+func (m *Model) processResponse(response Response, userID uint32, provider commdom.ProviderType) model.AssistResponse {
 	messageText := strings.TrimSpace(response.Message)
 
 	// СНАЧАЛА парсим JSON из ответа (если есть) чтобы получить красивые имена файлов
@@ -959,7 +959,7 @@ func (m *Model) syncAgentTools(respModel *RespModel) error {
 	var tools []map[string]any
 
 	// MCP function tools — основной источник runtime-инструментов
-	if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, respModel.Assist.UserID, domain.ProviderMistral); err == nil {
+	if mcpTools, err := mcpProvider.FetchToolsList(m.ctx, respModel.Assist.UserID, commdom.ProviderMistral); err == nil {
 		for _, t := range mcpTools {
 			tools = append(tools, map[string]any{
 				"type": "function",
@@ -974,7 +974,7 @@ func (m *Model) syncAgentTools(respModel *RespModel) error {
 
 	// Нативные built-in инструменты агента (code_interpreter, image_generation, web_search, document_library)
 	if m.universalModel != nil {
-		if compressedData, _, err := m.db.ReadUserModelByProvider(respModel.Assist.UserID, domain.ProviderMistral); err == nil && compressedData != nil {
+		if compressedData, _, err := m.db.ReadUserModelByProvider(respModel.Assist.UserID, commdom.ProviderMistral); err == nil && compressedData != nil {
 			if modelData, err := m.universalModel.DecompressModelData(compressedData, nil); err == nil {
 				if modelData.Interpreter {
 					tools = append(tools, map[string]any{"type": "code_interpreter"})

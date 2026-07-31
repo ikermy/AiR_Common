@@ -1,4 +1,4 @@
-package domain
+package commdom
 
 type Ids struct {
 	Name string `json:"name"`

@@ -7,7 +7,7 @@ import (
 
 	"github.com/ikermy/air_common/pkg/com"
 	"github.com/ikermy/air_common/pkg/comdb"
-	"github.com/ikermy/air_common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/model/commdom"
 )
 
 // DB алиас для интерфейса БД
@@ -30,53 +30,53 @@ type Inter interface {
 	DisconnectUser(userID uint32)
 	InvalidateUserAgentConfigCache(userID uint32)
 	Shutdown(shutCh chan<- com.LogMsg)
-	UpdateModelsListByProvider(ctx context.Context, union domain.Union, apiKey string) ([]domain.ProviderModel, error)
+	UpdateModelsListByProvider(ctx context.Context, union commdom.Union, apiKey string) ([]commdom.ProviderModel, error)
 }
 
 // RouterInterface минимальный интерфейс для доступа к методам роутера
 type RouterInterface interface {
-	ProvidersWithApiKeys(userID uint32) domain.ProvidersAvailability
-	RevokeUserAPIKey(userID uint32, provider domain.ProviderType) error
+	ProvidersWithApiKeys(userID uint32) commdom.ProvidersAvailability
+	RevokeUserAPIKey(userID uint32, provider commdom.ProviderType) error
 }
 
 // OpenAIManager расширяет Inter методами управления моделями OpenAI
 type OpenAIManager interface {
 	Inter
-	CreateModel(userID uint32, provider domain.ProviderType, modelData *domain.UniversalModelData, fileIDs []domain.Ids) (domain.UMCR, error)
-	UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata domain.DocumentMetadata) (string, error)
-	SearchSimilarDocuments(userID uint32, query string, limit int) ([]domain.VectorDocument, error)
+	CreateModel(userID uint32, provider commdom.ProviderType, modelData *commdom.UniversalModelData, fileIDs []commdom.Ids) (commdom.UMCR, error)
+	UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata commdom.DocumentMetadata) (string, error)
+	SearchSimilarDocuments(userID uint32, query string, limit int) ([]commdom.VectorDocument, error)
 	DeleteDocument(userID uint32, docID string) error
-	ListUserDocuments(userID uint32) ([]domain.VectorDocument, error)
+	ListUserDocuments(userID uint32) ([]commdom.VectorDocument, error)
 }
 
 // MistralManager расширяет Inter для Mistral-специфичных методов работы с библиотеками
 type MistralManager interface {
 	Inter
-	CreateModel(userID uint32, provider domain.ProviderType, modelData *domain.UniversalModelData, fileIDs []domain.Ids) (domain.UMCR, error)
+	CreateModel(userID uint32, provider commdom.ProviderType, modelData *commdom.UniversalModelData, fileIDs []commdom.Ids) (commdom.UMCR, error)
 	UploadFileToProvider(userID uint32, fileName string, fileData []byte) (string, error)
 	DeleteDocumentFromLibrary(userID uint32, documentID string) error
 	AddFileToLibrary(userID uint32, fileID, fileName string) error
-	CreateVoice(userID uint32, request domain.CreateVoiceRequest) (domain.Voice, error)
-	ListVoices(userID uint32, limit, offset int, voiceType string) (domain.VoiceList, error)
-	GetVoice(userID uint32, voiceID string) (domain.Voice, error)
-	UpdateVoice(userID uint32, voiceID string, request domain.UpdateVoiceRequest) (domain.Voice, error)
-	DeleteVoice(userID uint32, voiceID string) (domain.Voice, error)
+	CreateVoice(userID uint32, request commdom.CreateVoiceRequest) (commdom.Voice, error)
+	ListVoices(userID uint32, limit, offset int, voiceType string) (commdom.VoiceList, error)
+	GetVoice(userID uint32, voiceID string) (commdom.Voice, error)
+	UpdateVoice(userID uint32, voiceID string, request commdom.UpdateVoiceRequest) (commdom.Voice, error)
+	DeleteVoice(userID uint32, voiceID string) (commdom.Voice, error)
 	GetVoiceSample(userID uint32, voiceID string) (io.ReadCloser, string, error)
 }
 
 // GoogleManager расширяет Inter для Google-специфичных методов
 type GoogleManager interface {
 	Inter
-	CreateModel(userID uint32, provider domain.ProviderType, modelData *domain.UniversalModelData, fileIDs []domain.Ids) (domain.UMCR, error)
-	UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata domain.DocumentMetadata) (string, error)
-	SearchSimilarDocuments(userID uint32, query string, limit int) ([]domain.VectorDocument, error)
+	CreateModel(userID uint32, provider commdom.ProviderType, modelData *commdom.UniversalModelData, fileIDs []commdom.Ids) (commdom.UMCR, error)
+	UploadDocumentWithEmbedding(userID uint32, docName, content string, metadata commdom.DocumentMetadata) (string, error)
+	SearchSimilarDocuments(userID uint32, query string, limit int) ([]commdom.VectorDocument, error)
 	DeleteDocument(userID uint32, docID string) error
-	ListUserDocuments(userID uint32) ([]domain.VectorDocument, error)
+	ListUserDocuments(userID uint32) ([]commdom.VectorDocument, error)
 }
 
 // ActionHandler интерфейс для обработки функций ассистента
 type ActionHandler interface {
-	RunAction(ctx context.Context, functionName, arguments string, provider domain.ProviderType, userID uint32) string
+	RunAction(ctx context.Context, functionName, arguments string, provider commdom.ProviderType, userID uint32) string
 }
 
 // MCPToolDefinition описание инструмента от MCP сервера (tools/list).
@@ -91,8 +91,8 @@ type MCPToolDefinition struct {
 // Реализуется UniversalActionHandler (pkg/model/action_handler.go).
 type MCPConfigProvider interface {
 	ActionHandler
-	FetchToolsList(ctx context.Context, userID uint32, provider domain.ProviderType) ([]MCPToolDefinition, error)
-	FetchSystemPrompt(ctx context.Context, userID uint32, provider domain.ProviderType) (string, error)
+	FetchToolsList(ctx context.Context, userID uint32, provider commdom.ProviderType) ([]MCPToolDefinition, error)
+	FetchSystemPrompt(ctx context.Context, userID uint32, provider commdom.ProviderType) (string, error)
 }
 
 // RealtimeEvent — событие голосовой сессии Realtime API (OpenAI / Google Live).

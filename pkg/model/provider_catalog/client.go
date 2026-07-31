@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/ikermy/air_common/pkg/mode"
-	"github.com/ikermy/air_common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/model/commdom"
 )
 
 // Client fetches provider model lists from external provider APIs.
@@ -29,11 +29,11 @@ func NewClient() *Client {
 }
 
 type Syncer interface {
-	SyncProviderModels(union domain.Union, modelNames []string) (domain.ProviderModelsSyncResult, error)
+	SyncProviderModels(union commdom.Union, modelNames []string) (commdom.ProviderModelsSyncResult, error)
 }
 
-func SyncProviderModels(ctx context.Context, syncer Syncer, union domain.Union, apiKey string) (domain.ProviderModelsSyncResult, error) {
-	result := domain.ProviderModelsSyncResult{Provider: union.Provider}
+func SyncProviderModels(ctx context.Context, syncer Syncer, union commdom.Union, apiKey string) (commdom.ProviderModelsSyncResult, error) {
+	result := commdom.ProviderModelsSyncResult{Provider: union.Provider}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -56,7 +56,7 @@ func SyncProviderModels(ctx context.Context, syncer Syncer, union domain.Union, 
 // FetchModelNames получает актуальный список моделей провайдера из внешнего API.
 func (c *Client) FetchModelNames(
 	ctx context.Context,
-	union domain.Union,
+	union commdom.Union,
 	apiKey string,
 ) ([]string, error) {
 	if ctx == nil {
@@ -76,7 +76,7 @@ func (c *Client) FetchModelNames(
 	}
 
 	switch union.Provider {
-	case domain.ProviderOpenAI:
+	case commdom.ProviderOpenAI:
 		switch {
 		case union.ModelType.IsGeneral():
 			return client.generalOpenAIModels(ctx, apiKey)
@@ -85,7 +85,7 @@ func (c *Client) FetchModelNames(
 		default:
 			return client.fetchOpenAIModels(ctx, apiKey)
 		}
-	case domain.ProviderMistral:
+	case commdom.ProviderMistral:
 		switch {
 		case union.ModelType.IsGeneral():
 			return client.generalMistralModels(ctx, apiKey)
@@ -94,7 +94,7 @@ func (c *Client) FetchModelNames(
 		default:
 			return client.fetchMistralModels(ctx, apiKey)
 		}
-	case domain.ProviderGoogle:
+	case commdom.ProviderGoogle:
 		switch {
 		case union.ModelType.IsGeneral():
 			return client.generalGoogleModels(ctx, apiKey)

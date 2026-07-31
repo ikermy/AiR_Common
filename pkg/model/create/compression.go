@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/ikermy/air_common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/model/commdom"
 )
 
-func compressModelData(data *domain.UniversalModelData) ([]byte, error) {
+func compressModelData(data *commdom.UniversalModelData) ([]byte, error) {
 	modelJSON, err := json.Marshal(data)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка сериализации данных модели: %w", err)
@@ -26,7 +26,7 @@ func compressModelData(data *domain.UniversalModelData) ([]byte, error) {
 	return compressed.Bytes(), nil
 }
 
-func decompressModelData(compressedData []byte, vecIds *domain.VecIds) (*domain.UniversalModelData, error) {
+func decompressModelData(compressedData []byte, vecIds *commdom.VecIds) (*commdom.UniversalModelData, error) {
 	reader, err := gzip.NewReader(bytes.NewReader(compressedData))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка распаковки данных модели: %w", err)
@@ -36,7 +36,7 @@ func decompressModelData(compressedData []byte, vecIds *domain.VecIds) (*domain.
 	if err != nil {
 		return nil, fmt.Errorf("ошибка чтения распакованных данных: %w", err)
 	}
-	modelData := &domain.UniversalModelData{}
+	modelData := &commdom.UniversalModelData{}
 	if err := json.Unmarshal(decompressed, modelData); err != nil {
 		return nil, fmt.Errorf("ошибка десериализации данных модели: %w", err)
 	}
@@ -61,6 +61,6 @@ func decompressModelData(compressedData []byte, vecIds *domain.VecIds) (*domain.
 // После десериализации:
 //   - vecIds (FileIds и VectorId) переносятся из отдельного поля БД
 //   - RealtimeVAD получает дефолтные значения для nil-полей
-func (m *UniversalModel) DecompressModelData(compressedData []byte, vecIds *domain.VecIds) (*domain.UniversalModelData, error) {
+func (m *UniversalModel) DecompressModelData(compressedData []byte, vecIds *commdom.VecIds) (*commdom.UniversalModelData, error) {
 	return decompressModelData(compressedData, vecIds)
 }
