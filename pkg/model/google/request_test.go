@@ -3,7 +3,7 @@ package google
 import (
 	"testing"
 
-	"github.com/ikermy/AiR_Common/pkg/model"
+	"github.com/ikermy/air_common/pkg/model"
 )
 
 func TestUnmarshalGoogleAssistResponseJSONEncodedString(t *testing.T) {

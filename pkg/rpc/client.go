@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/rpc/proto"
+	"github.com/ikermy/air_common/pkg/rpc/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"

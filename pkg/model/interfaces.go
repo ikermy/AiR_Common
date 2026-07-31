@@ -5,9 +5,9 @@ import (
 	"io"
 	"sync/atomic"
 
-	"github.com/ikermy/AiR_Common/pkg/com"
-	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/com"
+	"github.com/ikermy/air_common/pkg/comdb"
+	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 // DB алиас для интерфейса БД

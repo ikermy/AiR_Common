@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/com"
-	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/endpoint"
-	"github.com/ikermy/AiR_Common/pkg/mode"
-	"github.com/ikermy/AiR_Common/pkg/model"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
-	"github.com/ikermy/AiR_Common/pkg/operator"
+	"github.com/ikermy/air_common/pkg/com"
+	"github.com/ikermy/air_common/pkg/comdb"
+	"github.com/ikermy/air_common/pkg/endpoint"
+	"github.com/ikermy/air_common/pkg/mode"
+	"github.com/ikermy/air_common/pkg/model"
+	"github.com/ikermy/air_common/pkg/model/create"
+	"github.com/ikermy/air_common/pkg/operator"
 )
 
 // safeStopTimer корректно останавливает таймер, очищая канал если сигнал уже был отправлен.

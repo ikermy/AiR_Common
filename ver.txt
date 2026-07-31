@@ -1,2 +1,2 @@
-v1.50.73
-realtime mistral release for real test
+v1.50.74
+realtime mistral release for real test fix

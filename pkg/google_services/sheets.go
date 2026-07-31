@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ikermy/AiR_Common/pkg/comdb"
+	"github.com/ikermy/air_common/pkg/comdb"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/option"

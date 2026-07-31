@@ -1,7 +1,7 @@
 package create
 
 import "testing"
-import "github.com/ikermy/AiR_Common/pkg/model/domain"
+import "github.com/ikermy/air_common/pkg/model/domain"
 
 func TestApplyRealtimeVADDefaultsMistral(t *testing.T) {
 	vad := applyRealtimeVADDefaults(&domain.RealtimeVAD{Mistral: &domain.MistralRealtimeVAD{}})

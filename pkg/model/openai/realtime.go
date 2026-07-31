@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 
 	"github.com/gorilla/websocket"
-	"github.com/ikermy/AiR_Common/pkg/model"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
+	"github.com/ikermy/air_common/pkg/model"
+	"github.com/ikermy/air_common/pkg/model/create"
 )
 
 // RealtimeEvent — алиас типа из пакета model для удобства внутри пакета openai

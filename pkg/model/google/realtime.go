@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 
 	"github.com/gorilla/websocket"
-	"github.com/ikermy/AiR_Common/pkg/model"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/model"
+	"github.com/ikermy/air_common/pkg/model/create"
+	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 // ============================================================================

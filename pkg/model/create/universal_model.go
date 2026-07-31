@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/mode"
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/mode"
+	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 // New creates the provider-aware UniversalModel facade.

@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/crypto"
-	"github.com/ikermy/AiR_Common/pkg/mode"
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/crypto"
+	"github.com/ikermy/air_common/pkg/mode"
+	"github.com/ikermy/air_common/pkg/model/domain"
 	"golang.org/x/oauth2"
 
 	_ "github.com/go-sql-driver/mysql"

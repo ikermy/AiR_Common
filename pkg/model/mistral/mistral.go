@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ikermy/AiR_Common/pkg/mode"
+	"github.com/ikermy/air_common/pkg/mode"
 )
 
 // MistralAgentClient - обертка для работы с агентами и обычными моделями

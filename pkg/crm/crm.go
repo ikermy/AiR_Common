@@ -72,7 +72,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/com"
+	"github.com/ikermy/air_common/pkg/com"
 )
 
 type Inter interface {

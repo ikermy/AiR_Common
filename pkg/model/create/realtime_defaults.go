@@ -1,6 +1,6 @@
 package create
 
-import "github.com/ikermy/AiR_Common/pkg/model/domain"
+import "github.com/ikermy/air_common/pkg/model/domain"
 
 // applyRealtimeVADDefaults применяет дефолтные значения к RealtimeVAD и вложенному GoogleRealtimeVAD.
 //

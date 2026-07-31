@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/crypto"
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/crypto"
+	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 // SaveEmbedding сохраняет эмбеддинг документа в MariaDB с привязкой к модели

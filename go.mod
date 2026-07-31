@@ -1,4 +1,4 @@
-module github.com/ikermy/AiR_Common
+module github.com/ikermy/air_common
 
 go 1.25.8
 

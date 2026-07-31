@@ -16,8 +16,8 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/ikermy/AiR_Common/pkg/mode"
-	modeldomain "github.com/ikermy/AiR_Common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/mode"
+	modeldomain "github.com/ikermy/air_common/pkg/model/domain"
 )
 
 const (

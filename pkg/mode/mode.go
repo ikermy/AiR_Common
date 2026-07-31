@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/com"
+	"github.com/ikermy/air_common/pkg/com"
 )
 
 const (

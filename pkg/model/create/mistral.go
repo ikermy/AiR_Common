@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"slices"
 
-	"github.com/ikermy/AiR_Common/pkg/mode"
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/mode"
+	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 // MistralSchemaJSON - JSON Schema для структурированных ответов Mistral Agent

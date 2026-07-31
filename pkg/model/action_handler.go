@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 const mcpURL = "http://airbff:8080/int/mcp"

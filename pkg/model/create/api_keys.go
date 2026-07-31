@@ -1,6 +1,6 @@
 package create
 
-import "github.com/ikermy/AiR_Common/pkg/model/domain"
+import "github.com/ikermy/air_common/pkg/model/domain"
 
 // ProvidersWithApiKeys проверяет наличие пользовательских ключей у всех
 // зарегистрированных провайдеров.

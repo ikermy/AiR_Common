@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 func compressModelData(data *domain.UniversalModelData) ([]byte, error) {

@@ -8,13 +8,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/com"
-	"github.com/ikermy/AiR_Common/pkg/comdb"
-	"github.com/ikermy/AiR_Common/pkg/mode"
-	"github.com/ikermy/AiR_Common/pkg/model"
-	"github.com/ikermy/AiR_Common/pkg/model/create"
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
-	"github.com/ikermy/AiR_Common/pkg/model/provider_catalog"
+	"github.com/ikermy/air_common/pkg/com"
+	"github.com/ikermy/air_common/pkg/comdb"
+	"github.com/ikermy/air_common/pkg/mode"
+	"github.com/ikermy/air_common/pkg/model"
+	"github.com/ikermy/air_common/pkg/model/create"
+	"github.com/ikermy/air_common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/model/provider_catalog"
 )
 
 type Inter interface {

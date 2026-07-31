@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/crypto"
+	"github.com/ikermy/air_common/pkg/crypto"
 	"golang.org/x/oauth2"
 )
 

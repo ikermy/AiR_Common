@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ikermy/AiR_Common/pkg/model"
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
+	"github.com/ikermy/air_common/pkg/model"
+	"github.com/ikermy/air_common/pkg/model/domain"
 )
 
 // STTTransport is implemented by a concrete Voxtral streaming adapter
@@ -303,8 +303,6 @@ func (s *MistralRealtimeSession) SetDisconnectCallback(callback func(uint64)) {
 
 // Interrupt cancels output from the current turn and signals playback drain.
 func (s *MistralRealtimeSession) Interrupt() {
-	oldTurn := s.CurrentTurn()
-	newTurn := s.turns.Invalidate()
 	s.metrics.Interruptions.Add(1)
 	s.turnMu.Lock()
 	if s.turnCancel != nil {
