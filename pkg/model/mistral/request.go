@@ -648,7 +648,9 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 	// Синхронизируем инструменты агента один раз за сессию.
 	// PATCHит агент актуальными MCP-tools и сбрасывает ConversationId если конфигурация изменилась.
 	if !respModel.ToolsSynced {
-		m.syncAgentTools(respModel)
+		if err := m.syncAgentTools(respModel); err != nil {
+			return fmt.Errorf("ошибка синхронизации Mistral Agent %q: %w", respModel.Assist.AssistId, err)
+		}
 	}
 
 	// Добавляем текущее сообщение в локальный контекст
@@ -941,16 +943,17 @@ func (m *Model) RequestStreaming(userID uint32, dialogID uint64, text string, on
 // Вызывается один раз за сессию (ToolsSynced == false) перед первым запросом.
 // Если инструменты изменились — вызывает PATCH /v1/agents/{id} и сбрасывает ConversationId,
 // чтобы следующий разговор начался с обновлённой конфигурацией агента.
-func (m *Model) syncAgentTools(respModel *RespModel) {
-	defer func() { respModel.ToolsSynced = true }()
+func (m *Model) syncAgentTools(respModel *RespModel) error {
 
 	if m.actionHandler == nil || m.client == nil || respModel.Assist.AssistId == "" {
-		return
+		respModel.ToolsSynced = true
+		return nil
 	}
 
 	mcpProvider, ok := m.actionHandler.(model.MCPConfigProvider)
 	if !ok {
-		return
+		respModel.ToolsSynced = true
+		return nil
 	}
 
 	var tools []map[string]any
@@ -982,27 +985,24 @@ func (m *Model) syncAgentTools(respModel *RespModel) {
 				if modelData.WebSearch {
 					tools = append(tools, map[string]any{"type": "web_search"})
 				}
-				if modelData.Search || len(modelData.VecIds.VectorId) > 0 {
-					documentLibraryTool := map[string]any{
-						"type": "document_library",
-					}
-					if len(modelData.VecIds.VectorId) > 0 {
-						documentLibraryTool["library_ids"] = modelData.VecIds.VectorId
-					}
-					tools = append(tools, documentLibraryTool)
+				if len(modelData.VecIds.VectorId) > 0 {
+					tools = append(tools, map[string]any{
+						"type":        "document_library",
+						"library_ids": modelData.VecIds.VectorId,
+					})
 				}
 			}
 		}
 	}
 
 	if len(tools) == 0 {
-		return
+		respModel.ToolsSynced = true
+		return nil
 	}
 
 	// Обновляем агент на стороне Mistral — теперь он знает об актуальных инструментах
 	if err := m.client.PatchAgent(respModel.Assist.AssistId, tools); err != nil {
-		// Не критично: логируем и продолжаем работу со старой конфигурацией
-		return
+		return fmt.Errorf("PATCH agent вернул ошибку: %w", err)
 	}
 
 	// Сбрасываем ConversationId: старая беседа была создана с прежней конфигурацией агента
@@ -1011,6 +1011,8 @@ func (m *Model) syncAgentTools(respModel *RespModel) {
 		respModel.ConversationId = ""
 		m.saveConversationId(respModel.Chan.DialogID, "")
 	}
+	respModel.ToolsSynced = true
+	return nil
 }
 
 // extractFunctionCalls извлекает все вызовы функций из outputs

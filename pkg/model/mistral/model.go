@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -121,6 +122,12 @@ func (m *Model) StartMistralRealtimeSession(userID uint32, dialogID, respID uint
 	if m == nil || m.realtime == nil {
 		return nil, fmt.Errorf("Mistral realtime manager is not initialized")
 	}
+	// RealtimeManager.Start reuses an existing session for the same respID.
+	// Return it directly as well: attaching another STT transport here would
+	// make the second call fail with "STT transport уже запущен".
+	if existing, ok := m.realtime.Get(respID); ok {
+		return existing, nil
+	}
 	record, err := m.db.GetModelByProviderAnyStatus(userID, domain.ProviderMistral)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения Mistral-модели для realtime: %w", err)
@@ -149,11 +156,14 @@ func (m *Model) StartMistralRealtimeSession(userID uint32, dialogID, respID uint
 			session.RealtimeModel = record.Realtime.Name
 			if sessionConfig != nil {
 				session.Config = sessionConfig.Mistral
+				session.Greeting = sessionConfig.Greeting
+				session.InitialGreeting = sessionConfig.InitialGreeting
 			}
 			if err := m.attachMistralRealtimeSTT(session); err != nil {
 				m.realtime.Close(respID)
 				return nil, err
 			}
+			m.startMistralGreeting(session)
 			return session, nil
 		}
 	}
@@ -166,7 +176,28 @@ func (m *Model) StartMistralRealtimeSession(userID uint32, dialogID, respID uint
 		m.realtime.Close(respID)
 		return nil, err
 	}
+	m.startMistralGreeting(session)
 	return session, nil
+}
+
+func (m *Model) startMistralGreeting(session *MistralRealtimeSession) {
+	if session == nil || session.InitialGreeting != nil && !*session.InitialGreeting {
+		return
+	}
+	if session.Greeting == nil || strings.TrimSpace(*session.Greeting) == "" {
+		return
+	}
+	greeting := strings.TrimSpace(*session.Greeting)
+	turnID := session.BeginTurn()
+	go func() {
+		err := session.WithLLM(func() error {
+			return m.requestRealtimeLLM(session, turnID, greeting)
+		})
+		if err != nil && session.Context().Err() == nil {
+			session.PublishEvent(model.RealtimeEvent{Type: "error", Text: "ошибка Mistral greeting", Err: err})
+			return
+		}
+	}()
 }
 
 func (m *Model) attachMistralRealtimeSTT(session *MistralRealtimeSession) error {
@@ -189,13 +220,135 @@ func (m *Model) attachMistralRealtimeSTT(session *MistralRealtimeSession) error 
 		if strings.TrimSpace(text) == "" {
 			return nil
 		}
-		return m.RequestStreaming(session.UserID(), session.DialogID(), text, func(delta string, done bool) error {
-			if !session.IsCurrentTurn(turnID) {
-				return nil
-			}
-			return m.StreamMistralRealtimeText(session.Context(), session.RespID(), delta, done)
+		return session.WithLLM(func() error {
+			return m.requestRealtimeLLM(session, turnID, text)
 		})
 	})
+}
+
+// requestRealtimeLLM buffers the Conversations streaming protocol and sends
+// only the assistant message to TTS. The provider stream may contain JSON
+// envelopes, Markdown fences, action metadata and token usage; none of that
+// is speech text.
+func (m *Model) requestRealtimeLLM(session *MistralRealtimeSession, turnID uint64, input string) error {
+	extractor := realtimeMessageExtractor{}
+	return m.RequestStreaming(session.UserID(), session.DialogID(), input, func(delta string, done bool) error {
+		if !session.IsCurrentTurn(turnID) {
+			return nil
+		}
+		text := extractor.Push(delta)
+		if text != "" {
+			if err := m.StreamMistralRealtimeText(session.Context(), session.RespID(), text, false); err != nil {
+				return err
+			}
+		}
+		if !done {
+			return nil
+		}
+		if tail := extractor.Flush(); tail != "" {
+			return m.StreamMistralRealtimeText(session.Context(), session.RespID(), tail, true)
+		}
+		return m.StreamMistralRealtimeText(session.Context(), session.RespID(), "", true)
+	})
+}
+
+type realtimeMessageExtractor struct {
+	raw     strings.Builder
+	started bool
+	closed  bool
+	escaped bool
+	text    strings.Builder
+}
+
+func (e *realtimeMessageExtractor) Push(delta string) string {
+	e.raw.WriteString(delta)
+	if e.closed {
+		return ""
+	}
+	if !e.started {
+		value := e.raw.String()
+		marker := strings.Index(value, `"message"`)
+		if marker < 0 {
+			return ""
+		}
+		colon := strings.Index(value[marker+len(`"message"`):], ":")
+		if colon < 0 {
+			return ""
+		}
+		start := marker + len(`"message"`) + colon + 1
+		for start < len(value) && (value[start] == ' ' || value[start] == '\t') {
+			start++
+		}
+		if start >= len(value) || value[start] != '"' {
+			return ""
+		}
+		e.started = true
+		e.raw.Reset()
+		e.raw.WriteString(value[start+1:])
+	}
+
+	value := e.raw.String()
+	e.raw.Reset()
+	var out strings.Builder
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if e.escaped {
+			e.escaped = false
+			switch c {
+			case 'n':
+				out.WriteByte('\n')
+			case 'r':
+				out.WriteByte('\r')
+			case 't':
+				out.WriteByte('\t')
+			default:
+				out.WriteByte(c)
+			}
+			continue
+		}
+		if c == '\\' {
+			e.escaped = true
+			continue
+		}
+		if c == '"' {
+			e.closed = true
+			e.raw.WriteString(value[i+1:])
+			break
+		}
+		out.WriteByte(c)
+	}
+	e.text.WriteString(out.String())
+	return sanitizeMistralTTSText(out.String())
+}
+
+func (e *realtimeMessageExtractor) Flush() string {
+	if e.closed {
+		return ""
+	}
+	return sanitizeMistralTTSText(e.Push(""))
+}
+
+func realtimeAssistantText(raw string) string {
+	text := strings.TrimSpace(raw)
+	text = strings.TrimSpace(strings.TrimPrefix(text, "```json"))
+	text = strings.TrimSpace(strings.TrimSuffix(text, "```"))
+	var envelope struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(text), &envelope) == nil && strings.TrimSpace(envelope.Message) != "" {
+		return strings.TrimSpace(envelope.Message)
+	}
+	// Some streaming responses concatenate the JSON message with metadata.
+	if start := strings.Index(text, `"message"`); start >= 0 {
+		value := text[start+len(`"message"`):]
+		value = strings.TrimSpace(strings.TrimPrefix(value, ":"))
+		if len(value) > 0 && value[0] == '"' {
+			if end := strings.Index(value[1:], `"`); end >= 0 {
+				return strings.TrimSpace(value[1 : end+1])
+			}
+		}
+	}
+	return text
 }
 
 // StreamMistralRealtimeText sends ready LLM sentence chunks to Voxtral TTS.
@@ -216,7 +369,15 @@ func (m *Model) StreamMistralRealtimeText(ctx context.Context, respID uint64, de
 	if turnID == 0 {
 		turnID = session.BeginTurn()
 	}
+	turnCtx, ok := session.TurnContext(turnID)
+	if !ok {
+		return nil
+	}
 	for _, sentence := range session.PushText(delta, final) {
+		sentence = sanitizeMistralTTSText(sentence)
+		if sentence == "" {
+			continue
+		}
 		session.PublishEvent(model.RealtimeEvent{Type: "audio_start", Text: sentence})
 		voiceID := stringValue(session.Config.VoiceID)
 		referenceAudio := stringValue(session.Config.ReferenceAudioID)
@@ -228,15 +389,18 @@ func (m *Model) StreamMistralRealtimeText(ctx context.Context, respID uint64, de
 				referenceAudio = session.Config.VoiceClone.ReferenceAudioID
 			}
 		}
-		body, contentType, err := m.client.Speech(ctx, session.UserID(), SpeechRequest{
+		body, contentType, err := m.client.Speech(turnCtx, session.UserID(), SpeechRequest{
 			Model:          *session.Config.TTSModel,
 			Input:          sentence,
 			Voice:          stringValue(session.Config.Voice),
 			VoiceID:        voiceID,
 			ReferenceAudio: referenceAudio,
-			ResponseFormat: stringValue(session.Config.SpeechFormat),
+			ResponseFormat: "pcm",
 		})
 		if err != nil {
+			if session.Context().Err() != nil {
+				return nil
+			}
 			session.Metrics().TTSErrors.Add(1)
 			session.PublishEvent(model.RealtimeEvent{Type: "error", Text: "Mistral TTS завершился с ошибкой", Err: err})
 			return err
@@ -245,13 +409,24 @@ func (m *Model) StreamMistralRealtimeText(ctx context.Context, respID uint64, de
 		if strings.HasPrefix(strings.ToLower(contentType), "text/event-stream") {
 			streamer = StreamSpeechSSEToSession
 		}
-		if err := streamer(ctx, session, turnID, body); err != nil {
+		if err := streamer(turnCtx, session, turnID, body); err != nil {
+			if session.Context().Err() != nil {
+				return nil
+			}
 			session.PublishEvent(model.RealtimeEvent{Type: "error", Text: "ошибка чтения Mistral TTS", Err: err})
 			return err
 		}
 		session.PublishEvent(model.RealtimeEvent{Type: "audio_end"})
 	}
 	return nil
+}
+
+var mistralTTSActionRE = regexp.MustCompile(`\*[^*]+\*`)
+
+func sanitizeMistralTTSText(text string) string {
+	text = mistralTTSActionRE.ReplaceAllString(text, " ")
+	text = strings.ReplaceAll(text, "```", "")
+	return strings.TrimSpace(text)
 }
 
 // TranscribeMistralRealtimeSegment transcribes one finalized audio segment.
@@ -1026,6 +1201,34 @@ func (m *Model) UpdateModelsListByProvider(ctx context.Context, union domain.Uni
 	if union.Provider != domain.ProviderMistral {
 		return nil, fmt.Errorf("неверный провайдер для Mistral модели: %s", union.Provider.String())
 	}
+	// STT/TTS каталоги являются capability-каталогами: legacy-таблицы
+	// realtime_models и gpt_models для них не подходят. Возвращаем их
+	// непосредственно фронтенду, без записи в БД.
 	res, err := provider_catalog.SyncProviderModels(ctx, m.db, union, apiKey)
-	return res.Models, err
+	if err != nil || !union.ModelType.IsRealtime() {
+		return res.Models, err
+	}
+	if len(res.Models) == 0 {
+		return nil, fmt.Errorf("для Mistral не получены realtime модели")
+	}
+
+	// The legacy realtime_models table stores only the realtime LLM model.
+	// STT and TTS are capabilities of the same Mistral voice configuration and
+	// must be returned to the caller, but must not be inserted into that table.
+	sttNames, ttsNames, voiceErr := provider_catalog.NewClient().FetchMistralVoiceModels(ctx, apiKey)
+	if voiceErr != nil {
+		return nil, fmt.Errorf("не удалось получить STT/TTS модели Mistral: %w", voiceErr)
+	}
+	if len(sttNames) == 0 || len(ttsNames) == 0 {
+		return nil, fmt.Errorf("для Mistral не получены STT или TTS модели")
+	}
+	// The frontend receives one combined configuration object per realtime
+	// model: realtime ID/name plus the available STT/TTS model names.
+	sttModel := sttNames[0]
+	ttsModel := ttsNames[0]
+	for i := range res.Models {
+		res.Models[i].STT = sttModel
+		res.Models[i].TTS = ttsModel
+	}
+	return res.Models, nil
 }

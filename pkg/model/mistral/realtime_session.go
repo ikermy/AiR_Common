@@ -42,11 +42,13 @@ type MistralRealtimeSession struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	userID        uint32
-	dialogID      uint64
-	respID        uint64
-	RealtimeModel string
-	Config        *domain.MistralRealtimeVAD
+	userID          uint32
+	dialogID        uint64
+	respID          uint64
+	RealtimeModel   string
+	Config          *domain.MistralRealtimeVAD
+	Greeting        *string
+	InitialGreeting *bool
 
 	AudioIn       chan []byte
 	AudioOut      chan []byte
@@ -61,6 +63,10 @@ type MistralRealtimeSession struct {
 	closed              atomic.Bool
 	sttMu               sync.Mutex
 	sttStarted          bool
+	turnMu              sync.Mutex
+	turnCtx             context.Context
+	turnCancel          context.CancelFunc
+	llmMu               sync.Mutex
 	chunkMu             sync.Mutex
 	chunker             SentenceChunker
 	generating          atomic.Bool
@@ -71,6 +77,16 @@ type MistralRealtimeSession struct {
 	disconnect          func(uint64)
 	eventsMu            sync.RWMutex
 	events              map[chan model.RealtimeEvent]struct{}
+}
+
+// WithLLM serializes updates to one Mistral conversation.
+func (s *MistralRealtimeSession) WithLLM(fn func() error) error {
+	if s == nil || fn == nil {
+		return fmt.Errorf("не задана realtime-сессия или LLM callback")
+	}
+	s.llmMu.Lock()
+	defer s.llmMu.Unlock()
+	return fn()
 }
 
 // PushText converts an LLM delta into TTS-ready sentence chunks.
@@ -148,9 +164,19 @@ func (s *MistralRealtimeSession) StartSTT(transport STTTransport, onTranscript f
 			if !s.acceptFinalTranscript(text) {
 				return nil
 			}
+			// A new user utterance interrupts any greeting/LLM/TTS work from
+			// the previous turn before the new turn is created.
+			if s.CurrentTurn() != 0 {
+				s.Interrupt()
+			}
 			turnID := s.BeginTurn()
 			s.PublishEvent(model.RealtimeEvent{Type: "transcript", Text: text})
-			return onTranscript(text, turnID)
+
+			if err := onTranscript(text, turnID); err != nil {
+				return err
+			}
+
+			return nil
 		})
 		if err != nil && s.ctx.Err() == nil {
 			s.metrics.STTErrors.Add(1)
@@ -225,6 +251,12 @@ func (s *MistralRealtimeSession) MarkFirstTTSAudio() {
 
 // BeginTurn invalidates all work belonging to the previous user utterance.
 func (s *MistralRealtimeSession) BeginTurn() uint64 {
+	s.turnMu.Lock()
+	if s.turnCancel != nil {
+		s.turnCancel()
+	}
+	s.turnCtx, s.turnCancel = context.WithCancel(s.ctx)
+	s.turnMu.Unlock()
 	turnID := s.turns.Begin()
 	// A sentence must never cross a user turn boundary. In particular, after
 	// an interruption the next LLM response must not flush text left by the
@@ -234,6 +266,21 @@ func (s *MistralRealtimeSession) BeginTurn() uint64 {
 	s.chunker = SentenceChunker{}
 	s.chunkMu.Unlock()
 	return turnID
+}
+
+// TurnContext is cancelled as soon as the turn is interrupted or replaced.
+// TTS and other per-turn network operations must use it instead of the
+// session context so interruption stops the underlying stream promptly.
+func (s *MistralRealtimeSession) TurnContext(turnID uint64) (context.Context, bool) {
+	if s == nil || !s.IsCurrentTurn(turnID) {
+		return nil, false
+	}
+	s.turnMu.Lock()
+	defer s.turnMu.Unlock()
+	if s.turnCtx == nil || !s.IsCurrentTurn(turnID) {
+		return nil, false
+	}
+	return s.turnCtx, true
 }
 
 func (s *MistralRealtimeSession) IsCurrentTurn(turnID uint64) bool {
@@ -256,8 +303,16 @@ func (s *MistralRealtimeSession) SetDisconnectCallback(callback func(uint64)) {
 
 // Interrupt cancels output from the current turn and signals playback drain.
 func (s *MistralRealtimeSession) Interrupt() {
-	s.turns.Invalidate()
+	oldTurn := s.CurrentTurn()
+	newTurn := s.turns.Invalidate()
 	s.metrics.Interruptions.Add(1)
+	s.turnMu.Lock()
+	if s.turnCancel != nil {
+		s.turnCancel()
+		s.turnCancel = nil
+		s.turnCtx = nil
+	}
+	s.turnMu.Unlock()
 	s.generating.Store(false)
 	s.PublishEvent(model.RealtimeEvent{Type: "interrupted", Text: "пользователь перебил ответ"})
 	for {

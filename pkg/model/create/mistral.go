@@ -120,7 +120,7 @@ func (m *UniversalModel) deleteMistralModel(userID uint32, modelData *domain.Use
 
 	// Удаляем агента через API
 	if m.mistralClient != nil {
-		if err := m.mistralClient.deleteAgent(modelData.AssistId); err != nil {
+		if err := m.mistralClient.deleteAgent(userID, modelData.AssistId); err != nil {
 			//logger.Error("ошибка удаления Mistral агента %s: %v", modelData.AssistId, err, userID)
 			// Продолжаем удаление из БД даже если не удалось удалить из API
 			if progressCallback != nil {
@@ -191,10 +191,10 @@ func (m *UniversalModel) deleteMistralModel(userID uint32, modelData *domain.Use
 }
 
 // deleteAgent удаляет Mistral Agent по ID
-func (m *MistralAgentClient) deleteAgent(agentID string) error {
+func (m *MistralAgentClient) deleteAgent(userID uint32, agentID string) error {
 	deleteURL := fmt.Sprintf("%s/%s", mode.MistralAgentsBaseURL, agentID)
 
-	return m.executeMistralDeleteRequest(deleteURL)
+	return m.executeMistralDeleteRequest(userID, deleteURL)
 }
 
 // updateMistralModelInPlace обновляет Mistral Agent
@@ -238,8 +238,12 @@ func (m *UniversalModel) updateMistralModelInPlace(userID uint32, existing, upda
 	}
 
 	// Удаляем старого агента
-	if err := m.mistralClient.deleteAgent(existingModelData.AssistId); err != nil {
-		//logger.Warn("Не удалось удалить старого Mistral агента %s: %v", existingModelData.AssistId, err, userID)
+	var mistralDeleteError error
+	if err = m.mistralClient.deleteAgent(userID, existingModelData.AssistId); err != nil {
+		// Здесь я сознательно не выхожу т.к. агент мог быть удалён вручную в дашборде мистраль
+		// в таком случае просто создастся новый агент. Но если ошибка постоянная нужно разбираться
+		// TODO создать внутренний тип ошибок для проверки
+		mistralDeleteError = fmt.Errorf("ошибка удаления Mistral агента %s: err: %w", existingModelData.AssistId, err)
 	}
 
 	// Создаем нового агента с обновленными данными
@@ -249,11 +253,14 @@ func (m *UniversalModel) updateMistralModelInPlace(userID uint32, existing, upda
 	}
 
 	// Сохраняем в БД
-	if err := m.SaveModel(userID, umcr, updated); err != nil {
+	if err = m.SaveModel(userID, umcr, updated); err != nil {
 		return fmt.Errorf("ошибка сохранения обновленной модели в БД: %w", err)
 	}
 
 	//logger.Debug("Mistral Agent успешно обновлен (новый ID: %s)", umcr.AssistID, userID)
+	if mistralDeleteError != nil {
+		return mistralDeleteError
+	}
 	return nil
 }
 
@@ -379,14 +386,11 @@ func (m *MistralAgentClient) createMistralAgent(modelData *domain.UniversalModel
 	}
 
 	// document_library — если включён поиск по документам
-	if modelData.Search || len(fileIDs) > 0 || len(modelData.VecIds.VectorId) > 0 {
-		documentLibraryTool := map[string]any{
-			"type": "document_library",
-		}
-		if len(modelData.VecIds.VectorId) > 0 {
-			documentLibraryTool["library_ids"] = modelData.VecIds.VectorId
-		}
-		tools = append(tools, documentLibraryTool)
+	if len(modelData.VecIds.VectorId) > 0 {
+		tools = append(tools, map[string]any{
+			"type":        "document_library",
+			"library_ids": modelData.VecIds.VectorId,
+		})
 	}
 
 	if len(tools) > 0 {
@@ -515,9 +519,9 @@ func (m *MistralAgentClient) executeMistralRequest(method, url string, body []by
 
 // executeMistralDeleteRequest удаляет через общий API (DELETE)
 // Допускает статусы OK, NoContent и NotFound как успешные
-func (m *MistralAgentClient) executeMistralDeleteRequest(url string) error {
+func (m *MistralAgentClient) executeMistralDeleteRequest(userID uint32, url string) error {
 	_, err := m.executeMistralRequest(http.MethodDelete, url, nil,
-		[]int{http.StatusOK, http.StatusNoContent, http.StatusNotFound}, 0)
+		[]int{http.StatusOK, http.StatusNoContent, http.StatusNotFound}, userID)
 	return err
 }
 
@@ -547,7 +551,7 @@ func (m *MistralAgentClient) ListLibraries() ([]MistralLibrary, error) {
 func (m *MistralAgentClient) DeleteLibrary(libraryID string) error {
 	url := fmt.Sprintf(mode.MistralBaseURL+"/libraries/%s", libraryID)
 
-	return m.executeMistralDeleteRequest(url)
+	return m.executeMistralDeleteRequest(0, url)
 }
 
 // DeleteDocumentFromLibrary удаляет документ из библиотеки
@@ -555,5 +559,5 @@ func (m *MistralAgentClient) DeleteLibrary(libraryID string) error {
 func (m *MistralAgentClient) DeleteDocumentFromLibrary(libraryID, documentID string) error {
 	url := fmt.Sprintf(mode.MistralBaseURL+"/libraries/%s/documents/%s", libraryID, documentID)
 
-	return m.executeMistralDeleteRequest(url)
+	return m.executeMistralDeleteRequest(0, url)
 }

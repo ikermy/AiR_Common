@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -115,7 +116,34 @@ func StreamSpeechToSession(ctx context.Context, session *MistralRealtimeSession,
 		return fmt.Errorf("не задана realtime-сессия или TTS body")
 	}
 	defer body.Close()
+
 	normalizer := AudioNormalizer{}
+	var pendingByte []byte
+	var totalInput, totalPCM int
+	loggedHeader := false
+	publishPCM := func(chunk []byte) error {
+		chunk = normalizeTTSFormat(chunk)
+		chunk = normalizeTTSChannels(chunk)
+		if len(chunk) == 0 {
+			return nil
+		}
+		if len(pendingByte) > 0 {
+			chunk = append(pendingByte, chunk...)
+			pendingByte = nil
+		}
+		if len(chunk)%2 != 0 {
+			pendingByte = append(pendingByte, chunk...)
+			return nil
+		}
+		if len(chunk) > 0 && !session.PublishAudio(turnID, chunk) {
+			if !session.IsCurrentTurn(turnID) {
+				return nil
+			}
+			return fmt.Errorf("AudioOut переполнен или realtime-сессия закрыта")
+		}
+		totalPCM += len(chunk)
+		return nil
+	}
 	buffer := make([]byte, 32*1024)
 	for {
 		select {
@@ -128,17 +156,25 @@ func StreamSpeechToSession(ctx context.Context, session *MistralRealtimeSession,
 
 		n, err := body.Read(buffer)
 		if n > 0 {
-			chunk := normalizer.Push(buffer[:n])
-			if len(chunk) > 0 && !session.PublishAudio(turnID, chunk) {
-				if !session.IsCurrentTurn(turnID) {
-					return nil
+			totalInput += n
+			if !loggedHeader {
+				limit := n
+				if limit > 16 {
+					limit = 16
 				}
-				return fmt.Errorf("AudioOut переполнен или realtime-сессия закрыта")
+				loggedHeader = true
+			}
+			chunk := normalizer.Push(buffer[:n])
+			if err := publishPCM(chunk); err != nil {
+				return err
 			}
 		}
 		if err == io.EOF {
-			if chunk := normalizer.Flush(); len(chunk) > 0 {
-				if !session.PublishAudio(turnID, chunk) && session.IsCurrentTurn(turnID) {
+			if err := publishPCM(normalizer.Flush()); err != nil {
+				return err
+			}
+			if len(pendingByte) != 0 {
+				if err := session.PublishAudio(turnID, pendingByte); !err && session.IsCurrentTurn(turnID) {
 					return fmt.Errorf("AudioOut переполнен при завершении TTS")
 				}
 			}
@@ -157,8 +193,30 @@ func StreamSpeechSSEToSession(ctx context.Context, session *MistralRealtimeSessi
 		return fmt.Errorf("не задана realtime-сессия или TTS body")
 	}
 	defer body.Close()
+
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 4096), 4*1024*1024)
+	normalizer := AudioNormalizer{}
+	var pendingByte []byte
+	var totalDecoded int
+	loggedHeader := false
+	publishPCM := func(audio []byte) error {
+		audio = normalizeTTSFormat(audio)
+		audio = normalizeTTSChannels(audio)
+		if len(pendingByte) > 0 {
+			audio = append(pendingByte, audio...)
+			pendingByte = nil
+		}
+		if len(audio)%2 != 0 {
+			pendingByte = append(pendingByte, audio...)
+			return nil
+		}
+		if len(audio) > 0 && !session.PublishAudio(turnID, audio) && session.IsCurrentTurn(turnID) {
+			return fmt.Errorf("AudioOut переполнен или realtime-сессия закрыта")
+		}
+		totalDecoded += len(audio)
+		return nil
+	}
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || line[0] == ':' {
@@ -169,6 +227,14 @@ func StreamSpeechSSEToSession(ctx context.Context, session *MistralRealtimeSessi
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if payload == "[DONE]" {
+			if err := publishPCM(normalizer.Flush()); err != nil {
+				return err
+			}
+			if len(pendingByte) != 0 {
+				if !session.PublishAudio(turnID, pendingByte) && session.IsCurrentTurn(turnID) {
+					return fmt.Errorf("AudioOut переполнен при завершении TTS")
+				}
+			}
 			return nil
 		}
 		var event struct {
@@ -184,14 +250,109 @@ func StreamSpeechSSEToSession(ctx context.Context, session *MistralRealtimeSessi
 		if err != nil {
 			return fmt.Errorf("декодирование streaming TTS audio_data: %w", err)
 		}
-		if len(audio) > 0 && !session.PublishAudio(turnID, audio) && session.IsCurrentTurn(turnID) {
-			return fmt.Errorf("AudioOut переполнен или realtime-сессия закрыта")
+		if !loggedHeader {
+			limit := len(audio)
+			if limit > 16 {
+				limit = 16
+			}
+			loggedHeader = true
+		}
+		totalDecoded += len(audio)
+
+		if err := publishPCM(normalizer.Push(audio)); err != nil {
+			return err
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("чтение streaming TTS SSE: %w", err)
 	}
+	if len(pendingByte) != 0 {
+		if !session.PublishAudio(turnID, pendingByte) && session.IsCurrentTurn(turnID) {
+			return fmt.Errorf("AudioOut переполнен при завершении TTS")
+		}
+	}
 	return nil
+}
+
+func normalizeTTSFormat(data []byte) []byte {
+	if len(data) < 16 || len(data)%4 != 0 {
+		return data
+	}
+	checked, valid := 0, 0
+	for i := 0; i+3 < len(data) && checked < 2048; i, checked = i+4, checked+1 {
+		v := math.Float32frombits(binary.LittleEndian.Uint32(data[i : i+4]))
+		if !math.IsNaN(float64(v)) && !math.IsInf(float64(v), 0) && math.Abs(float64(v)) <= 1.0 {
+			valid++
+		}
+	}
+	if checked == 0 || valid*100/checked < 90 {
+		return data
+	}
+	out := make([]byte, (len(data)/4)*2)
+	for i := 0; i < len(data); i += 4 {
+		v := math.Float32frombits(binary.LittleEndian.Uint32(data[i : i+4]))
+		if v > 1 {
+			v = 1
+		}
+		if v < -1 {
+			v = -1
+		}
+		value := int16(v * 32767)
+		binary.LittleEndian.PutUint16(out[(i/4)*2:], uint16(value))
+	}
+	return out
+}
+
+// normalizeTTSChannels converts the stereo PCM16 shape currently returned by
+// Voxtral TTS (one silent channel) to the mono stream expected by the
+// realtime frontend. If both candidate channels contain meaningful signal,
+// the bytes are left untouched because the input may already be mono PCM.
+func normalizeTTSChannels(pcm []byte) []byte {
+	if len(pcm) < 16 || len(pcm)%4 != 0 {
+		return pcm
+	}
+	var leftEnergy, rightEnergy int64
+	frames := len(pcm) / 4
+	for i := 0; i < frames; i++ {
+		left := int16(uint16(pcm[i*4]) | uint16(pcm[i*4+1])<<8)
+		right := int16(uint16(pcm[i*4+2]) | uint16(pcm[i*4+3])<<8)
+		if left < 0 {
+			leftEnergy -= int64(left)
+		} else {
+			leftEnergy += int64(left)
+		}
+		if right < 0 {
+			rightEnergy -= int64(right)
+		} else {
+			rightEnergy += int64(right)
+		}
+	}
+	if leftEnergy == 0 && rightEnergy == 0 {
+		return pcm
+	}
+	activeRight := leftEnergy*20 < rightEnergy
+	activeLeft := rightEnergy*20 < leftEnergy
+	if !activeLeft && !activeRight {
+		return pcm
+	}
+	out := make([]byte, frames*2)
+	for i := 0; i < frames; i++ {
+		if activeRight {
+			out[i*2] = pcm[i*4+2]
+			out[i*2+1] = pcm[i*4+3]
+		} else {
+			out[i*2] = pcm[i*4]
+			out[i*2+1] = pcm[i*4+1]
+		}
+	}
+	return out
+}
+
+func minAudioLogBytes(n int) int {
+	if n > 16 {
+		return 16
+	}
+	return n
 }
 
 // Push normalizes one incoming audio chunk. The returned bytes are owned by

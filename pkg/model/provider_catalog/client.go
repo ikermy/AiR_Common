@@ -19,6 +19,11 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
+// DefaultMistralSTTModel is the production default Voxtral realtime
+// transcription model. STT models are not stored in realtime_models because
+// that table has a single realtime-model role in the legacy schema.
+const DefaultMistralSTTModel = "voxtral-mini-transcribe-realtime-2602"
+
 func NewClient() *Client {
 	return &Client{HTTPClient: &http.Client{}}
 }
@@ -101,6 +106,21 @@ func (c *Client) FetchModelNames(
 	default:
 		return nil, fmt.Errorf("неподдерживаемый провайдер: %s", union.Provider.String())
 	}
+}
+
+// FetchMistralVoiceModels returns the specialized models used by the
+// server-side realtime voice pipeline. They are auxiliary fields of a
+// realtime model response, not independent public ModelType values.
+func (c *Client) FetchMistralVoiceModels(ctx context.Context, apiKey string) (stt, tts []string, err error) {
+	stt, err = c.sttMistralModels(ctx, apiKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	tts, err = c.ttsMistralModels(ctx, apiKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	return stt, tts, nil
 }
 
 func (c *Client) fetchOpenAIModels(ctx context.Context, apiKey string) ([]string, error) {
@@ -202,6 +222,17 @@ func isRealtimeModel(modelName string) bool {
 	return strings.Contains(modelName, "realtime")
 }
 
+// isMistralRealtimeLLMModel selects only the realtime language models that
+// belong in realtime_models. Mistral exposes STT and TTS models from the same
+// /models endpoint, but they have different roles and must not be synced into
+// the realtime-model table.
+func isMistralRealtimeLLMModel(modelName string) bool {
+	lower := strings.ToLower(strings.TrimSpace(modelName))
+	return strings.Contains(lower, "realtime") &&
+		!strings.Contains(lower, "transcribe") &&
+		!strings.Contains(lower, "-tts")
+}
+
 func isGeneralOpenAIModel(modelName string) bool {
 	// исключаем realtime, tts, transcribe, embedding, moderation
 	exclude := []string{"realtime", "tts", "transcribe", "embedding", "moderation", "audio"}
@@ -276,7 +307,7 @@ func (c *Client) realtimeMistralModels(ctx context.Context, apiKey string) ([]st
 
 	result := make([]string, 0, len(allModels))
 	for _, name := range allModels {
-		if isRealtimeModel(name) {
+		if isMistralRealtimeLLMModel(name) {
 			result = append(result, name)
 		}
 	}
@@ -285,6 +316,48 @@ func (c *Client) realtimeMistralModels(ctx context.Context, apiKey string) ([]st
 		return nil, fmt.Errorf("получено 0 realtime моделей Mistral")
 	}
 
+	return result, nil
+}
+
+func filterMistralModels(models []string, predicate func(string) bool) []string {
+	result := make([]string, 0, len(models))
+	for _, name := range models {
+		if predicate(name) {
+			result = append(result, name)
+		}
+	}
+	return result
+}
+
+func isMistralSTTModel(modelName string) bool {
+	return strings.Contains(strings.ToLower(modelName), "transcribe-realtime")
+}
+
+func isMistralTTSModel(modelName string) bool {
+	return strings.Contains(strings.ToLower(modelName), "-tts")
+}
+
+func (c *Client) sttMistralModels(ctx context.Context, apiKey string) ([]string, error) {
+	allModels, err := c.fetchMistralModels(ctx, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения STT моделей Mistral: %w", err)
+	}
+	result := filterMistralModels(allModels, isMistralSTTModel)
+	if len(result) == 0 {
+		return nil, fmt.Errorf("получено 0 STT моделей Mistral")
+	}
+	return result, nil
+}
+
+func (c *Client) ttsMistralModels(ctx context.Context, apiKey string) ([]string, error) {
+	allModels, err := c.fetchMistralModels(ctx, apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка получения TTS моделей Mistral: %w", err)
+	}
+	result := filterMistralModels(allModels, isMistralTTSModel)
+	if len(result) == 0 {
+		return nil, fmt.Errorf("получено 0 TTS моделей Mistral")
+	}
 	return result, nil
 }
 

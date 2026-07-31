@@ -12,17 +12,14 @@ type ProviderModelUserChange struct {
 	ModelName string `json:"model_name,omitempty"`
 }
 type ProviderModel struct {
-	ID       uint64 `json:"Id"`
-	Name     string `json:"Name"`
-	Category string `json:"category,omitempty"`
+	ID   uint64 `json:"Id"`
+	Name string `json:"Name"`
+	// STT and TTS contain the corresponding Mistral voice-pipeline model
+	// names. They are populated together with realtime models and are kept
+	// outside the legacy realtime_models table.
+	STT string `json:"stt,omitempty"`
+	TTS string `json:"tts,omitempty"`
 }
-
-const (
-	ProviderModelGeneral  = "general"
-	ProviderModelRealtime = "realtime"
-	ProviderModelSTT      = "stt"
-	ProviderModelTTS      = "tts"
-)
 
 type ProviderModelsSyncResult struct {
 	Provider      ProviderType              `json:"provider"`

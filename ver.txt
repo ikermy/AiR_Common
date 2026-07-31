@@ -1,5 +1,2 @@
-git add .
-git commit -m "v1.50.72"
-git tag -a v1.50.72 -m "test realtime mistral release"
-git push origin master
-git push origin v1.50.72
+v1.50.73
+realtime mistral release for real test

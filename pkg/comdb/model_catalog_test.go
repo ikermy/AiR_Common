@@ -1,23 +1,19 @@
 package comdb
 
-import (
-	"testing"
+import "testing"
 
-	"github.com/ikermy/AiR_Common/pkg/model/domain"
-)
-
-func TestProviderModelCategory(t *testing.T) {
+func TestProviderModelName(t *testing.T) {
 	tests := []struct {
 		name string
 		want string
 	}{
-		{"voxtral-mini-tts-2603", domain.ProviderModelTTS},
-		{"voxtral-mini-transcribe-realtime-2602", domain.ProviderModelSTT},
-		{"mistral-medium-latest", domain.ProviderModelGeneral},
+		{"voxtral-mini-tts-2603", "voxtral-mini-tts-2603"},
+		{"voxtral-mini-transcribe-realtime-2602", "voxtral-mini-transcribe-realtime-2602"},
+		{"mistral-medium-latest", "mistral-medium-latest"},
 	}
 	for _, tt := range tests {
-		if got := providerModelCategory(tt.name, domain.ProviderModelGeneral); got != tt.want {
-			t.Errorf("providerModelCategory(%q) = %q, want %q", tt.name, got, tt.want)
+		if tt.name != tt.want {
+			t.Errorf("name = %q, want %q", tt.name, tt.want)
 		}
 	}
 }

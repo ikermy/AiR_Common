@@ -1256,7 +1256,6 @@ func (d *DB) GetModelByProvider(userID uint32, provider domain.ProviderType) (*d
 		LEFT JOIN realtime_models rm ON rm.Id = ug.Realtime
 		WHERE um.userID = ? 
 			AND um.Provider = ?
-			AND um.IsActive = 1
 		LIMIT 1`
 
 	var modelId uint64
@@ -2424,7 +2423,6 @@ func (d *DB) SyncProviderModels(union domain.Union, modelNames []string) (domain
 
 	var tableName string
 	var userModelColumn string
-	modelCategory := domain.ProviderModelGeneral
 	switch {
 	case union.ModelType.IsGeneral():
 		tableName = "gpt_models"
@@ -2432,7 +2430,6 @@ func (d *DB) SyncProviderModels(union domain.Union, modelNames []string) (domain
 	case union.ModelType.IsRealtime():
 		tableName = "realtime_models"
 		userModelColumn = "Realtime"
-		modelCategory = domain.ProviderModelRealtime
 	default:
 		return result, fmt.Errorf("некорректный тип модели: %d", union.ModelType)
 	}
@@ -2538,6 +2535,19 @@ func (d *DB) SyncProviderModels(union domain.Union, modelNames []string) (domain
 		}
 		_ = userRows.Close()
 
+		// Старые специализированные записи (например, Mistral TTS/STT),
+		// которые ранее ошибочно попали в realtime_models, могут не иметь
+		// default-модели для замены. Если на такую запись никто не ссылается,
+		// её можно безопасно удалить напрямую.
+		if len(affectedUsers) == 0 {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE Id = ?`, tableName), stale.id); err != nil {
+				return result, fmt.Errorf("ошибка удаления неиспользуемой модели %s из %s: %w", stale.name, tableName, err)
+			}
+			result.Removed++
+			result.RemovedNames = append(result.RemovedNames, stale.name)
+			continue
+		}
+
 		var replacementID int64
 		err = tx.QueryRowContext(ctx, fmt.Sprintf(`
 			SELECT Id FROM %s
@@ -2589,11 +2599,7 @@ func (d *DB) SyncProviderModels(union domain.Union, modelNames []string) (domain
 			return result, fmt.Errorf("ошибка чтения актуального списка моделей: %w", err)
 		}
 		trimmedName := strings.TrimSpace(modelName)
-		result.Models = append(result.Models, domain.ProviderModel{
-			ID:       modelID,
-			Name:     trimmedName,
-			Category: providerModelCategory(trimmedName, modelCategory),
-		})
+		result.Models = append(result.Models, domain.ProviderModel{ID: modelID, Name: trimmedName})
 	}
 	if err := modelRows.Err(); err != nil {
 		_ = modelRows.Close()
@@ -2608,16 +2614,4 @@ func (d *DB) SyncProviderModels(union domain.Union, modelNames []string) (domain
 	}
 
 	return result, nil
-}
-
-func providerModelCategory(name, defaultCategory string) string {
-	lower := strings.ToLower(name)
-	switch {
-	case strings.Contains(lower, "tts"):
-		return domain.ProviderModelTTS
-	case strings.Contains(lower, "transcribe") || strings.Contains(lower, "stt"):
-		return domain.ProviderModelSTT
-	default:
-		return defaultCategory
-	}
 }

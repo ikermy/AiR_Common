@@ -31,8 +31,10 @@ type RealtimeSTTConfig struct {
 	ReadTimeout       time.Duration
 	ReconnectAttempts int
 	ReconnectDelay    time.Duration
+	SilenceTimeout    time.Duration
 	AudioEncoding     string
 	SampleRate        int
+	SourceSampleRate  int
 }
 
 // MistralRealtimeSTT implements STTTransport using one long-lived WebSocket.
@@ -72,6 +74,12 @@ func NewMistralRealtimeSTT(config RealtimeSTTConfig) (*MistralRealtimeSTT, error
 	}
 	if config.SampleRate <= 0 {
 		config.SampleRate = 16000
+	}
+	if config.SourceSampleRate <= 0 {
+		config.SourceSampleRate = 24000
+	}
+	if config.SilenceTimeout <= 0 {
+		config.SilenceTimeout = 700 * time.Millisecond
 	}
 	if config.RealtimeToken != "" && !strings.HasPrefix(config.RealtimeToken, "rt_") {
 		return nil, fmt.Errorf("realtime token Mistral должен начинаться с rt_")
@@ -141,16 +149,26 @@ func (t *MistralRealtimeSTT) runOnce(ctx context.Context, audio <-chan []byte, o
 		return fmt.Errorf("подключение к Mistral realtime STT: %w", err)
 	}
 	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(t.config.ReadTimeout))
+
+	if err := conn.SetReadDeadline(time.Now().Add(t.config.ReadTimeout)); err != nil {
+		return fmt.Errorf("установка read deadline Mistral realtime STT: %w", err)
+	}
 	conn.SetPongHandler(func(string) error {
 		return conn.SetReadDeadline(time.Now().Add(t.config.ReadTimeout))
 	})
 
 	var writeMu sync.Mutex
 	writeJSON := func(value any) error {
+		payload, err := json.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("сериализация Mistral realtime STT-события: %w", err)
+		}
 		writeMu.Lock()
 		defer writeMu.Unlock()
-		return conn.WriteJSON(value)
+		if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+			return fmt.Errorf("отправка Mistral realtime STT text frame: %w", err)
+		}
+		return nil
 	}
 	if err := writeJSON(map[string]any{
 		"type": "session.update",
@@ -172,7 +190,10 @@ func (t *MistralRealtimeSTT) runOnce(ctx context.Context, audio <-chan []byte, o
 				readErr <- err
 				return
 			}
-			_ = conn.SetReadDeadline(time.Now().Add(t.config.ReadTimeout))
+			if err := conn.SetReadDeadline(time.Now().Add(t.config.ReadTimeout)); err != nil {
+				readErr <- fmt.Errorf("обновление read deadline Mistral realtime STT: %w", err)
+				return
+			}
 			var event realtimeSTTEvent
 			if err := json.Unmarshal(data, &event); err != nil {
 				readErr <- fmt.Errorf("разбор Mistral realtime STT-события: %w", err)
@@ -195,12 +216,38 @@ func (t *MistralRealtimeSTT) runOnce(ctx context.Context, audio <-chan []byte, o
 
 	ping := time.NewTicker(t.config.PingInterval)
 	defer ping.Stop()
+	var silenceTimer *time.Timer
+	var silenceC <-chan time.Time
+	stopSilenceTimer := func() {
+		if silenceTimer == nil {
+			return
+		}
+		if !silenceTimer.Stop() {
+			select {
+			case <-silenceTimer.C:
+			default:
+			}
+		}
+		silenceC = nil
+	}
+	armSilenceTimer := func() {
+		if silenceTimer == nil {
+			silenceTimer = time.NewTimer(t.config.SilenceTimeout)
+		} else {
+			stopSilenceTimer()
+			silenceTimer.Reset(t.config.SilenceTimeout)
+		}
+		silenceC = silenceTimer.C
+	}
+	defer stopSilenceTimer()
 	for {
 		select {
 		case <-ctx.Done():
-			_ = conn.WriteControl(websocket.CloseMessage,
+			if err := conn.WriteControl(websocket.CloseMessage,
 				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "context canceled"),
-				time.Now().Add(time.Second))
+				time.Now().Add(time.Second)); err != nil && ctx.Err() == nil {
+				return fmt.Errorf("закрытие Mistral realtime STT: %w", err)
+			}
 			return ctx.Err()
 		case err := <-readErr:
 			if closeErr, ok := err.(*websocket.CloseError); ok && closeErr.Code == websocket.CloseNormalClosure {
@@ -214,10 +261,21 @@ func (t *MistralRealtimeSTT) runOnce(ctx context.Context, audio <-chan []byte, o
 			if err != nil {
 				return fmt.Errorf("Mistral realtime STT ping: %w", err)
 			}
+		case <-silenceC:
+			if err := writeJSON(map[string]any{"type": "input_audio.flush"}); err != nil {
+				return fmt.Errorf("финализация речевого фрагмента Mistral realtime STT: %w", err)
+			}
+			silenceC = nil
 		case chunk, ok := <-audio:
 			if !ok {
-				_ = writeJSON(map[string]any{"type": "input_audio.flush"})
-				_ = writeJSON(map[string]any{"type": "input_audio.end"})
+				if silenceC != nil {
+					if err := writeJSON(map[string]any{"type": "input_audio.flush"}); err != nil {
+						return fmt.Errorf("финализация речевого фрагмента Mistral realtime STT: %w", err)
+					}
+				}
+				if err := writeJSON(map[string]any{"type": "input_audio.end"}); err != nil {
+					return fmt.Errorf("завершение Mistral realtime STT: %w", err)
+				}
 				// Keep the socket open: Mistral sends the final transcript after
 				// processing the end event. Disable further audio reads while
 				// waiting for that response or context cancellation.
@@ -229,13 +287,79 @@ func (t *MistralRealtimeSTT) runOnce(ctx context.Context, audio <-chan []byte, o
 			}
 			message := map[string]any{
 				"type":  "input_audio.append",
-				"audio": base64.StdEncoding.EncodeToString(chunk),
+				"audio": base64.StdEncoding.EncodeToString(resamplePCM16(chunk, t.config.SourceSampleRate, t.config.SampleRate)),
 			}
 			if err := writeJSON(message); err != nil {
 				return fmt.Errorf("отправка аудио в Mistral realtime STT: %w", err)
 			}
+			// AudioIn is a continuous microphone stream and therefore contains
+			// zero/near-zero PCM chunks after the user stops speaking. Do not
+			// postpone utterance finalization for those chunks.
+			if pcmContainsSpeech(chunk) {
+				armSilenceTimer()
+			}
 		}
 	}
+}
+
+// resamplePCM16 converts mono little-endian PCM16 between the frontend input
+// rate and Mistral's realtime STT rate. Linear interpolation is sufficient
+// for speech capture chunks and avoids sending a falsely declared sample rate.
+func resamplePCM16(pcm []byte, from, to int) []byte {
+	if from <= 0 || to <= 0 || from == to || len(pcm) < 2 {
+		return pcm
+	}
+	n := len(pcm) / 2
+	outN := int(float64(n) * float64(to) / float64(from))
+	if outN < 1 {
+		return nil
+	}
+	out := make([]byte, outN*2)
+	read := func(i int) int {
+		if i < 0 {
+			i = 0
+		}
+		if i >= n {
+			i = n - 1
+		}
+		return int(int16(uint16(pcm[i*2]) | uint16(pcm[i*2+1])<<8))
+	}
+	for i := 0; i < outN; i++ {
+		pos := float64(i) * float64(from) / float64(to)
+		left := int(pos)
+		frac := pos - float64(left)
+		value := int(float64(read(left))*(1-frac) + float64(read(left+1))*frac)
+		if value > 32767 {
+			value = 32767
+		}
+		if value < -32768 {
+			value = -32768
+		}
+		out[i*2] = byte(value)
+		out[i*2+1] = byte(value >> 8)
+	}
+	return out
+}
+
+// pcmContainsSpeech performs a deliberately conservative energy check for
+// the configured pcm_s16le input. It is only used to decide when to arm the
+// client-side utterance timer; Mistral remains responsible for transcription.
+func pcmContainsSpeech(pcm []byte) bool {
+	if len(pcm) < 2 {
+		return false
+	}
+	const threshold = int64(500)
+	var sum int64
+	var samples int64
+	for i := 0; i+1 < len(pcm); i += 2 {
+		v := int16(uint16(pcm[i]) | uint16(pcm[i+1])<<8)
+		if v < 0 {
+			v = -v
+		}
+		sum += int64(v)
+		samples++
+	}
+	return samples > 0 && sum/samples >= threshold
 }
 
 type realtimeSTTEvent struct {

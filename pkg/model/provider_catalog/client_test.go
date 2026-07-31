@@ -184,3 +184,19 @@ func TestMistralAllModelsIntegration(t *testing.T) {
 		t.Fatal("generalMistralModels() returned no models")
 	}
 }
+
+func TestMistralSpecializedModelFilters(t *testing.T) {
+	models := []string{
+		"voxtral-mini-transcribe-realtime-2602",
+		"voxtral-mini-realtime-latest",
+		"voxtral-mini-tts-2603",
+		"voxtral-mini-tts-latest",
+		"mistral-small-latest",
+	}
+	if got := filterMistralModels(models, isMistralSTTModel); !reflect.DeepEqual(got, []string{"voxtral-mini-transcribe-realtime-2602"}) {
+		t.Fatalf("STT filter = %v", got)
+	}
+	if got := filterMistralModels(models, isMistralTTSModel); !reflect.DeepEqual(got, []string{"voxtral-mini-tts-2603", "voxtral-mini-tts-latest"}) {
+		t.Fatalf("TTS filter = %v", got)
+	}
+}
