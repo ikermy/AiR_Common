@@ -132,9 +132,12 @@ func (m *Model) StartMistralRealtimeSession(userID uint32, dialogID, respID uint
 	if err != nil {
 		return nil, fmt.Errorf("ошибка получения Mistral-модели для realtime: %w", err)
 	}
-	if record == nil || record.Realtime == nil || record.Realtime.Name == "" {
-		return nil, fmt.Errorf("realtime-модель Mistral не настроена для userID=%d", userID)
+	if record == nil {
+		return nil, fmt.Errorf("Mistral-модель не настроена для userID=%d", userID)
 	}
+	// Mistral stores realtime STT/TTS models in the compressed provider
+	// configuration, not in the legacy realtime_models FK.
+	sttModel := provider_catalog.DefaultMistralSTTModel
 	if m.universalModel != nil {
 		compressedData, vecIDs, readErr := m.db.ReadUserModelByProvider(userID, commdom.ProviderMistral)
 		if readErr != nil {
@@ -153,7 +156,10 @@ func (m *Model) StartMistralRealtimeSession(userID uint32, dialogID, respID uint
 			if startErr != nil {
 				return nil, startErr
 			}
-			session.RealtimeModel = record.Realtime.Name
+			if sessionConfig != nil && sessionConfig.Mistral != nil && sessionConfig.Mistral.STTModel != nil && *sessionConfig.Mistral.STTModel != "" {
+				sttModel = *sessionConfig.Mistral.STTModel
+			}
+			session.RealtimeModel = sttModel
 			if sessionConfig != nil {
 				session.Config = sessionConfig.Mistral
 				session.Greeting = sessionConfig.Greeting
@@ -171,7 +177,7 @@ func (m *Model) StartMistralRealtimeSession(userID uint32, dialogID, respID uint
 	if err != nil {
 		return nil, err
 	}
-	session.RealtimeModel = record.Realtime.Name
+	session.RealtimeModel = sttModel
 	if err := m.attachMistralRealtimeSTT(session); err != nil {
 		m.realtime.Close(respID)
 		return nil, err

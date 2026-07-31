@@ -1909,6 +1909,12 @@ func (d *DB) SaveUserModel(
 	}
 
 	var modelId int64
+	// A realtime model is optional. Passing numeric zero to MySQL would
+	// violate the foreign key; use SQL NULL when no realtime model is set.
+	var realtimeModel any
+	if def.RealTimeModelID != 0 {
+		realtimeModel = def.RealTimeModelID
+	}
 
 	if !existingModelId.Valid {
 		// ===================================================================
@@ -1917,7 +1923,7 @@ func (d *DB) SaveUserModel(
 		result, err := tx.ExecContext(ctx, `
 			INSERT INTO user_gpt (Name, Model, Realtime, Provider, AssistantId, Data, Ids)
 			VALUES (?, ?, ?, ?, ?, ?, ?)
-		`, name, def.GeneralModelID, def.RealTimeModelID, provider, assistantId, data, ids)
+		`, name, def.GeneralModelID, realtimeModel, provider, assistantId, data, ids)
 
 		if err != nil {
 			switch {
@@ -1997,7 +2003,7 @@ func (d *DB) SaveUserModel(
 				Data = ?,
 				Ids = ?
 			WHERE Id = ?
-		`, name, def.GeneralModelID, def.RealTimeModelID, assistantId, data, ids, modelId)
+		`, name, def.GeneralModelID, realtimeModel, assistantId, data, ids, modelId)
 
 		if err != nil {
 			switch {

@@ -100,7 +100,9 @@ func (m *UniversalModel) SaveModel(userID uint32, umcr commdom.UMCR, data *commd
 
 	// При частичном обновлении клиент может прислать только часть UseModelName.
 	// Восстанавливаем отсутствующие ссылки на модели из актуальных данных БД.
-	if data.UseModelName.GptType == nil || data.UseModelName.GptType.ID == 0 || data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0 {
+	if data.UseModelName.GptType == nil || data.UseModelName.GptType.ID == 0 ||
+		(umcr.Provider != commdom.ProviderMistral &&
+			(data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0)) {
 		existingModels, lookupErr := m.db.GetAllUserModels(userID)
 		if lookupErr == nil {
 			for _, existing := range existingModels {
@@ -124,7 +126,8 @@ func (m *UniversalModel) SaveModel(userID uint32, umcr commdom.UMCR, data *commd
 	if data.UseModelName.GptType == nil || data.UseModelName.GptType.ID == 0 {
 		return fmt.Errorf("не указан корректный ID модели gpt_models для провайдера %s", umcr.Provider)
 	}
-	if data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0 {
+	if data.Realtime && umcr.Provider != commdom.ProviderMistral &&
+		(data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0) {
 		return fmt.Errorf("не указан корректный ID realtime-модели для провайдера %s", umcr.Provider)
 	}
 	if data.RealtimeVAD != nil && data.RealtimeVAD.Mistral != nil && data.RealtimeVAD.Mistral.VoiceClone != nil {
@@ -138,6 +141,12 @@ func (m *UniversalModel) SaveModel(userID uint32, umcr commdom.UMCR, data *commd
 		return err
 	}
 
+	// Realtime is optional for ordinary models, so its descriptor may be nil.
+	var realtimeModelID uint
+	if data.UseModelName.Realtime != nil {
+		realtimeModelID = data.UseModelName.Realtime.ID
+	}
+
 	err = m.db.SaveUserModel(
 		userID,
 		umcr.Provider,
@@ -146,7 +155,7 @@ func (m *UniversalModel) SaveModel(userID uint32, umcr commdom.UMCR, data *commd
 		compressed,
 		commdom.DefaultProvidersModels{
 			GeneralModelID:  data.UseModelName.GptType.ID,
-			RealTimeModelID: data.UseModelName.Realtime.ID,
+			RealTimeModelID: realtimeModelID,
 		},
 		umcr.AllIds,
 		data.Operator,
