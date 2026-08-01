@@ -37,7 +37,10 @@ type Model struct {
 	actionHandler    model.ActionHandler
 	universalModel   *create.UniversalModel
 	shutdownOnce     sync.Once
+	dialogSaver      model.DialogSaver
 }
+
+func (m *Model) SetDialogSaver(saver model.DialogSaver) { m.dialogSaver = saver }
 
 // RespModel представляет респондента для OpenAI
 type RespModel struct {
@@ -170,6 +173,7 @@ func NewAsRouterOption() model.RouterOption {
 
 		// Создаём OpenAI модель (клиент уже инициализирован в New)
 		openaiModel := New(ctx, openaiDB, actionHandler)
+		openaiModel.SetDialogSaver(r.DialogSaver())
 
 		// Создаём UniversalModel для управления моделями
 		universalModel := create.New(ctx, openaiDB)

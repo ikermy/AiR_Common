@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ikermy/air_common/pkg/com"
+	"github.com/ikermy/air_common/pkg/comdb"
 	"github.com/ikermy/air_common/pkg/mode"
 	"github.com/ikermy/air_common/pkg/model/commdom"
 	"github.com/ikermy/air_common/pkg/model/create"
@@ -29,6 +30,20 @@ type Router struct {
 	modelsManager *create.UniversalModel
 	ctx           context.Context
 	db            DB
+	dialogSaver   DialogSaver
+}
+
+// DialogSaver принимает сообщения для пакетного сохранения диалогов.
+// endpoint.Endpoint реализует этот интерфейс без зависимости model от endpoint.
+type DialogSaver interface {
+	SaveDialog(creator comdb.CreatorType, dialogID uint64, resp *AssistResponse)
+}
+
+func (r *Router) DialogSaver() DialogSaver {
+	if r == nil {
+		return nil
+	}
+	return r.dialogSaver
 }
 
 // RouterOption определяет опцию для настройки Router
@@ -152,6 +167,17 @@ func WithMistralModel(model Inter) RouterOption {
 			return fmt.Errorf("Mistral модель не может быть nil")
 		}
 		r.mistral = model
+		return nil
+	}
+}
+
+// WithDialogSaver подключает общий batch-writer диалогов, обычно endpoint.Endpoint.
+func WithDialogSaver(saver DialogSaver) RouterOption {
+	return func(r *Router, _ context.Context, _ DB) error {
+		if saver == nil {
+			return fmt.Errorf("DialogSaver не может быть nil")
+		}
+		r.dialogSaver = saver
 		return nil
 	}
 }

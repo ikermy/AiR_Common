@@ -37,6 +37,13 @@ type Model struct {
 	router         model.RouterInterface  // Ссылка на router
 	universalModel *create.UniversalModel // Для доступа к DecompressModelData
 	realtime       *RealtimeManager
+	dialogSaver    DialogSaver
+}
+
+// DialogSaver принимает сообщения для пакетного сохранения в БД.
+// endpoint.Endpoint реализует этот интерфейс.
+type DialogSaver interface {
+	SaveDialog(creator comdb.CreatorType, dialogID uint64, resp *model.AssistResponse)
 }
 
 var _ model.RealtimeProvider = (*Model)(nil)
@@ -58,6 +65,13 @@ type RespModel struct {
 	Haunter        bool   // Модель используется для поиска лидов
 	ToolsSynced    bool   // true — агент уже синхронизирован с MCP tools в этой сессии
 	//LibraryId string // ID библиотеки Mistral для document_library (кэш из БД)
+}
+
+// SetDialogSaver подключает общий batch-writer endpoint.Endpoint.
+func (m *Model) SetDialogSaver(saver DialogSaver) {
+	if m != nil {
+		m.dialogSaver = saver
+	}
 }
 
 // GetChannel реализует интерфейс model.ChannelProvider
@@ -226,6 +240,7 @@ func (m *Model) attachMistralRealtimeSTT(session *MistralRealtimeSession) error 
 		if strings.TrimSpace(text) == "" {
 			return nil
 		}
+		m.saveRealtimeTranscript(session, text, "")
 		return session.WithLLM(func() error {
 			return m.requestRealtimeLLM(session, turnID, text)
 		})
@@ -238,12 +253,14 @@ func (m *Model) attachMistralRealtimeSTT(session *MistralRealtimeSession) error 
 // is speech text.
 func (m *Model) requestRealtimeLLM(session *MistralRealtimeSession, turnID uint64, input string) error {
 	extractor := realtimeMessageExtractor{}
+	var transcript strings.Builder
 	return m.RequestStreaming(session.UserID(), session.DialogID(), input, func(delta string, done bool) error {
 		if !session.IsCurrentTurn(turnID) {
 			return nil
 		}
 		text := extractor.Push(delta)
 		if text != "" {
+			transcript.WriteString(text)
 			if err := m.StreamMistralRealtimeText(session.Context(), session.RespID(), text, false); err != nil {
 				return err
 			}
@@ -252,10 +269,60 @@ func (m *Model) requestRealtimeLLM(session *MistralRealtimeSession, turnID uint6
 			return nil
 		}
 		if tail := extractor.Flush(); tail != "" {
+			transcript.WriteString(tail)
+			m.saveRealtimeTranscript(session, "", transcript.String())
 			return m.StreamMistralRealtimeText(session.Context(), session.RespID(), tail, true)
 		}
+		m.saveRealtimeTranscript(session, "", transcript.String())
 		return m.StreamMistralRealtimeText(session.Context(), session.RespID(), "", true)
 	})
+}
+
+// saveRealtimeTranscript сохраняет финальные реплики Mistral realtime
+// в локальный контекст диалога и в историю БД.
+func (m *Model) saveRealtimeTranscript(session *MistralRealtimeSession, userText, assistText string) {
+	if session == nil {
+		return
+	}
+	now := time.Now()
+	if userText != "" {
+		m.appendRealtimeMessage(session.dialogID, Message{Type: "user", Content: userText, Timestamp: now})
+		m.queueRealtimeDialog(comdb.SpeechRealTimeUser, session.dialogID, userText, now)
+	}
+	if assistText != "" {
+		m.appendRealtimeMessage(session.dialogID, Message{Type: "assistant", Content: assistText, Timestamp: now})
+		m.queueRealtimeDialog(comdb.SpeechRealTimeAI, session.dialogID, assistText, now)
+	}
+}
+
+func (m *Model) queueRealtimeDialog(creator comdb.CreatorType, dialogID uint64, text string, ts time.Time) {
+	resp := &model.AssistResponse{Message: text, Action: model.Action{SendFiles: []model.File{}}}
+	if m.dialogSaver != nil {
+		m.dialogSaver.SaveDialog(creator, dialogID, resp)
+		return
+	}
+	_ = m.db.SaveDialog(dialogID, mistralRealtimeDialogJSON(creator, text, ts))
+}
+
+func (m *Model) appendRealtimeMessage(dialogID uint64, message Message) {
+	m.responders.Range(func(_, value any) bool {
+		resp := value.(*RespModel)
+		if resp.Chan != nil && resp.Chan.DialogID == dialogID && resp.Context != nil {
+			resp.Context.Messages = append(resp.Context.Messages, message)
+			resp.Context.LastUsed = message.Timestamp
+			return false
+		}
+		return true
+	})
+}
+
+func mistralRealtimeDialogJSON(creator comdb.CreatorType, text string, ts time.Time) []byte {
+	data, _ := json.Marshal(map[string]any{
+		"creator":   creator,
+		"message":   model.AssistResponse{Message: text, Action: model.Action{SendFiles: []model.File{}}},
+		"timestamp": ts,
+	})
+	return data
 }
 
 type realtimeMessageExtractor struct {
@@ -641,6 +708,9 @@ func NewAsRouterOption() model.RouterOption {
 
 		// Подключаем MCP fetchers для create-time операций (создание агента через Mistral API).
 		// Аналогично google/model.go: function declarations и prompt hint — только от MCP.
+		if saver := r.DialogSaver(); saver != nil {
+			mistralModel.SetDialogSaver(saver)
+		}
 		if mcpProvider, ok := model.ActionHandler(actionHandler).(model.MCPConfigProvider); ok {
 			universalModel.SetMistralMCPFetchers(
 				func(fetchCtx context.Context, userID uint32, provider commdom.ProviderType) (string, error) {

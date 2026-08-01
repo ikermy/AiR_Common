@@ -38,7 +38,10 @@ type Model struct {
 	actionHandler    model.ActionHandler
 	universalModel   *create.UniversalModel
 	shutdownOnce     sync.Once
+	dialogSaver      model.DialogSaver
 }
+
+func (m *Model) SetDialogSaver(saver model.DialogSaver) { m.dialogSaver = saver }
 
 // GoogleRespModel представляет респондента для Google Gemini
 // В отличие от OpenAI, не хранит Thread (его нет в Gemini API)
@@ -185,6 +188,7 @@ func NewAsRouterOption() model.RouterOption {
 		actionHandler := model.NewUniversalActionHandler(ctx)
 
 		googleModel := New(ctx, googleDB, actionHandler)
+		googleModel.SetDialogSaver(r.DialogSaver())
 
 		return model.WithGoogleModel(googleModel)(r, ctx, db)
 	}

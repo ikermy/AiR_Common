@@ -459,10 +459,7 @@ func (m *Model) saveGoogleRealtimeTranscript(rs *GoogleRealtimeSession, userText
 			Role:  "user",
 			Parts: []map[string]any{{"text": userText}},
 		})
-		msg := googleRealtimeDialogJSON(comdb.SpeechRealTimeUser, userText, now)
-		if err := m.db.SaveDialog(rs.dialogID, msg); err != nil {
-			//logger.Warn("saveGoogleRealtimeTranscript: ошибка сохранения реплики пользователя: %v", err, rs.userID)
-		}
+		m.queueRealtimeDialog(comdb.SpeechRealTimeUser, rs.dialogID, userText, now)
 		//logger.Debug("saveGoogleRealtimeTranscript: user len=%d dialogID=%d", len(userText), rs.dialogID, rs.userID)
 	}
 
@@ -471,12 +468,18 @@ func (m *Model) saveGoogleRealtimeTranscript(rs *GoogleRealtimeSession, userText
 			Role:  "model",
 			Parts: []map[string]any{{"text": assistText}},
 		})
-		msg := googleRealtimeDialogJSON(comdb.SpeechRealTimeAI, assistText, now)
-		if err := m.db.SaveDialog(rs.dialogID, msg); err != nil {
-			//logger.Warn("saveGoogleRealtimeTranscript: ошибка сохранения ответа ассистента: %v", err, rs.userID)
-		}
+		m.queueRealtimeDialog(comdb.SpeechRealTimeAI, rs.dialogID, assistText, now)
 		//logger.Debug("saveGoogleRealtimeTranscript: assistant len=%d dialogID=%d", len(assistText), rs.dialogID, rs.userID)
 	}
+}
+
+func (m *Model) queueRealtimeDialog(c comdb.CreatorType, dialogID uint64, text string, ts time.Time) {
+	resp := &model.AssistResponse{Message: text, Action: model.Action{SendFiles: []model.File{}}}
+	if m.dialogSaver != nil {
+		m.dialogSaver.SaveDialog(c, dialogID, resp)
+		return
+	}
+	_ = m.db.SaveDialog(dialogID, googleRealtimeDialogJSON(c, text, ts))
 }
 
 // googleRealtimeDialogJSON формирует JSON в формате endpoint.Message для сохранения в БД.

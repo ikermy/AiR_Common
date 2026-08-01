@@ -1,2 +1,2 @@
-v1.50.78
-realtime mistral getkey fix
+v1.50.79
+com method DialogSaver
