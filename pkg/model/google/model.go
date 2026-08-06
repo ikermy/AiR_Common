@@ -260,9 +260,6 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 	if found == nil {
 		return fmt.Errorf("модель Google не найдена для userID %d", userID)
 	}
-	if found.Realtime == nil || found.Realtime.Name == "" {
-		return fmt.Errorf("realtime-модель Google не найдена для userID %d", userID)
-	}
 
 	// Инициализируем базовую конфигурацию.
 	// RealtimeModel выставляется сразу в константу — НЕ в found.AssistId (это текстовая модель).

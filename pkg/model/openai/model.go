@@ -340,9 +340,6 @@ func (m *Model) loadAgentConfig(userID uint32, _ *RespModel) (*AgentConfig, bool
 	if found == nil {
 		return nil, false, fmt.Errorf("модель OpenAI не найдена для userID %d", userID)
 	}
-	if found.Realtime == nil || found.Realtime.Name == "" {
-		return nil, false, fmt.Errorf("realtime-модель OpenAI не найдена для userID %d", userID)
-	}
 
 	// Инициализируем базовую конфигурацию.
 	// ModelName берём из user_gpt.AssistantId — там хранится имя модели выбранной пользователем
