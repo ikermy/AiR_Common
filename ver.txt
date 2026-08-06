@@ -1,2 +1,2 @@
-v1.50.79
-com method DialogSaver
+v1.50.82
+loadAgentConfig fix

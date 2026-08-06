@@ -274,11 +274,15 @@ func (m *Model) loadAgentConfig(userID uint32, respModel *GoogleRespModel) error
 		}
 		generalModelName = defData.GeneralModelName
 	}
+	realtimeModel := ""
+	if found.Realtime != nil {
+		realtimeModel = found.Realtime.Name
+	}
 	agentConfig := GoogleAgentConfig{
 		ModelId:       found.ModelId,
 		ModelName:     generalModelName,
 		HasVector:     false,
-		RealtimeModel: found.Realtime.Name,
+		RealtimeModel: realtimeModel,
 	}
 
 	// Загружаем полные данные модели из БД для получения всех параметров
