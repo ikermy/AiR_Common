@@ -11,8 +11,6 @@ type MistralRealtimeVAD struct {
 	VoiceClone       *MistralVoiceCloneConfig `json:"voice_clone,omitempty"`
 	SpeechFormat     *string                  `json:"speech_format,omitempty"`
 	STTLanguage      *string                  `json:"stt_language,omitempty"`
-	STTStream        *bool                    `json:"stt_stream,omitempty"`
-	TTSStream        *bool                    `json:"tts_stream,omitempty"`
 }
 type MistralVoiceCloneConfig struct {
 	Enabled             bool   `json:"enabled"`

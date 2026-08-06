@@ -26,6 +26,11 @@ func compressModelData(data *commdom.UniversalModelData) ([]byte, error) {
 	return compressed.Bytes(), nil
 }
 
+// Использовать вместо comdb.DecompressAndExtractMetadata
+func DecompressModelData(compressedData []byte) (*commdom.UniversalModelData, error) {
+	return decompressModelData(compressedData, nil)
+}
+
 func decompressModelData(compressedData []byte, vecIds *commdom.VecIds) (*commdom.UniversalModelData, error) {
 	reader, err := gzip.NewReader(bytes.NewReader(compressedData))
 	if err != nil {

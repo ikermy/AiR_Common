@@ -199,8 +199,6 @@ type GoogleRealtimeVAD struct {
 	VoiceClone       *MistralVoiceCloneConfig `json:"voice_clone,omitempty"`
 	SpeechFormat     *string                  `json:"speech_format,omitempty"` // wav или mp3
 	STTLanguage      *string                  `json:"stt_language,omitempty"`
-	STTStream        *bool                    `json:"stt_stream,omitempty"`
-	TTSStream        *bool                    `json:"tts_stream,omitempty"`
 }
 
 // MistralVoiceCloneConfig stores voice-cloning resource references.

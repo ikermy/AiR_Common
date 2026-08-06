@@ -25,7 +25,7 @@ func TestModelDataCompressionRoundTripPreservesRealtimeAndVectorIDs(t *testing.T
 	if restored.Name != data.Name || restored.Provider != commdom.ProviderMistral || len(restored.FileIds) != 1 || len(restored.VecIds.VectorId) != 1 {
 		t.Fatalf("unexpected restored model: %+v", restored)
 	}
-	if restored.RealtimeVAD.Mistral.STTStream == nil || restored.RealtimeVAD.Mistral.TTSStream == nil || restored.RealtimeVAD.Mistral.SpeechFormat == nil {
+	if restored.RealtimeVAD.Mistral.SpeechFormat == nil {
 		t.Fatal("Mistral realtime defaults were not applied")
 	}
 }

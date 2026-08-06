@@ -1,15 +1,12 @@
 package comdb
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -210,98 +207,98 @@ func (d *DB) MainCTX() context.Context {
 // DecompressAndExtractMetadata Функция для распаковки сжатых данных и извлечения полей Meta и MetaAction
 // Также извлекает параметры Google модели: Image, WebSearch, Video, Haunter и Search.
 // Примечание: calendar и sheets (GOAuth) удалены — теперь управляются исключительно MCP сервером.
-func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, triggers []string, espero *Espero, image, webSearch, video, haunter, search, operator, s3, interpreter bool, err error) {
-	// Создаем reader для распаковки данных
-	gzipReader, err := gzip.NewReader(bytes.NewReader(compressedData))
-	if err != nil {
-		return "", nil, nil, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при создании gzip reader: %w", err)
-	}
-	defer func(gzipReader *gzip.Reader) {
-		_ = gzipReader.Close()
-	}(gzipReader)
-
-	// Читаем распакованные данные
-	decompressedData, err := io.ReadAll(gzipReader)
-	if err != nil {
-		return "", nil, nil, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при распаковке данных: %w", err)
-	}
-
-	// Разбираем JSON
-	var modelData map[string]any
-	if err := json.Unmarshal(decompressedData, &modelData); err != nil {
-		return "", nil, nil, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
-	}
-
-	// Извлекаем поля MetaAction
-	espero = &Espero{}
-
-	if ma, ok := modelData["mact"].(string); ok {
-		metaAction = ma
-	}
-
-	// Извлекаем и конвертируем поле triggers
-	if t, ok := modelData["trig"]; ok {
-		if trigArray, ok := t.([]any); ok {
-			for _, item := range trigArray {
-				if str, ok := item.(string); ok {
-					triggers = append(triggers, str)
-				}
-			}
-		}
-	}
-
-	// Извлекаем поля espero
-	if esp, ok := modelData["espero"].(map[string]any); ok {
-		if limit, ok := esp["limit"].(float64); ok {
-			espero.Limit = uint16(limit)
-		}
-		if wait, ok := esp["wait"].(float64); ok {
-			espero.Wait = uint8(wait)
-		}
-		if ignore, ok := esp["ignore"].(bool); ok {
-			espero.Ignore = ignore
-		}
-	}
-
-	// Извлекаем параметры Google модели (image, web_search, video)
-	if val, ok := modelData["image"].(bool); ok {
-		image = val
-	}
-	if val, ok := modelData["web_search"].(bool); ok {
-		webSearch = val
-	}
-	if val, ok := modelData["video"].(bool); ok {
-		video = val
-	}
-
-	// Извлекаем флаг haunter
-	if val, ok := modelData["haunter"].(bool); ok {
-		haunter = val
-	}
-
-	// Извлекаем флаг search
-	if val, ok := modelData["search"].(bool); ok {
-		search = val
-	}
-
-	// Извлекаем флаг operator
-	if val, ok := modelData["operator"].(bool); ok {
-		operator = val
-	}
-
-	// Извлекаем флаги для Google Services
-	if val, ok := modelData["s3"].(bool); ok {
-		s3 = val
-	}
-	if val, ok := modelData["interpreter"].(bool); ok {
-		interpreter = val
-	}
-
-	// g_oauth (GOAuth.Calendar, GOAuth.Sheets) намеренно не извлекается:
-	// Calendar/Sheets инструменты управляются исключительно MCP сервером (tools/list).
-
-	return metaAction, triggers, espero, image, webSearch, video, haunter, search, operator, s3, interpreter, nil
-}
+//func DecompressAndExtractMetadata(compressedData []byte) (metaAction string, triggers []string, espero *Espero, image, webSearch, video, haunter, search, operator, s3, interpreter bool, err error) {
+//	// Создаем reader для распаковки данных
+//	gzipReader, err := gzip.NewReader(bytes.NewReader(compressedData))
+//	if err != nil {
+//		return "", nil, nil, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при создании gzip reader: %w", err)
+//	}
+//	defer func(gzipReader *gzip.Reader) {
+//		_ = gzipReader.Close()
+//	}(gzipReader)
+//
+//	// Читаем распакованные данные
+//	decompressedData, err := io.ReadAll(gzipReader)
+//	if err != nil {
+//		return "", nil, nil, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при распаковке данных: %w", err)
+//	}
+//
+//	// Разбираем JSON
+//	var modelData map[string]any
+//	if err := json.Unmarshal(decompressedData, &modelData); err != nil {
+//		return "", nil, nil, false, false, false, false, false, false, false, false, fmt.Errorf("ошибка при разборе JSON модели: %w", err)
+//	}
+//
+//	// Извлекаем поля MetaAction
+//	espero = &Espero{}
+//
+//	if ma, ok := modelData["mact"].(string); ok {
+//		metaAction = ma
+//	}
+//
+//	// Извлекаем и конвертируем поле triggers
+//	if t, ok := modelData["trig"]; ok {
+//		if trigArray, ok := t.([]any); ok {
+//			for _, item := range trigArray {
+//				if str, ok := item.(string); ok {
+//					triggers = append(triggers, str)
+//				}
+//			}
+//		}
+//	}
+//
+//	// Извлекаем поля espero
+//	if esp, ok := modelData["espero"].(map[string]any); ok {
+//		if limit, ok := esp["limit"].(float64); ok {
+//			espero.Limit = uint16(limit)
+//		}
+//		if wait, ok := esp["wait"].(float64); ok {
+//			espero.Wait = uint8(wait)
+//		}
+//		if ignore, ok := esp["ignore"].(bool); ok {
+//			espero.Ignore = ignore
+//		}
+//	}
+//
+//	// Извлекаем параметры Google модели (image, web_search, video)
+//	if val, ok := modelData["image"].(bool); ok {
+//		image = val
+//	}
+//	if val, ok := modelData["web_search"].(bool); ok {
+//		webSearch = val
+//	}
+//	if val, ok := modelData["video"].(bool); ok {
+//		video = val
+//	}
+//
+//	// Извлекаем флаг haunter
+//	if val, ok := modelData["haunter"].(bool); ok {
+//		haunter = val
+//	}
+//
+//	// Извлекаем флаг search
+//	if val, ok := modelData["search"].(bool); ok {
+//		search = val
+//	}
+//
+//	// Извлекаем флаг operator
+//	if val, ok := modelData["operator"].(bool); ok {
+//		operator = val
+//	}
+//
+//	// Извлекаем флаги для Google Services
+//	if val, ok := modelData["s3"].(bool); ok {
+//		s3 = val
+//	}
+//	if val, ok := modelData["interpreter"].(bool); ok {
+//		interpreter = val
+//	}
+//
+//	// g_oauth (GOAuth.Calendar, GOAuth.Sheets) намеренно не извлекается:
+//	// Calendar/Sheets инструменты управляются исключительно MCP сервером (tools/list).
+//
+//	return metaAction, triggers, espero, image, webSearch, video, haunter, search, operator, s3, interpreter, nil
+//}
 
 // ReadContext читает контекст диалога из базы данных
 func (d *DB) ReadContext(dialogId uint64, provider commdom.ProviderType) (json.RawMessage, error) {

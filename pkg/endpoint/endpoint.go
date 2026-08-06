@@ -112,24 +112,26 @@ func (e *Endpoint) CallOptionalTyped(val any) error {
 	return e.CallOptional(val)
 }
 
-//// WrapOptional[T any] — helper-функция с дженериком для адаптирования функции типа T
-//// к типу func(any) error. Используется вместе с SetOptional.
-////
-//// Пример использования:
-////
-////	e.SetOptional(WrapOptional[int64](telegramProvider.Meta))
-//func WrapOptional[T any](fn func(T) error) func(any) error {
-//	if fn == nil {
-//		return nil
-//	}
-//	return func(v any) error {
-//		t, ok := v.(T)
-//		if !ok {
-//			return fmt.Errorf("WrapOptional: unexpected type %T, expected %T", v, *new(T))
-//		}
-//		return fn(t)
-//	}
-//}
+// WrapOptional[T any] — helper-функция с дженериком для адаптирования функции типа T
+// к типу func(any) error. Используется вместе с SetOptional.
+//
+// Пример использования:
+//
+//	e.SetOptional(WrapOptional[int64](telegramProvider.Meta))
+//
+// пока используется только в lead-hunter
+func WrapOptional[T any](fn func(T) error) func(any) error {
+	if fn == nil {
+		return nil
+	}
+	return func(v any) error {
+		t, ok := v.(T)
+		if !ok {
+			return fmt.Errorf("WrapOptional: unexpected type %T, expected %T", v, *new(T))
+		}
+		return fn(t)
+	}
+}
 
 // Shutdown останавливает фоновые задачи и принудительно сохраняет буферы
 func (e *Endpoint) Shutdown(shutCh chan<- com.LogMsg) {

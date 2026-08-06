@@ -12,8 +12,7 @@ import "github.com/ikermy/air_common/pkg/model/commdom"
 // Google-специфичные дефолты (Google-блок): VoiceName="Puck",
 // InputAudioTranscription=true, OutputAudioTranscription=false,
 // AutomaticActivityDetection=true, BargeIn=true, SilenceDurationMs=500.
-// Mistral-специфичные дефолты: STTStream=true, TTSStream=true,
-// SpeechFormat="wav".
+// Mistral-специфичный дефолт: SpeechFormat="wav".
 func applyRealtimeVADDefaults(vad *commdom.RealtimeVAD) *commdom.RealtimeVAD {
 	if vad == nil {
 		return nil
@@ -102,14 +101,6 @@ func applyRealtimeVADDefaults(vad *commdom.RealtimeVAD) *commdom.RealtimeVAD {
 
 	// ── Mistral-специфичные дефолты ─────────────────────────────────────────
 	if vad.Mistral != nil {
-		if vad.Mistral.STTStream == nil {
-			v := true
-			vad.Mistral.STTStream = &v
-		}
-		if vad.Mistral.TTSStream == nil {
-			v := true
-			vad.Mistral.TTSStream = &v
-		}
 		if vad.Mistral.SpeechFormat == nil {
 			v := "wav"
 			vad.Mistral.SpeechFormat = &v

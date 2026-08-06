@@ -100,9 +100,7 @@ func (m *UniversalModel) SaveModel(userID uint32, umcr commdom.UMCR, data *commd
 
 	// При частичном обновлении клиент может прислать только часть UseModelName.
 	// Восстанавливаем отсутствующие ссылки на модели из актуальных данных БД.
-	if data.UseModelName.GptType == nil || data.UseModelName.GptType.ID == 0 ||
-		(umcr.Provider != commdom.ProviderMistral &&
-			(data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0)) {
+	if data.UseModelName.GptType == nil || data.UseModelName.GptType.ID == 0 {
 		existingModels, lookupErr := m.db.GetAllUserModels(userID)
 		if lookupErr == nil {
 			for _, existing := range existingModels {
@@ -111,9 +109,6 @@ func (m *UniversalModel) SaveModel(userID uint32, umcr commdom.UMCR, data *commd
 				}
 				if (data.UseModelName.GptType == nil || data.UseModelName.GptType.ID == 0) && existing.GptType != nil && existing.GptType.ID != 0 {
 					data.UseModelName.GptType = existing.GptType
-				}
-				if (data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0) && existing.Realtime != nil && existing.Realtime.ID != 0 {
-					data.UseModelName.Realtime = existing.Realtime
 				}
 				break
 			}
@@ -126,15 +121,14 @@ func (m *UniversalModel) SaveModel(userID uint32, umcr commdom.UMCR, data *commd
 	if data.UseModelName.GptType == nil || data.UseModelName.GptType.ID == 0 {
 		return fmt.Errorf("не указан корректный ID модели gpt_models для провайдера %s", umcr.Provider)
 	}
-	if data.Realtime && umcr.Provider != commdom.ProviderMistral &&
-		(data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0) {
+	if data.Realtime && (data.UseModelName.Realtime == nil || data.UseModelName.Realtime.ID == 0) {
 		return fmt.Errorf("не указан корректный ID realtime-модели для провайдера %s", umcr.Provider)
 	}
-	if data.RealtimeVAD != nil && data.RealtimeVAD.Mistral != nil && data.RealtimeVAD.Mistral.VoiceClone != nil {
-		if err := data.RealtimeVAD.Mistral.VoiceClone.Validate(); err != nil {
-			return fmt.Errorf("некорректная конфигурация voice cloning: %w", err)
-		}
-	}
+	//if data.RealtimeVAD != nil && data.RealtimeVAD.Mistral != nil && data.RealtimeVAD.Mistral.VoiceClone != nil {
+	//	if err := data.RealtimeVAD.Mistral.VoiceClone.Validate(); err != nil {
+	//		return fmt.Errorf("некорректная конфигурация voice cloning: %w", err)
+	//	}
+	//}
 
 	compressed, err := compressModelData(data)
 	if err != nil {
